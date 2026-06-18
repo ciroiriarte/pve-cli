@@ -1,0 +1,7 @@
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.5.5-1
+
+- Initial OBS packaging: pc binary, man pages, shell completions.
+- Vendor Go modules in-tree for fully offline distro builds.
+- Add Debian source control (.dsc) so OBS drives the .deb build.
+- Own zsh/fish completion directories (openSUSE filelist check).

@@ -1,13 +1,13 @@
 <services>
   <!-- Mirrors the working pattern from home:ciriarte:network-tools: tar_scm
-       emits a .tar directly (the standalone `tar` service is not available on
-       api.opensuse.org), set_version patches the spec/changelog version,
-       recompress gzips it, and go_modules vendors deps for the offline build. -->
+       emits a .tar directly, set_version patches the spec/.dsc/changelog
+       version, recompress gzips it. Go modules are vendored in-tree (vendor/),
+       so the build is offline without a go_modules service. -->
   <service name="tar_scm">
     <param name="scm">git</param>
     <param name="url">https://github.com/ciroiriarte/pve-cli</param>
-    <param name="version">0.5.3</param>
-    <param name="revision">v0.5.3</param>
+    <param name="version">0.5.5</param>
+    <param name="revision">v0.5.5</param>
     <param name="filename">pve-cli</param>
   </service>
   <service name="set_version">
@@ -15,9 +15,6 @@
   </service>
   <service name="recompress">
     <param name="file">*.tar</param>
-    <param name="compression">gz</param>
-  </service>
-  <service name="go_modules">
     <param name="compression">gz</param>
   </service>
 </services>

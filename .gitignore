@@ -5,7 +5,7 @@
 *.out
 
 # Go
-/vendor/
+# NOTE: vendor/ IS committed — distro packaging (OBS) builds offline from it.
 
 # Editor / OS
 .DS_Store

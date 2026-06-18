@@ -12,7 +12,6 @@ License:        Apache-2.0
 Group:          System/Management
 URL:            https://github.com/ciroiriarte/pve-cli
 Source0:        %{name}-%{version}.tar.gz
-Source1:        vendor.tar.gz
 %if 0%{?suse_version}
 BuildRequires:  go >= 1.22
 %else
@@ -30,14 +29,12 @@ Proxmox Server Solutions GmbH.
 
 %prep
 %autosetup -n %{name}-%{version}
-# Unpack vendored Go modules for an offline build.
-tar -xf %{SOURCE1}
 
 %build
+# Go modules are vendored in-tree (vendor/), so the build is fully offline.
 export GOFLAGS="-mod=vendor -trimpath"
 export CGO_ENABLED=0
 go build -ldflags "-s -w \
-  -X %{name}/internal/version.Version=%{version} \
   -X github.com/ciroiriarte/pve-cli/internal/version.Version=%{version}" \
   -o pc ./cmd/pc
 # Generate man pages, completions, and the markdown reference (offline).
