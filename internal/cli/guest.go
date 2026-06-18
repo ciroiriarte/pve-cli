@@ -47,6 +47,7 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestMigrateCmd(a, spec),
 		newGuestConfigCmd(a, spec),
 		newGuestSnapshotCmd(a, spec),
+		newGuestConsoleCmd(a, spec),
 	)
 	return cmd
 }

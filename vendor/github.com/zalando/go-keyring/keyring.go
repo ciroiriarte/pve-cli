@@ -25,8 +25,6 @@ type Keyring interface {
 	Get(service, user string) (string, error)
 	// Delete secret from keyring.
 	Delete(service, user string) error
-	// DeleteAll deletes all secrets for a given service
-	DeleteAll(service string) error
 }
 
 // Set password in keyring for user.
@@ -42,9 +40,4 @@ func Get(service, user string) (string, error) {
 // Delete secret from keyring.
 func Delete(service, user string) error {
 	return provider.Delete(service, user)
-}
-
-// DeleteAll deletes all secrets for a given service
-func DeleteAll(service string) error {
-	return provider.DeleteAll(service)
 }

@@ -1,4 +1,3 @@
-//go:build !windows
 // +build !windows
 
 package wincred
@@ -18,7 +17,6 @@ const (
 
 	sysERROR_NOT_FOUND         = syscall.Errno(1)
 	sysERROR_INVALID_PARAMETER = syscall.Errno(1)
-	sysERROR_BAD_USERNAME      = syscall.Errno(1)
 )
 
 func sysCredRead(...interface{}) (*Credential, error) {

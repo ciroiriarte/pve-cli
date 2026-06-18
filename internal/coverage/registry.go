@@ -40,6 +40,8 @@ func init() {
 	regGuest("snapshot list/create", "GET", "/snapshot")
 	regGuest("snapshot create", "POST", "/snapshot")
 	regGuest("snapshot delete", "DELETE", "/snapshot/{snapname}")
+	regGuest("console", "POST", "/termproxy")
+	regGuest("console", "GET", "/vncwebsocket")
 
 	// storage + backup
 	reg("storage list", "GET", "/storage")

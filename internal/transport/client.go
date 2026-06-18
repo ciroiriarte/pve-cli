@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"math"
@@ -39,6 +40,7 @@ type Client struct {
 	debug      bool
 	userAgent  string
 	limiter    *rate.Limiter
+	tlsConf    *tls.Config
 }
 
 // Request is a single API call.
@@ -68,10 +70,11 @@ func New(opt Options) (*Client, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	hc, err := NewHTTPClient(opt.TLS, timeout)
+	tlsConf, err := opt.TLS.build()
 	if err != nil {
 		return nil, err
 	}
+	hc := &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: tlsConf}}
 	retries := opt.MaxRetries
 	if retries == 0 {
 		retries = 3
@@ -88,6 +91,7 @@ func New(opt Options) (*Client, error) {
 		debug:      opt.Debug,
 		userAgent:  ua,
 		limiter:    newLimiter(opt.RateQPS, opt.Burst),
+		tlsConf:    tlsConf,
 	}, nil
 }
 

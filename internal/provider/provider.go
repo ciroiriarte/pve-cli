@@ -64,8 +64,9 @@ type Provider interface {
 	Raw(ctx context.Context, method, path string, params url.Values) ([]byte, error)
 }
 
-// New builds a Provider from resolved settings.
-func New(s *config.Settings, debug bool) (Provider, error) {
+// NewClient builds the raw transport client (auth + TLS + rate limit) from
+// resolved settings. Exposed for low-level needs like the websocket console.
+func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 		return nil, fmt.Errorf("unsupported auth type %q", s.AuthType)
 	}
 
-	cl, err := transport.New(transport.Options{
+	return transport.New(transport.Options{
 		BaseURL:   s.Server,
 		Auth:      ap,
 		TLS:       tlsCfg,
@@ -107,6 +108,11 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 		RateQPS:   s.RateQPS,
 		Burst:     s.RateBurst,
 	})
+}
+
+// New builds a Provider from resolved settings.
+func New(s *config.Settings, debug bool) (Provider, error) {
+	cl, err := NewClient(s, debug)
 	if err != nil {
 		return nil, err
 	}
