@@ -10,10 +10,40 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ciroiriarte/pve-cli/internal/domain"
 	"github.com/ciroiriarte/pve-cli/internal/output"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/ciroiriarte/pve-cli/internal/provider"
 )
+
+// guestBase returns the API path prefix for guest-scoped operations on the
+// active provider. PVE addresses guests by node; PDM proxies the PVE API under
+// /pve/remotes/{remote}, so the same suffixes (snapshot, migrate, status, …)
+// work for both once the base is right.
+func guestBase(p provider.Provider, g domain.Guest, spec guestSpec) (string, error) {
+	if p.Name() == "pdm" {
+		if g.Remote == "" {
+			return "", fmt.Errorf("guest %d has no remote; pass --remote to choose one", g.VMID)
+		}
+		return fmt.Sprintf("/pve/remotes/%s/%s/%d", g.Remote, kindEndpoint(spec), g.VMID), nil
+	}
+	return fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(spec), g.VMID), nil
+}
+
+// resolveGuestBase resolves the active provider, the guest, and its API base
+// path in one step — the common preamble for guest-scoped commands.
+func resolveGuestBase(cmd *cobra.Command, a *app, spec guestSpec, idArg, node, remote string) (provider.Provider, domain.Guest, string, error) {
+	p, err := a.Provider()
+	if err != nil {
+		return nil, domain.Guest{}, "", err
+	}
+	g, err := resolveGuest(cmd.Context(), p, spec, idArg, node, remote)
+	if err != nil {
+		return nil, domain.Guest{}, "", err
+	}
+	b, err := guestBase(p, g, spec)
+	return p, g, b, err
+}
 
 // rawMutate issues a mutating API call via provider.Raw and, when the response
 // is a UPID, drives the shared task-wait UX. Non-task mutations (e.g. config
@@ -24,12 +54,14 @@ func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path st
 		return err
 	}
 	var upid string
-	if err := protocol.DecodeData(body, &upid); err != nil || !protocol.IsUPID(upid) {
+	if err := protocol.DecodeData(body, &upid); err != nil || upid == "" {
 		return nil // synchronous mutation, nothing to wait on
 	}
-	h, err := protocol.ParseUPID(upid)
+	// parseTaskArg handles both a bare PVE "UPID:..." and the PDM-proxied
+	// "pve:<remote>!UPID:..." form (carrying the remote needed to poll it).
+	h, err := parseTaskArg(upid)
 	if err != nil {
-		return nil
+		return nil // response was not a task id
 	}
 	h.Display = label
 	return finishTask(ctx, a, p, h, wait, timeout, label)
@@ -149,7 +181,7 @@ func newGuestDeleteCmd(a *app, spec guestSpec) *cobra.Command {
 }
 
 func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
-	var node, targetNode string
+	var node, remote, targetNode string
 	var online, wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
@@ -165,23 +197,26 @@ func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
+			// Migration is one of PDM's supported operations (proxied to the
+			// remote), so unlike create/clone/delete it is allowed here.
+			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node, remote)
 			if err != nil {
 				return err
 			}
-			if err := ensureProvisionable(p, "migrate"); err != nil {
+			b, err := guestBase(p, g, spec)
+			if err != nil {
 				return err
 			}
 			params := url.Values{"target": {targetNode}}
 			if online {
 				params.Set("online", "1")
 			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/migrate", g.Node, kindEndpoint(spec), g.VMID)
-			return rawMutate(cmd.Context(), a, p, "POST", path, params,
+			return rawMutate(cmd.Context(), a, p, "POST", b+"/migrate", params,
 				fmt.Sprintf("migrate %s %d -> %s", spec.label, g.VMID, targetNode), wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "current node hosting the guest")
+	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
 	cmd.Flags().StringVar(&targetNode, "target-node", "", "destination node (required)")
 	cmd.Flags().BoolVar(&online, "online", false, "live migration")
 	waitFlags(cmd, &wait, &noWait, &timeout)
@@ -297,37 +332,31 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 
 func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 	cmd := &cobra.Command{Use: "snapshot", Aliases: []string{"snap"}, Short: fmt.Sprintf("Manage %s snapshots", spec.label)}
-	var node string
+	var node, remote string
+	// resolve resolves the guest and its snapshot base path on either provider.
+	base := func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, string, error) {
+		return resolveGuestBase(cmd, a, spec, idArg, node, remote)
+	}
 
 	create := &cobra.Command{
 		Use: "create <vmid> <name>", Short: "Create a snapshot", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.Provider()
+			p, g, b, err := base(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
-			if err != nil {
-				return err
-			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot", g.Node, kindEndpoint(spec), g.VMID)
-			return rawMutate(cmd.Context(), a, p, "POST", path, url.Values{"snapname": {args[1]}},
+			return rawMutate(cmd.Context(), a, p, "POST", b+"/snapshot", url.Values{"snapname": {args[1]}},
 				fmt.Sprintf("snapshot %s %d", spec.label, g.VMID), true, 0)
 		},
 	}
 	list := &cobra.Command{
 		Use: "list <vmid>", Short: "List snapshots", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.Provider()
+			p, _, b, err := base(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
-			if err != nil {
-				return err
-			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot", g.Node, kindEndpoint(spec), g.VMID)
-			body, err := p.Raw(cmd.Context(), "GET", path, nil)
+			body, err := p.Raw(cmd.Context(), "GET", b+"/snapshot", nil)
 			if err != nil {
 				return err
 			}
@@ -354,23 +383,33 @@ func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 	del := &cobra.Command{
 		Use: "delete <vmid> <name>", Aliases: []string{"rm"}, Short: "Delete a snapshot", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.Provider()
-			if err != nil {
-				return err
-			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
+			p, g, b, err := base(cmd, args[0])
 			if err != nil {
 				return err
 			}
 			if err := confirm(a, fmt.Sprintf("delete snapshot %q of %s %d?", args[1], spec.label, g.VMID)); err != nil {
 				return err
 			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot/%s", g.Node, kindEndpoint(spec), g.VMID, args[1])
-			return rawMutate(cmd.Context(), a, p, "DELETE", path, nil,
+			return rawMutate(cmd.Context(), a, p, "DELETE", b+"/snapshot/"+args[1], nil,
 				fmt.Sprintf("delete snapshot %s of %s %d", args[1], spec.label, g.VMID), true, 0)
 		},
 	}
+	rollback := &cobra.Command{
+		Use: "rollback <vmid> <name>", Short: "Roll back to a snapshot", Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, g, b, err := base(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			if err := confirm(a, fmt.Sprintf("roll %s %d back to snapshot %q (discards current state)?", spec.label, g.VMID, args[1])); err != nil {
+				return err
+			}
+			return rawMutate(cmd.Context(), a, p, "POST", b+"/snapshot/"+args[1]+"/rollback", nil,
+				fmt.Sprintf("rollback %s %d to %s", spec.label, g.VMID, args[1]), true, 0)
+		},
+	}
 	cmd.PersistentFlags().StringVar(&node, "node", "", "node hosting the guest")
-	cmd.AddCommand(create, list, del)
+	cmd.PersistentFlags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
+	cmd.AddCommand(create, list, del, rollback)
 	return cmd
 }

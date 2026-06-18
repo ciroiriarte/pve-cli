@@ -32,6 +32,21 @@ func pdmServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/resume", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":"UPID:n1:0001:0002:6A00:qmresume:100:root@pam:"}`))
 	})
+	// proxied snapshot (list/create), migrate, and status
+	// PDM returns proxied task ids in the prefixed "pve:<remote>!UPID:..." form.
+	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Write([]byte(`{"data":"pve:dc-east!UPID:n1:0001:0002:6A00:qmsnapshot:100:root@pam:"}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"name":"current","description":"You are here!"},{"name":"snapA"}]}`))
+	})
+	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/migrate", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":"pve:dc-east!UPID:n2:0001:0002:6A00:qmigrate:100:root@pam:"}`))
+	})
+	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{"qmpstatus":"running","name":"web","cpus":2}}`))
+	})
 	// proxied task polling
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":{"upid":"UPID:n1:...","node":"n1","type":"qmstop","status":"stopped","exitstatus":"OK"}}`))
@@ -176,6 +191,27 @@ func TestParseTaskArgPDMPrefixed(t *testing.T) {
 	bare, err := parseTaskArg("UPID:node1:0001:0002:6A00:qmstart:100:root@pam:")
 	if err != nil || bare.Remote != "" || bare.Backend != "pve" {
 		t.Fatalf("bare UPID should parse as PVE: %+v err=%v", bare, err)
+	}
+}
+
+func TestPDMGuestOpsViaProxy(t *testing.T) {
+	srv := pdmServer(t)
+	defer srv.Close()
+	// snapshot create, migrate, and status are PDM-supported operations routed
+	// through the /pve/remotes/{remote} proxy.
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "snapshot", "create", "100", "snapA")...); err != nil {
+		t.Fatalf("pdm snapshot create: %v", err)
+	}
+	out, err := runCLI(t, withPDMCreds(srv, "vm", "snapshot", "list", "100")...)
+	if err != nil || !strings.Contains(out, "snapA") {
+		t.Fatalf("pdm snapshot list: out=%q err=%v", out, err)
+	}
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "migrate", "100", "--target-node", "n2")...); err != nil {
+		t.Fatalf("pdm migrate: %v", err)
+	}
+	out, err = runCLI(t, withPDMCreds(srv, "vm", "status", "100")...)
+	if err != nil || !strings.Contains(out, "qmpstatus") {
+		t.Fatalf("pdm status: out=%q err=%v", out, err)
 	}
 }
 

@@ -20,16 +20,20 @@ than guessing.
 |---|:--:|:--:|---|
 | `node list/show` | ✅ | ✅ | PDM aggregates nodes across remotes (adds a `remote` column) |
 | `vm`/`ct list`, `guest list` | ✅ | ✅ | PDM lists across all remotes; guest rows gain a `remote` column |
-| `vm`/`ct show` | ✅ | ➖ | PDM: use `pc raw` against the remote (see below) |
-| guest lifecycle (create/clone/migrate/config/snapshot/power/delete) | ✅ | ➖ | PDM proxied lifecycle not wrapped yet — use `pc raw pve remotes <remote> …` |
+| `vm`/`ct show`, `status`, `pending`, `rrddata`, `firewall` | ✅ | ✅ | PDM proxies these to the remote; pass `--remote` if the vmid is shared |
+| power (start/stop/shutdown/reboot/suspend/resume) | ✅ | ✅* | PDM supports start/stop/shutdown/resume; reboot/suspend are PVE-only and refused on PDM |
+| `snapshot` (create/list/delete/rollback) | ✅ | ✅ | PDM proxied |
+| `migrate` | ✅ | ✅ | one of PDM's supported operations (proxied) |
+| provisioning (`create`/`clone`/`config --set`/`delete`) | ✅ | ❌ | PDM has no provisioning API — target the cluster directly (`provider: pve`) |
 | `storage`, `backup` | ✅ | ➖ | PVE-scoped today |
-| `task list/show/wait/log` | ✅ | ➖ | PVE task surface |
-| `remote list/show` | ❌ | ✅ | PDM-only; refused on PVE |
+| `task list/show/wait/log` | ✅ | ✅ | PDM task ids are `pve:<remote>!UPID:…`; the task commands accept them |
+| `remote list/show/add/update/remove`, `cluster-status`, `updates` | ❌ | ✅ | PDM-only; refused on PVE |
+| `console` | ✅ | ❌ | PVE only, ticket auth required (Proxmox rejects tokens on the console websocket) |
 | `raw` | ✅ | ✅ | walks the backend's own embedded schema |
 | `api` | ✅ | ✅ | raw passthrough to either API |
 | `config`/`context`/`auth`/`plugin`/`version`/`completion` | ✅ | ✅ | local, backend-independent |
 
-✅ supported · ➖ reachable via `pc raw`/`pc api` (not yet a curated command) · ❌ not applicable
+✅ supported · ➖ reachable via `pc raw`/`pc api` (not yet a curated command) · ❌ not applicable/unsupported by the backend
 
 ## PDM usage
 
@@ -46,11 +50,24 @@ contexts:
   corp: { profile: corp-pdm, remote: dc-west }
 ```
 
-Until proxied lifecycle is wrapped, drive per-remote operations through the
-escape hatch, which reaches PDM's proxied PVE endpoints:
+Curated per-remote operations (use `--remote` when a vmid exists on more than
+one remote):
 
 ```bash
-pc --provider pdm raw pve remotes dc-west qemu 100 status start --method POST
+pc --provider pdm vm start 100 --remote dc-west
+pc --provider pdm vm snapshot create 100 pre-upgrade --remote dc-west
+pc --provider pdm vm migrate 100 --target-node node-2 --remote dc-west --online
+pc --provider pdm remote cluster-status dc-west
+```
+
+The rest of PDM's API (ceph, sdn, subscriptions, pbs, certificates, access
+administration, node networking/dns/apt) is reachable via the escape hatch,
+which walks PDM's own embedded schema:
+
+```bash
+pc --provider pdm raw                          # discover the full PDM tree
+pc --provider pdm api GET /resources/status    # any endpoint directly
+pc --provider pdm raw pve remotes dc-west qemu 100 status --method GET
 ```
 
 ## Why a hard provider boundary

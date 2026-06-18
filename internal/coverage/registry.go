@@ -39,6 +39,12 @@ func init() {
 	regGuest("snapshot list/create", "GET", "/snapshot")
 	regGuest("snapshot create", "POST", "/snapshot")
 	regGuest("snapshot delete", "DELETE", "/snapshot/{snapname}")
+	regGuest("snapshot rollback", "POST", "/snapshot/{snapname}/rollback")
+	regGuest("status", "GET", "/status/current")
+	regGuest("pending", "GET", "/pending")
+	regGuest("rrddata", "GET", "/rrddata")
+	regGuest("firewall rules", "GET", "/firewall/rules")
+	regGuest("firewall options", "GET", "/firewall/options")
 	regGuest("console", "POST", "/termproxy")
 	regGuest("console", "GET", "/vncwebsocket")
 
@@ -56,14 +62,32 @@ func init() {
 
 	// PDM-specific curated
 	reg("remote list/show", "GET", "/remotes/remote")
+	reg("remote add", "POST", "/remotes/remote")
+	reg("remote update", "PUT", "/remotes/remote/{id}")
+	reg("remote remove", "DELETE", "/remotes/remote/{id}")
+	reg("remote updates", "GET", "/remotes/updates/summary")
 	reg("node/guest list (pdm)", "GET", "/resources/list")
-	// PDM proxied lifecycle (power + config-read + task polling)
+	// PDM proxied guest operations (power, snapshot, migrate, monitor) — the
+	// same suffixes the curated commands build on the PVE provider, under the
+	// /pve/remotes/{remote} proxy.
 	for _, kind := range []string{"qemu", "lxc"} {
+		gp := "/pve/remotes/{remote}/" + kind + "/{vmid}"
 		for _, a := range []string{"start", "stop", "shutdown", "resume"} {
-			reg("vm/ct "+a+" (pdm)", "POST", "/pve/remotes/{remote}/"+kind+"/{vmid}/"+a)
+			reg("vm/ct "+a+" (pdm)", "POST", gp+"/"+a)
 		}
-		reg("vm/ct show (pdm)", "GET", "/pve/remotes/{remote}/"+kind+"/{vmid}/config")
+		reg("vm/ct show (pdm)", "GET", gp+"/config")
+		reg("vm/ct status (pdm)", "GET", gp+"/status")
+		reg("vm/ct pending (pdm)", "GET", gp+"/pending")
+		reg("vm/ct rrddata (pdm)", "GET", gp+"/rrddata")
+		reg("vm/ct migrate (pdm)", "POST", gp+"/migrate")
+		reg("vm/ct firewall rules (pdm)", "GET", gp+"/firewall/rules")
+		reg("vm/ct firewall options (pdm)", "GET", gp+"/firewall/options")
+		reg("vm/ct snapshot list (pdm)", "GET", gp+"/snapshot")
+		reg("vm/ct snapshot create (pdm)", "POST", gp+"/snapshot")
+		reg("vm/ct snapshot delete (pdm)", "DELETE", gp+"/snapshot/{snapname}")
+		reg("vm/ct snapshot rollback (pdm)", "POST", gp+"/snapshot/{snapname}/rollback")
 	}
+	reg("remote cluster-status", "GET", "/pve/remotes/{remote}/cluster-status")
 	reg("task list (pdm)", "GET", "/pve/remotes/{remote}/tasks")
 	reg("task show/wait (pdm)", "GET", "/pve/remotes/{remote}/tasks/{upid}/status")
 	reg("task log (pdm)", "GET", "/pve/remotes/{remote}/tasks/{upid}/log")

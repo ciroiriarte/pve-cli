@@ -6,6 +6,23 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.7.0] — broad PDM curation (snapshot, migrate, monitoring, remote mgmt)
+- **Added**: guest operations are now provider-aware — the same commands work on
+  PVE (by node) and PDM (proxied via `/pve/remotes/{remote}`). New `--remote`
+  on snapshot/migrate.
+  - `vm/ct snapshot rollback`; `snapshot create/list/delete` now work over PDM.
+  - `vm/ct migrate` works over PDM (one of PDM's supported operations).
+  - `vm/ct status`, `pending`, `rrddata`, `firewall rules|options` (read-only).
+- **Added**: PDM remote management — `pc remote add/update/remove`,
+  `remote cluster-status <id>`, `remote updates` (per-node update summary).
+- **Fixed**: `rawMutate` now recognises the PDM-proxied task id form
+  (`pve:<remote>!UPID:...`) returned by snapshot/migrate, so `--wait` actually
+  polls the proxied task instead of silently returning. Found via tests, then
+  confirmed live (snapshot create polls `/pve/remotes/{remote}/tasks/…/status`).
+- Coverage: curated PVE 48→**60**, PDM 20→**45**. The remaining PDM endpoints
+  (ceph, sdn, subscriptions, pbs, certificates, access admin, node config) stay
+  reachable via `pc raw` / `pc api` by design.
+
 ## [0.6.1] — live-hardening of the PDM surface (every PDM-supported op verified)
 - **Fixed**: `pc --provider pdm vm show` returned `400 'state' parameter is
   missing` — PDM's proxied config endpoint requires the mandatory `state=active`
@@ -110,7 +127,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.7.0
 [0.6.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.6.1
 [0.5.4]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.4
 [0.5.3]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.3
