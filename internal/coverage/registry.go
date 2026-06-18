@@ -33,7 +33,7 @@ func init() {
 	regGuest("clone", "POST", "/clone")
 	regGuest("delete", "DELETE", "")
 	regGuest("migrate", "POST", "/migrate")
-	for _, a := range []string{"start", "stop", "shutdown", "reboot"} {
+	for _, a := range []string{"start", "stop", "shutdown", "reboot", "suspend", "resume"} {
 		regGuest(a, "POST", "/status/"+a)
 	}
 	regGuest("snapshot list/create", "GET", "/snapshot")
@@ -59,7 +59,7 @@ func init() {
 	reg("node/guest list (pdm)", "GET", "/resources/list")
 	// PDM proxied lifecycle (power + config-read + task polling)
 	for _, kind := range []string{"qemu", "lxc"} {
-		for _, a := range []string{"start", "stop", "shutdown"} {
+		for _, a := range []string{"start", "stop", "shutdown", "resume"} {
 			reg("vm/ct "+a+" (pdm)", "POST", "/pve/remotes/{remote}/"+kind+"/{vmid}/"+a)
 		}
 		reg("vm/ct show (pdm)", "GET", "/pve/remotes/{remote}/"+kind+"/{vmid}/config")

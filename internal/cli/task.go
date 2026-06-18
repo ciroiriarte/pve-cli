@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,7 +60,7 @@ func newTaskShowCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			h, err := protocol.ParseUPID(args[0])
+			h, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
@@ -84,7 +85,7 @@ func newTaskWaitCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			h, err := protocol.ParseUPID(args[0])
+			h, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
@@ -117,7 +118,7 @@ func newTaskLogCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			h, err := protocol.ParseUPID(args[0])
+			h, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
@@ -127,6 +128,23 @@ func newTaskLogCmd(a *app) *cobra.Command {
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream new log lines until the task stops")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max lines per fetch (0 = server default)")
 	return cmd
+}
+
+// parseTaskArg parses a task id argument. PDM proxied actions emit a
+// remote-scoped id of the form "pve:<remote>!UPID:..." which carries the remote
+// the task commands need; PDM's task endpoint also expects that full prefixed id
+// in the path. A bare "UPID:..." is parsed directly (PVE).
+func parseTaskArg(arg string) (protocol.TaskHandle, error) {
+	if i := strings.Index(arg, "!"); i > 0 && strings.HasPrefix(arg, "pve:") && strings.Contains(arg[i:], "UPID:") {
+		remote := strings.TrimPrefix(arg[:i], "pve:")
+		h, err := protocol.ParseUPID(arg[i+1:])
+		if err != nil {
+			h = protocol.TaskHandle{UPID: arg[i+1:]}
+		}
+		h.Backend, h.Remote, h.UPID = "pdm", remote, arg
+		return h, nil
+	}
+	return protocol.ParseUPID(arg)
 }
 
 // streamTaskLog prints task log lines. With follow, it polls for new lines

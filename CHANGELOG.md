@@ -6,6 +6,31 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.6.1] — live-hardening of the PDM surface (every PDM-supported op verified)
+- **Fixed**: `pc --provider pdm vm show` returned `400 'state' parameter is
+  missing` — PDM's proxied config endpoint requires the mandatory `state=active`
+  enum (unlike the direct PVE API). Found via live testing against PDM 1.1.
+- **Changed**: `pc vm/ct console` now fails fast under token auth with actionable
+  guidance — Proxmox rejects API tokens on the console websocket (the upgrade
+  succeeds then the server closes with 1006); ticket auth is required. Verified
+  live: console works end-to-end with ticket auth, token auth always closes.
+- **Added**: `--remote` flag on `vm/ct show`, the power verbs, and `config` to
+  disambiguate a vmid that exists on multiple PDM remotes (previously such a vmid
+  errored with a conflict and could only be reached via `pc raw`); the conflict
+  message now points at `--remote`. Verified live against PDM (vmid 100 shared by
+  MP01/MP02/SDC). `--remote` errors clearly on the PVE provider.
+- **Added**: `vm/ct suspend` and `resume` power verbs (previously unreachable —
+  the PDM provider advertised `resume` but no command invoked it). `resume` is
+  PDM-proxied; `suspend` is PVE-only and refused cleanly on PDM. Verified live.
+- **Fixed**: `pc --provider pdm task show/wait/log` now accept the prefixed task
+  id PDM emits (`pve:<remote>!UPID:...`) — previously rejected as "not a UPID",
+  so a `--no-wait` PDM action's printed id could not be fed back in. The remote
+  is parsed from the prefix; the full id is used in the PDM task path.
+- **Known limitation**: PDM `guest list` status reflects PDM's cached resource
+  view and can lag a power action, and a freshly-created guest is not visible to
+  PDM until its next poll (use `--node` to act before then). The action itself
+  completes — verified against the cluster directly.
+
 ## [0.6.0] — coverage matrix, PDM lifecycle verbs, serial console
 - **Added**: API coverage matrix — `internal/coverage` registry + `make coverage`
   → `docs/coverage.md` (curated vs raw-only per provider; PVE 44/675, PDM 19/318).
@@ -85,7 +110,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.6.1
 [0.5.4]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.4
 [0.5.3]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.3
 [0.5.2]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.2

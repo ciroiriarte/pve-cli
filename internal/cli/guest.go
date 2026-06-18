@@ -41,6 +41,8 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestPowerCmd(a, spec, "stop", "Stop (hard)", true),
 		newGuestPowerCmd(a, spec, "shutdown", "Shut down (graceful)", true),
 		newGuestPowerCmd(a, spec, "reboot", "Reboot", true),
+		newGuestPowerCmd(a, spec, "suspend", "Suspend (pause)", true),
+		newGuestPowerCmd(a, spec, "resume", "Resume a suspended guest", false),
 		newGuestCreateCmd(a, spec),
 		newGuestCloneCmd(a, spec),
 		newGuestDeleteCmd(a, spec),
@@ -78,7 +80,7 @@ func newGuestListCmd(a *app, spec guestSpec) *cobra.Command {
 }
 
 func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
-	var node string
+	var node, remote string
 	cmd := &cobra.Command{
 		Use:     "show <vmid>",
 		Short:   fmt.Sprintf("Show a %s and its config", spec.label),
@@ -89,7 +91,7 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
+			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node, remote)
 			if err != nil {
 				return err
 			}
@@ -101,11 +103,12 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	return cmd
 }
 
 func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive bool) *cobra.Command {
-	var node string
+	var node, remote string
 	var wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
@@ -118,7 +121,7 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
+			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node, remote)
 			if err != nil {
 				return err
 			}
@@ -136,6 +139,7 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for the task to finish (default)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
 	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait for the task (0 = no limit)")
@@ -143,14 +147,37 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 	return cmd
 }
 
-// resolveGuest finds a guest by vmid, honoring an explicit --node override.
-func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idArg, node string) (domain.Guest, error) {
+// resolveGuest finds a guest by vmid, honoring an explicit --node override and
+// an optional --remote (PDM) to disambiguate a vmid present on several remotes.
+func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idArg, node string, remoteOpt ...string) (domain.Guest, error) {
 	vmid, err := strconv.Atoi(idArg)
 	if err != nil {
 		return domain.Guest{}, fmt.Errorf("invalid vmid %q: must be a number", idArg)
 	}
+	remote := ""
+	if len(remoteOpt) > 0 {
+		remote = remoteOpt[0]
+	}
 	if node != "" {
-		return domain.Guest{VMID: vmid, Kind: spec.kind, Node: node}, nil
+		// Explicit node skips auto-resolution; carry remote too so PDM proxied
+		// calls (which are remote-scoped, not node-scoped) still work.
+		return domain.Guest{VMID: vmid, Kind: spec.kind, Node: node, Remote: remote}, nil
+	}
+	if remote != "" {
+		gr, ok := p.(interface {
+			ResolveGuestInRemote(context.Context, int, string) (domain.Guest, error)
+		})
+		if !ok {
+			return domain.Guest{}, fmt.Errorf("--remote is only supported with the PDM provider")
+		}
+		g, err := gr.ResolveGuestInRemote(ctx, vmid, remote)
+		if err != nil {
+			return domain.Guest{}, err
+		}
+		if g.Kind != spec.kind {
+			return domain.Guest{}, fmt.Errorf("%d is a %s, not a %s", vmid, g.Kind, spec.label)
+		}
+		return g, nil
 	}
 	g, err := p.ResolveGuest(ctx, vmid)
 	if err != nil {

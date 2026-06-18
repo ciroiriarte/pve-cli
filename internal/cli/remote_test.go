@@ -29,12 +29,21 @@ func pdmServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/stop", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":"UPID:n1:0001:0002:6A00:qmstop:100:root@pam:"}`))
 	})
+	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/resume", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":"UPID:n1:0001:0002:6A00:qmresume:100:root@pam:"}`))
+	})
 	// proxied task polling
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":{"upid":"UPID:n1:...","node":"n1","type":"qmstop","status":"stopped","exitstatus":"OK"}}`))
 	})
-	// proxied config read
+	// proxied config read — real PDM requires the mandatory `state` enum param
+	// (unlike direct PVE); reject if it is missing or not "active".
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "active" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"data":null,"errors":{"state":"parameter is missing and it is not optional."}}`))
+			return
+		}
 		w.Write([]byte(`{"data":{"cores":2,"name":"web","net0":"virtio,bridge=vmbr0"}}`))
 	})
 	return httptest.NewServer(mux)
@@ -104,6 +113,69 @@ func TestPDMVmShowViaProxy(t *testing.T) {
 	}
 	if !strings.Contains(out, "cores") {
 		t.Errorf("expected config (cores) via PDM proxy:\n%s", out)
+	}
+}
+
+func TestPDMRemoteFlagDisambiguates(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/remotes/remote", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"dc-east","type":"pve","nodes":["n1:8006"]},{"id":"dc-west","type":"pve","nodes":["n3:8006"]}]}`))
+	})
+	// vmid 100 exists on BOTH remotes — ambiguous without --remote.
+	mux.HandleFunc("/api2/json/resources/list", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[
+			{"remote":"dc-east","resources":[{"type":"pve-qemu","vmid":100,"name":"east-web","node":"n1","status":"running"}]},
+			{"remote":"dc-west","resources":[{"type":"pve-qemu","vmid":100,"name":"west-web","node":"n3","status":"running"}]}
+		]}`))
+	})
+	mux.HandleFunc("/api2/json/pve/remotes/dc-west/qemu/100/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "active" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"data":{"name":"west-web","cores":4}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Without --remote: a clear conflict that points at the flag.
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "show", "100")...); err == nil || !strings.Contains(err.Error(), "use --remote") {
+		t.Fatalf("expected ambiguity conflict suggesting --remote, got %v", err)
+	}
+	// With --remote: resolves to that remote's guest.
+	out, err := runCLI(t, withPDMCreds(srv, "vm", "show", "100", "--remote", "dc-west")...)
+	if err != nil {
+		t.Fatalf("vm show --remote dc-west: %v", err)
+	}
+	if !strings.Contains(out, "west-web") {
+		t.Errorf("expected dc-west guest config, got:\n%s", out)
+	}
+}
+
+func TestPDMVmResumeViaProxy(t *testing.T) {
+	srv := pdmServer(t)
+	defer srv.Close()
+	// resume is a PDM-proxied power action; it must resolve the remote, POST the
+	// proxied resume, and poll the task to completion.
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "resume", "100")...); err != nil {
+		t.Fatalf("pdm vm resume: %v", err)
+	}
+}
+
+func TestParseTaskArgPDMPrefixed(t *testing.T) {
+	// PDM emits "pve:<remote>!UPID:..."; the parser must extract the remote, keep
+	// the full prefixed id as UPID (PDM's task path wants it), and tag backend pdm.
+	h, err := parseTaskArg("pve:MP02!UPID:node1:0001:0002:6A00:qmstart:100:root@pam!tok:")
+	if err != nil {
+		t.Fatalf("parseTaskArg: %v", err)
+	}
+	if h.Remote != "MP02" || h.Backend != "pdm" || !strings.HasPrefix(h.UPID, "pve:MP02!UPID:") {
+		t.Fatalf("bad PDM task handle: %+v", h)
+	}
+	// A bare UPID still parses as a PVE task.
+	bare, err := parseTaskArg("UPID:node1:0001:0002:6A00:qmstart:100:root@pam:")
+	if err != nil || bare.Remote != "" || bare.Backend != "pve" {
+		t.Fatalf("bare UPID should parse as PVE: %+v err=%v", bare, err)
 	}
 }
 

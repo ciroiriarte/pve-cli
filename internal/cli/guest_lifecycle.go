@@ -189,7 +189,7 @@ func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 }
 
 func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
-	var node string
+	var node, remote string
 	var set []string
 	cmd := &cobra.Command{
 		Use:     "config <vmid>",
@@ -201,7 +201,7 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
+			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node, remote)
 			if err != nil {
 				return err
 			}
@@ -233,6 +233,7 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest")
+	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	cmd.Flags().StringArrayVar(&set, "set", nil, "set a config key (key=value, repeatable)")
 	return cmd
 }

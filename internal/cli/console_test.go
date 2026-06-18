@@ -90,3 +90,15 @@ func TestRunConsoleRejectsBadAuth(t *testing.T) {
 		t.Fatalf("expected auth rejection, got %v", err)
 	}
 }
+
+// Proxmox rejects API tokens on the console websocket (verified live: the
+// upgrade succeeds then the server closes with 1006). The command must fail
+// early with actionable guidance instead of a cryptic websocket error.
+func TestConsoleRejectsTokenAuth(t *testing.T) {
+	srv := fakeServer(t)
+	defer srv.Close()
+	_, err := runCLI(t, withCreds(srv, "vm", "console", "100")...)
+	if err == nil || !strings.Contains(err.Error(), "requires ticket auth") {
+		t.Fatalf("expected token-auth console rejection, got %v", err)
+	}
+}

@@ -102,7 +102,9 @@ func newGuestConsoleCmd(a *app, spec guestSpec) *cobra.Command {
 		Use:   "console <vmid>",
 		Short: fmt.Sprintf("Attach to a %s serial console (Ctrl-] to quit)", spec.label),
 		Long: "Opens an interactive serial console over a websocket (termproxy). The guest\n" +
-			"must have a serial port configured. PVE provider only. Ctrl-] detaches.",
+			"must have a serial port configured (e.g. `--set serial0=socket`). PVE provider\n" +
+			"only, and requires ticket auth (user/password) — Proxmox does not accept API\n" +
+			"tokens on the console websocket. Ctrl-] detaches.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := a.Provider()
@@ -111,6 +113,12 @@ func newGuestConsoleCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			if p.Name() != "pve" {
 				return fmt.Errorf("console is only available with the pve provider (not %s)", p.Name())
+			}
+			// Proxmox rejects API tokens on the console websocket (the upgrade
+			// succeeds then the server closes the connection); the vncwebsocket
+			// data channel requires ticket/cookie auth. Fail early and clearly.
+			if a.settings.AuthType == "token" {
+				return fmt.Errorf("the serial console requires ticket auth (user/password); Proxmox does not accept API tokens on the console websocket — use a ticket-auth profile or `pc auth login --user`")
 			}
 			if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 				return fmt.Errorf("console requires an interactive terminal (stdin/stdout must be a TTY)")

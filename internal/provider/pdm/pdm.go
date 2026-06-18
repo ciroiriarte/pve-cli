@@ -160,8 +160,23 @@ func (p *PDM) ResolveGuest(ctx context.Context, vmid int) (domain.Guest, error) 
 		for _, m := range matches {
 			remotes = append(remotes, m.Remote)
 		}
-		return domain.Guest{}, &protocol.APIError{Kind: protocol.KindConflict, Message: fmt.Sprintf("guest id %d exists on multiple remotes: %s", vmid, strings.Join(remotes, ", "))}
+		return domain.Guest{}, &protocol.APIError{Kind: protocol.KindConflict, Message: fmt.Sprintf("guest id %d exists on multiple remotes: %s (use --remote to choose one)", vmid, strings.Join(remotes, ", "))}
 	}
+}
+
+// ResolveGuestInRemote finds a vmid scoped to a single remote, disambiguating a
+// vmid that exists on several remotes (backs the --remote flag).
+func (p *PDM) ResolveGuestInRemote(ctx context.Context, vmid int, remote string) (domain.Guest, error) {
+	guests, err := p.ListGuests(ctx, provider.GuestFilter{})
+	if err != nil {
+		return domain.Guest{}, err
+	}
+	for _, g := range guests {
+		if g.VMID == vmid && strings.EqualFold(g.Remote, remote) {
+			return g, nil
+		}
+	}
+	return domain.Guest{}, &protocol.APIError{Kind: protocol.KindNotFound, Message: fmt.Sprintf("no guest with id %d found on remote %q", vmid, remote)}
 }
 
 // Raw issues an arbitrary PDM API call (escape hatch; also reaches proxied
@@ -210,8 +225,10 @@ func (p *PDM) GuestPower(ctx context.Context, g domain.Guest, action string) (pr
 // GuestConfig reads a guest's config via the proxy.
 func (p *PDM) GuestConfig(ctx context.Context, g domain.Guest) (map[string]any, error) {
 	path := fmt.Sprintf("/pve/remotes/%s/%s/%d/config", g.Remote, guestEndpoint(g.Kind), g.VMID)
+	// PDM's proxied config endpoint requires the mandatory `state` enum param
+	// (unlike the direct PVE API); "active" returns the running/current config.
 	var cfg map[string]any
-	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path}, &cfg)
+	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path, Query: url.Values{"state": {"active"}}}, &cfg)
 	return cfg, err
 }
 
