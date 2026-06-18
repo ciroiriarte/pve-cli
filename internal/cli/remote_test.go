@@ -10,13 +10,19 @@ import (
 func pdmServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api2/json/remotes", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"dc-east","type":"pve","nodes":"n1,n2"},{"id":"dc-west","type":"pve","nodes":"n3"}]}`))
+	// Real PDM shapes: remotes live under /remotes/remote with nodes as an
+	// array of "host:port,fingerprint=..." strings; resource types are prefixed
+	// (pve-qemu / pve-lxc / pve-node).
+	mux.HandleFunc("/api2/json/remotes/remote", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[
+			{"id":"dc-east","type":"pve","nodes":["n1.lab:8006,fingerprint=AA","n2.lab:8006,fingerprint=BB"]},
+			{"id":"dc-west","type":"pve","nodes":["n3.lab:8006,fingerprint=CC"]}
+		]}`))
 	})
 	mux.HandleFunc("/api2/json/resources/list", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[
-			{"remote":"dc-east","resources":[{"type":"qemu","vmid":100,"name":"web","node":"n1","status":"running"}]},
-			{"remote":"dc-west","resources":[{"type":"lxc","vmid":200,"name":"ct1","node":"n3","status":"stopped"}]}
+			{"remote":"dc-east","resources":[{"type":"pve-qemu","vmid":100,"name":"web","node":"n1","status":"running"}]},
+			{"remote":"dc-west","resources":[{"type":"pve-lxc","vmid":200,"name":"ct1","node":"n3","status":"stopped"}]}
 		]}`))
 	})
 	return httptest.NewServer(mux)

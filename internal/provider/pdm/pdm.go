@@ -31,11 +31,40 @@ type PDM struct {
 func (p *PDM) Name() string                        { return "pdm" }
 func (p *PDM) Capabilities() provider.Capabilities { return provider.Capabilities{Remotes: true} }
 
-// ListRemotes returns the clusters managed by this PDM.
+// ListRemotes returns the clusters managed by this PDM. The list lives at
+// /remotes/remote (GET /remotes is just the API index), and each remote's
+// "nodes" is an array of "host:port,fingerprint=..." strings.
 func (p *PDM) ListRemotes(ctx context.Context) ([]domain.Remote, error) {
-	var remotes []domain.Remote
-	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: "/remotes"}, &remotes)
-	return remotes, err
+	var raw []struct {
+		ID    string   `json:"id"`
+		Type  string   `json:"type"`
+		Nodes []string `json:"nodes"`
+	}
+	if err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: "/remotes/remote"}, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.Remote, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, domain.Remote{ID: r.ID, Type: r.Type, Nodes: shortNodes(r.Nodes)})
+	}
+	return out, nil
+}
+
+// shortNodes renders a remote's node list compactly (short hostnames), dropping
+// the ":port,fingerprint=..." suffix.
+func shortNodes(ns []string) string {
+	parts := make([]string, 0, len(ns))
+	for _, n := range ns {
+		h := n
+		if i := strings.IndexAny(h, ":,"); i >= 0 {
+			h = h[:i]
+		}
+		if i := strings.IndexByte(h, '.'); i >= 0 {
+			h = h[:i]
+		}
+		parts = append(parts, h)
+	}
+	return strings.Join(parts, ",")
 }
 
 // resourceEntry is one per-remote group from GET /resources/list.
@@ -71,7 +100,7 @@ func (p *PDM) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	var out []domain.Node
 	for _, e := range entries {
 		for _, r := range e.Resources {
-			if r.Type != "node" {
+			if r.Type != "pve-node" && r.Type != "node" {
 				continue
 			}
 			out = append(out, domain.Node{Name: r.Node, Status: r.Status, MaxMem: r.MaxMem, Uptime: r.Uptime, Remote: e.Remote})
@@ -172,9 +201,9 @@ func lifecycleUnsupported(op string) error {
 
 func kindFromType(t string) (domain.GuestKind, bool) {
 	switch t {
-	case "qemu":
+	case "pve-qemu", "qemu":
 		return domain.KindVM, true
-	case "lxc":
+	case "pve-lxc", "lxc":
 		return domain.KindCT, true
 	default:
 		return "", false

@@ -21,10 +21,10 @@ type TicketProvider struct {
 	password string
 	client   *http.Client
 
-	mu     sync.Mutex
-	ticket string
-	csrf   string
-	expiry time.Time
+	mu      sync.Mutex
+	cookies []*http.Cookie // auth cookie(s) from Set-Cookie (PVE or PDM)
+	csrf    string
+	expiry  time.Time
 }
 
 // NewTicket builds a TicketProvider. client must be configured with the same
@@ -50,9 +50,11 @@ func (t *TicketProvider) Apply(req *http.Request, write bool) error {
 		return err
 	}
 	t.mu.Lock()
-	ticket, csrf := t.ticket, t.csrf
+	cookies, csrf := t.cookies, t.csrf
 	t.mu.Unlock()
-	req.AddCookie(&http.Cookie{Name: "PVEAuthCookie", Value: ticket})
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
 	if write {
 		req.Header.Set("CSRFPreventionToken", csrf)
 	}
@@ -74,7 +76,7 @@ func (t *TicketProvider) Kind() string { return "ticket" }
 func (t *TicketProvider) ensure(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.ticket != "" && time.Now().Before(t.expiry) {
+	if len(t.cookies) > 0 && time.Now().Before(t.expiry) {
 		return nil
 	}
 	form := url.Values{"username": {t.user}, "password": {t.password}}
@@ -102,10 +104,19 @@ func (t *TicketProvider) ensure(ctx context.Context) error {
 	if err := json.Unmarshal(body, &env); err != nil {
 		return fmt.Errorf("decode ticket response: %w", err)
 	}
-	if env.Data.Ticket == "" {
-		return fmt.Errorf("ticket login: empty ticket in response")
+
+	// The ticket is delivered as a Set-Cookie (PVE: PVEAuthCookie; PDM:
+	// __Host-PDMAuthCookie, HttpOnly with no body ticket). Capture whatever the
+	// server set; fall back to constructing PVEAuthCookie from the body ticket
+	// for servers that only return it in the JSON.
+	cookies := resp.Cookies()
+	if len(cookies) == 0 && env.Data.Ticket != "" {
+		cookies = []*http.Cookie{{Name: "PVEAuthCookie", Value: env.Data.Ticket}}
 	}
-	t.ticket = env.Data.Ticket
+	if len(cookies) == 0 {
+		return fmt.Errorf("ticket login: no auth cookie or ticket in response")
+	}
+	t.cookies = cookies
 	t.csrf = env.Data.CSRF
 	// Tickets last ~2h; refresh a little early.
 	t.expiry = time.Now().Add(110 * time.Minute)
