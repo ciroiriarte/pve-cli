@@ -37,6 +37,14 @@ type Node struct {
 	Remote string  `json:"remote,omitempty"` // PDM only
 }
 
+// Remote is a cluster managed by Proxmox Datacenter Manager (PDM only).
+type Remote struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"` // pve | pbs
+	Nodes string `json:"nodes,omitempty"`
+	Web   string `json:"web-url,omitempty"`
+}
+
 // Storage is a configured storage backend.
 type Storage struct {
 	Name    string `json:"storage"`

@@ -4,6 +4,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -13,6 +14,10 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/ciroiriarte/pve-cli/internal/transport"
 )
+
+// ErrUnsupported is returned by a provider for operations its backend does not
+// support (e.g. remotes on direct PVE, or proxied lifecycle on PDM).
+var ErrUnsupported = errors.New("operation not supported by this provider")
 
 // Capabilities declares which command groups a provider supports, used to gate
 // command registration and help.
@@ -51,6 +56,9 @@ type Provider interface {
 	ListTasks(ctx context.Context, node string) ([]protocol.TaskStatus, error)
 	// TaskLog returns task log lines starting at line opts.Start (1-based).
 	TaskLog(ctx context.Context, h protocol.TaskHandle, opts LogOptions) ([]protocol.LogLine, error)
+
+	// ListRemotes lists clusters managed by PDM (ErrUnsupported on direct PVE).
+	ListRemotes(ctx context.Context) ([]domain.Remote, error)
 
 	// Raw issues an arbitrary API call (backs `pc api`).
 	Raw(ctx context.Context, method, path string, params url.Values) ([]byte, error)
@@ -105,24 +113,30 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 
 	switch s.Provider {
 	case "pve", "":
-		return newPVE(cl), nil
+		return build(pveConstructor, "pve", cl)
 	case "pdm":
-		return nil, fmt.Errorf("the pdm provider is not yet implemented (planned for M4)")
+		return build(pdmConstructor, "pdm", cl)
 	default:
 		return nil, fmt.Errorf("unknown provider %q", s.Provider)
 	}
 }
 
-// pveConstructor is wired by the pve subpackage via SetPVEFactory to avoid an
-// import cycle while keeping New as the single entry point.
-var pveConstructor func(*transport.Client) Provider
+// Backend constructors are registered by the provider subpackages via init() to
+// avoid an import cycle while keeping New as the single entry point.
+var (
+	pveConstructor func(*transport.Client) Provider
+	pdmConstructor func(*transport.Client) Provider
+)
 
 // SetPVEFactory registers the PVE provider constructor.
 func SetPVEFactory(f func(*transport.Client) Provider) { pveConstructor = f }
 
-func newPVE(cl *transport.Client) Provider {
-	if pveConstructor == nil {
-		panic("pve provider factory not registered")
+// SetPDMFactory registers the PDM provider constructor.
+func SetPDMFactory(f func(*transport.Client) Provider) { pdmConstructor = f }
+
+func build(ctor func(*transport.Client) Provider, name string, cl *transport.Client) (Provider, error) {
+	if ctor == nil {
+		return nil, fmt.Errorf("%s provider not registered (missing import)", name)
 	}
-	return pveConstructor(cl)
+	return ctor(cl), nil
 }

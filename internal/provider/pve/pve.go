@@ -231,6 +231,11 @@ func (p *PVE) TaskLog(ctx context.Context, h protocol.TaskHandle, opts provider.
 	return lines, err
 }
 
+// ListRemotes is unsupported on a direct cluster (PDM-only feature).
+func (p *PVE) ListRemotes(context.Context) ([]domain.Remote, error) {
+	return nil, provider.ErrUnsupported
+}
+
 // Raw issues an arbitrary API call.
 func (p *PVE) Raw(ctx context.Context, method, path string, params url.Values) ([]byte, error) {
 	req := &transport.Request{Method: strings.ToUpper(method), Path: normalizePath(path)}

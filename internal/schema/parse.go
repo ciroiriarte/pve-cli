@@ -56,6 +56,11 @@ func Parse(treeJSON []byte) (*API, error) {
 		node := convert(r, api)
 		api.Tree = append(api.Tree, node)
 	}
+	// PDM wraps everything under a single "/" root; flatten it so top-level
+	// segments (access, pve, remotes, resources, …) traverse like PVE's roots.
+	if len(api.Tree) == 1 && api.Tree[0].Path == "/" {
+		api.Tree = api.Tree[0].Children
+	}
 	SortEndpoints(api.Endpoints)
 	return api, nil
 }

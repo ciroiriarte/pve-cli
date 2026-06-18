@@ -13,6 +13,7 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/version"
 
 	// Register backend providers.
+	_ "github.com/ciroiriarte/pve-cli/internal/provider/pdm"
 	_ "github.com/ciroiriarte/pve-cli/internal/provider/pve"
 )
 
@@ -22,6 +23,7 @@ type app struct {
 	profile     string
 	context     string
 	server      string
+	provider    string
 	tokenID     string
 	secret      string
 	format      string
@@ -46,19 +48,7 @@ func (a *app) Provider() (provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	ov := config.Overrides{
-		Profile:     a.profile,
-		Context:     a.context,
-		Server:      a.server,
-		TokenID:     a.tokenID,
-		Secret:      a.secret,
-		Output:      a.format,
-		Fingerprint: a.fingerprint,
-	}
-	if a.insecure {
-		ov.Insecure = &a.insecure
-	}
-	s, err := config.Resolve(f, ov)
+	s, err := config.Resolve(f, a.overrides())
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +62,38 @@ func (a *app) Provider() (provider.Provider, error) {
 	}
 	a.prov = p
 	return p, nil
+}
+
+// overrides builds the config Overrides from the parsed global flags.
+func (a *app) overrides() config.Overrides {
+	ov := config.Overrides{
+		Profile:     a.profile,
+		Context:     a.context,
+		Server:      a.server,
+		Provider:    a.provider,
+		TokenID:     a.tokenID,
+		Secret:      a.secret,
+		Output:      a.format,
+		Fingerprint: a.fingerprint,
+	}
+	if a.insecure {
+		ov.Insecure = &a.insecure
+	}
+	return ov
+}
+
+// providerName resolves the configured backend ("pve"|"pdm") without building a
+// client or requiring credentials — used to pick the schema for `pc raw`.
+func (a *app) providerName() string {
+	f, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return "pve"
+	}
+	s, err := config.Resolve(f, a.overrides())
+	if err != nil || s.Provider == "" {
+		return "pve"
+	}
+	return s.Provider
 }
 
 // outputOptions builds render options from the resolved global flags.
@@ -118,6 +140,7 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&a.profile, "profile", "", "config profile to use")
 	pf.StringVar(&a.context, "context", "", "config context to use")
 	pf.StringVar(&a.server, "server", "", "Proxmox API base URL (e.g. https://host:8006)")
+	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm (overrides profile)")
 	pf.StringVar(&a.tokenID, "token-id", "", "API token id (user@realm!name)")
 	pf.StringVar(&a.secret, "token-secret", "", "API token secret")
 	pf.StringVarP(&a.format, "format", "o", "", "output format: table|json|yaml|csv|value")
@@ -136,6 +159,7 @@ func NewRootCmd() *cobra.Command {
 		newGuestTopCmd(a),
 		newStorageCmd(a),
 		newBackupCmd(a),
+		newRemoteCmd(a),
 		newTaskCmd(a),
 		newRawCmd(a),
 		newAPICmd(a),

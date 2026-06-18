@@ -35,6 +35,7 @@ type Overrides struct {
 	Profile     string
 	Context     string
 	Server      string
+	Provider    string
 	TokenID     string
 	Secret      string
 	Output      string
@@ -108,6 +109,7 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	}
 
 	// 5. Explicit flags override everything.
+	s.Provider = firstNonEmpty(ov.Provider, s.Provider)
 	s.Server = firstNonEmpty(ov.Server, s.Server)
 	s.TokenID = firstNonEmpty(ov.TokenID, s.TokenID)
 	if ov.Secret != "" {

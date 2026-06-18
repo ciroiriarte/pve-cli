@@ -162,20 +162,26 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 }
 
 func guestsTable(guests []domain.Guest) output.Tabular {
-	t := output.Tabular{
-		Columns: []string{"vmid", "name", "kind", "node", "status", "maxmem", "uptime"},
-		Raw:     guests,
-	}
+	// Include the remote column only when present (PDM); keeps PVE output clean.
+	hasRemote := false
 	for _, g := range guests {
-		t.Rows = append(t.Rows, []string{
-			strconv.Itoa(g.VMID),
-			g.Name,
-			string(g.Kind),
-			g.Node,
-			g.Status,
-			humanBytes(g.MaxMem),
-			humanUptime(g.Uptime),
-		})
+		if g.Remote != "" {
+			hasRemote = true
+			break
+		}
+	}
+	cols := []string{"vmid", "name", "kind", "node", "status", "maxmem", "uptime"}
+	if hasRemote {
+		cols = []string{"vmid", "name", "kind", "remote", "node", "status", "maxmem", "uptime"}
+	}
+	t := output.Tabular{Columns: cols, Raw: guests}
+	for _, g := range guests {
+		row := []string{strconv.Itoa(g.VMID), g.Name, string(g.Kind)}
+		if hasRemote {
+			row = append(row, g.Remote)
+		}
+		row = append(row, g.Node, g.Status, humanBytes(g.MaxMem), humanUptime(g.Uptime))
+		t.Rows = append(t.Rows, row)
 	}
 	return t
 }

@@ -9,10 +9,19 @@ import (
 
 	"github.com/spf13/cobra"
 
+	pdmschema "github.com/ciroiriarte/pve-cli/internal/generated/pdm"
 	pveschema "github.com/ciroiriarte/pve-cli/internal/generated/pve"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/ciroiriarte/pve-cli/internal/schema"
 )
+
+// activeSchema returns the embedded schema for the configured backend.
+func (a *app) activeSchema() (*schema.API, error) {
+	if a.providerName() == "pdm" {
+		return pdmschema.Schema()
+	}
+	return pveschema.Schema()
+}
 
 func newRawCmd(a *app) *cobra.Command {
 	var method string
@@ -32,7 +41,7 @@ func newRawCmd(a *app) *cobra.Command {
 			"  pc raw nodes pve-01 qemu --help          # describe the endpoint",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			api, err := pveschema.Schema()
+			api, err := a.activeSchema()
 			if err != nil {
 				return err
 			}
@@ -88,7 +97,7 @@ func newRawCmd(a *app) *cobra.Command {
 	cmd.SetHelpFunc(func(c *cobra.Command, _ []string) {
 		segs := c.Flags().Args()
 		if len(segs) > 0 {
-			if api, err := pveschema.Schema(); err == nil {
+			if api, err := a.activeSchema(); err == nil {
 				if node, path, err := api.Resolve(segs); err == nil && node != nil {
 					describeNode(os.Stdout, node, path)
 					return
