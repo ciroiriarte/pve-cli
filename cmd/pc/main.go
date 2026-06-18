@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pc is the pve-cli binary: a remote-first CLI for Proxmox VE.
 package main
 

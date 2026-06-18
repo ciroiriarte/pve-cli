@@ -56,8 +56,8 @@ Then run `pc --help`.
 
 ## Notes / TODO
 
-- **License**: the spec/control declare `Apache-2.0` as a placeholder. Pick a
-  license, add a `LICENSE` file, and re-enable `%license LICENSE` in the spec.
+- **License**: Apache-2.0 (`LICENSE` + `NOTICE` at the repo root); the spec ships
+  `%license LICENSE` and `debian/copyright` references `/usr/share/common-licenses/Apache-2.0`.
 - The Debian `golang-go (>= 2:1.22~)` build-dep requires the distro to ship Go
   ≥ 1.22 (true for the targeted releases). For older bases, switch to the OBS
   `go1.x` images.

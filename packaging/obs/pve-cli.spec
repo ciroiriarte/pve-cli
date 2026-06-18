@@ -58,9 +58,8 @@ export GOFLAGS="-mod=vendor"
 go test ./...
 
 %files
-# NOTE: License is a placeholder (Apache-2.0) until the project picks one and
-# adds a LICENSE file; add `%%license LICENSE` here once it exists.
-%doc README.md
+%license LICENSE
+%doc README.md NOTICE
 %{_bindir}/pc
 %{_mandir}/man1/pc*.1*
 %{_datadir}/bash-completion/completions/pc

@@ -1,0 +1,11 @@
+pve-cli
+Copyright 2026 Ciro Iriarte
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+pve-cli is an unofficial, community tool. It is NOT affiliated with, endorsed
+by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox", "Proxmox VE", and
+"Proxmox Datacenter Manager" are trademarks of Proxmox Server Solutions GmbH and
+are used here only nominatively to describe interoperability. Use of these marks
+is governed by Proxmox's trademark policy, independently of this software's
+copyright license.

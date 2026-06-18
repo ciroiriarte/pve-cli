@@ -118,4 +118,7 @@ make docs     # generate man pages, shell completions, and the markdown
 
 ## License
 
-TBD.
+[Apache-2.0](LICENSE). See [`NOTICE`](NOTICE) for the trademark/unofficial-tool
+notice. Using the Proxmox REST API imposes no licensing obligation on this
+client (Proxmox confirms API access is not derivative work); the Apache-2.0
+choice is independent of Proxmox VE's own AGPLv3 license.
