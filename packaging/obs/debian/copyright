@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: pve-cli
-Upstream-Contact: Ciro Iriarte <ciro.iriarte@gmail.com>
+Upstream-Contact: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 Source: https://github.com/ciroiriarte/pve-cli
 
 Files: *

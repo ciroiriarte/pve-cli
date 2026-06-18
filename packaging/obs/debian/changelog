@@ -3,4 +3,4 @@ pve-cli (0.5.0-1) unstable; urgency=medium
   * Initial OBS packaging: ships the `pc` binary, man pages, and shell
     completions. Built offline from vendored Go modules.
 
- -- Ciro Iriarte <ciro.iriarte@gmail.com>  Thu, 18 Jun 2026 00:00:00 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 00:00:00 +0000

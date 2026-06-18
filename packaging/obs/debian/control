@@ -1,7 +1,7 @@
 Source: pve-cli
 Section: admin
 Priority: optional
-Maintainer: Ciro Iriarte <ciro.iriarte@gmail.com>
+Maintainer: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 Build-Depends: debhelper-compat (= 13), golang-go (>= 2:1.22~)
 Standards-Version: 4.6.2
 Homepage: https://github.com/ciroiriarte/pve-cli
