@@ -13,9 +13,10 @@ Group:          System/Management
 URL:            https://github.com/ciroiriarte/pve-cli
 Source0:        %{name}-%{version}.tar.gz
 Source1:        vendor.tar.gz
-BuildRequires:  go >= 1.22
 %if 0%{?suse_version}
-BuildRequires:  golang-packaging
+BuildRequires:  go >= 1.22
+%else
+BuildRequires:  golang >= 1.22
 %endif
 
 %description
