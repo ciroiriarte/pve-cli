@@ -44,15 +44,22 @@ implemented but not yet verified against a live PDM instance.
 
 ### Packages (build.opensuse.org)
 
-Native `.deb`/`.rpm` packages are built in OBS project
-**`home:ciriarte:pve-cli`**. The package is `pve-cli`; the command is `pc`. See
-[`packaging/obs/README.md`](packaging/obs/README.md) for per-distro repository
-URLs and install commands, e.g. on openSUSE:
+Native `.deb`/`.rpm` packages are built in OBS project **`home:ciriarte:pve-cli`**
+for Debian 13, Ubuntu 24.04, Rocky Linux 9/10, and openSUSE Leap 15.6/16.0,
+Slowroll, and Tumbleweed (x86_64 + aarch64). The package is `pve-cli`; the
+command is `pc`.
+
+**See [docs/install.md](docs/install.md) for exact per-distribution commands.**
+Quick example (openSUSE):
 
 ```bash
-zypper addrepo https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Leap_15.6/home:ciriarte:pve-cli.repo
-zypper install pve-cli
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Leap_15.6/home:ciriarte:pve-cli.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install pve-cli
 ```
+
+> Debian 12 and Ubuntu 22.04 are not packaged (their stock Go < 1.22); build
+> [from source](#from-source) there.
 
 ### From source
 
@@ -178,6 +185,7 @@ any token/user — see [docs/configuration.md](docs/configuration.md).)
 
 ## Documentation
 
+- [docs/install.md](docs/install.md) — per-distribution package install commands
 - [docs/configuration.md](docs/configuration.md) — auth, profiles, contexts, env vars, TLS
 - [docs/providers.md](docs/providers.md) — PVE vs PDM capability matrix
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, project layout, releases, the v1.0.0 gate

@@ -15,17 +15,25 @@ installed command is **`pc`**.
 Both builds compile `./cmd/pc`, run `./cmd/gendocs` for man pages + completions,
 and install the binary, `pc*.1` man pages, and bash/zsh/fish completions.
 
-## Target matrix (last two major/LTS releases each)
+## Target matrix
 
-| Distro | OBS repository names | Package |
-|---|---|---|
-| Ubuntu LTS | `xUbuntu_24.04`, `xUbuntu_22.04` | `.deb` |
-| Debian | `Debian_13`, `Debian_12` | `.deb` |
-| Rocky Linux | `Rocky_10`, `Rocky_9` | `.rpm` |
-| openSUSE Leap | `openSUSE_Leap_16.0`, `openSUSE_Leap_15.6` | `.rpm` |
-| openSUSE Slowroll | `openSUSE_Slowroll` | `.rpm` |
+| Distro | OBS repository name | Path project | Package |
+|---|---|---|---|
+| Debian 13 | `Debian_13` | `Debian:13` | `.deb` |
+| Ubuntu 24.04 | `xUbuntu_24.04` | `Ubuntu:24.04` | `.deb` |
+| Rocky Linux 9 / 10 | `Rocky_9` / `Rocky_10` | `RockyLinux:9` / `RockyLinux:10` | `.rpm` |
+| openSUSE Leap 15.6 / 16.0 | `openSUSE_Leap_15.6` / `_16.0` | `devel:languages:go` + `openSUSE:Leap:*` | `.rpm` |
+| openSUSE Slowroll | `openSUSE_Slowroll` | `openSUSE:Slowroll` | `.rpm` |
+| openSUSE Tumbleweed | `openSUSE_Tumbleweed` | `openSUSE:Factory` | `.rpm` |
 
-Enable these repositories in the OBS project's *Meta* / *Repositories* config.
+All build for x86_64 + aarch64 (Slowroll x86_64 only). The Leap repos layer
+`devel:languages:go` first so a recent Go toolchain is available.
+
+**Excluded:** Debian 12 and Ubuntu 22.04 — stock Go is older than the required
+1.22 and there is no Go side-repo for deb. (Rocky uses `golang` from base;
+openSUSE uses `devel:languages:go`.)
+
+End-user install commands per distro: see [`../../docs/install.md`](../../docs/install.md).
 
 ## One-time setup (maintainer)
 
