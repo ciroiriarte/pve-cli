@@ -11,9 +11,14 @@ LDFLAGS   := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: all build test vet fmt tidy clean run
+.PHONY: all build test vet fmt tidy clean run docs
 
 all: build
+
+# Generate man pages, shell completions, and the markdown command reference
+# into dist/ (consumed by packaging). Regenerate in CI to catch drift.
+docs:
+	$(GO) run ./cmd/gendocs dist
 
 build:
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD)

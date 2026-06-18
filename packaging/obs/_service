@@ -1,0 +1,22 @@
+<services>
+  <!-- Pull tagged releases from GitHub and derive the version from the tag. -->
+  <service name="obs_scm">
+    <param name="scm">git</param>
+    <param name="url">https://github.com/ciroiriarte/pve-cli.git</param>
+    <param name="revision">v0.5.0</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="versionrewrite-pattern">v(.*)</param>
+    <param name="exclude">.git</param>
+  </service>
+  <service name="set_version"/>
+  <service name="tar"/>
+  <service name="recompress">
+    <param name="file">*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+  <!-- OBS build sandboxes have no network: vendor the Go module sources so the
+       build is fully offline. Produces vendor.tar.gz alongside the source. -->
+  <service name="go_modules">
+    <param name="compression">gz</param>
+  </service>
+</services>

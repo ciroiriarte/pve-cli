@@ -98,12 +98,22 @@ Environment variables: `PVE_CLI_SERVER`, `PVE_CLI_TOKEN_ID`, `PVE_CLI_TOKEN_SECR
 | `pvesh get /nodes/pve1/qemu` | `pc vm list --node pve1` |
 | `pvesh get /cluster/resources` | `pc api GET /cluster/resources` |
 
+## Install (packages)
+
+Native `.deb`/`.rpm` packages are built on [build.opensuse.org](https://build.opensuse.org)
+(project `home:ciriarte:pve-cli`) for the last two major/LTS releases of Ubuntu,
+Debian, Rocky Linux, openSUSE Leap, and openSUSE Slowroll. The package is
+`pve-cli`; the command is `pc`. See [`packaging/obs/`](packaging/obs/) for the
+spec, Debian rules, OBS service, and per-distro install instructions.
+
 ## Development
 
 ```bash
+make build    # produces ./pc
 make test     # unit + httptest integration tests
 make vet
-make build
+make docs     # generate man pages, shell completions, and the markdown
+              # command reference into dist/ (consumed by packaging)
 ```
 
 ## License

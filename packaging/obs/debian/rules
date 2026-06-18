@@ -1,0 +1,30 @@
+#!/usr/bin/make -f
+# Debian build for pve-cli (binary: pc). Offline build using vendored Go
+# modules (vendor/ ships in the OBS tarball via the go_modules service).
+
+export GOFLAGS := -mod=vendor -trimpath
+export CGO_ENABLED := 0
+export GOCACHE := $(CURDIR)/_build/gocache
+export GOPATH := $(CURDIR)/_build/gopath
+
+VERSION := $(shell dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//')
+LDFLAGS := -s -w -X github.com/ciroiriarte/pve-cli/internal/version.Version=$(VERSION)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	go build -ldflags "$(LDFLAGS)" -o pc ./cmd/pc
+	go run ./cmd/gendocs dist
+
+override_dh_auto_test:
+	go test ./...
+
+override_dh_auto_install:
+	install -Dm0755 pc debian/pve-cli/usr/bin/pc
+	set -e; for m in dist/man/man1/*.1; do \
+	  install -Dm0644 "$$m" "debian/pve-cli/usr/share/man/man1/$$(basename "$$m")"; \
+	done
+	install -Dm0644 dist/completions/pc      debian/pve-cli/usr/share/bash-completion/completions/pc
+	install -Dm0644 dist/completions/_pc     debian/pve-cli/usr/share/zsh/vendor-completions/_pc
+	install -Dm0644 dist/completions/pc.fish debian/pve-cli/usr/share/fish/vendor_completions.d/pc.fish

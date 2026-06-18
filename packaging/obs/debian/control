@@ -1,0 +1,20 @@
+Source: pve-cli
+Section: admin
+Priority: optional
+Maintainer: Ciro Iriarte <ciro.iriarte@gmail.com>
+Build-Depends: debhelper-compat (= 13), golang-go (>= 2:1.22~)
+Standards-Version: 4.6.2
+Homepage: https://github.com/ciroiriarte/pve-cli
+Rules-Requires-Root: no
+
+Package: pve-cli
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Unofficial remote CLI for Proxmox VE (command: pc)
+ pve-cli is a remote-first, OpenStack-Client-inspired command-line client for
+ Proxmox VE (and, via Proxmox Datacenter Manager, fleets of clusters). It talks
+ to the published REST API, so nothing needs to be installed on the nodes. The
+ installed command is "pc".
+ .
+ This is an unofficial, community tool and is not affiliated with or endorsed by
+ Proxmox Server Solutions GmbH.
