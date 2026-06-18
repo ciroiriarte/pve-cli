@@ -4,10 +4,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// coerceScalar converts a flag-provided string to a typed value so typed config
+// fields (bools like tls.verify, numbers like rate_limit.qps) round-trip
+// correctly instead of being written as strings (which breaks typed loading).
+func coerceScalar(s string) any {
+	switch s {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
+}
 
 // GetValue reads a dotted key (e.g. "current_context" or
 // "profiles.home.server") from the config file at path.
@@ -48,7 +68,7 @@ func SetValue(path, dotted, value string) error {
 		}
 		cur = next
 	}
-	cur[keys[len(keys)-1]] = value
+	cur[keys[len(keys)-1]] = coerceScalar(value)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -71,8 +71,6 @@ func TestAuthLoginWritesProfileAndKeyring(t *testing.T) {
 
 func TestConfigViewRedactsInlineSecret(t *testing.T) {
 	path := withTempConfig(t)
-	verify := true
-	_ = verify
 	if err := config.Save(path, &config.File{
 		Profiles: map[string]config.Profile{
 			"x": {Provider: "pve", Server: "https://h:8006",

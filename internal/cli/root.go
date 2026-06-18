@@ -160,6 +160,7 @@ func NewRootCmd() *cobra.Command {
 		newStorageCmd(a),
 		newBackupCmd(a),
 		newRemoteCmd(a),
+		newPluginCmd(a),
 		newTaskCmd(a),
 		newRawCmd(a),
 		newAPICmd(a),
@@ -171,9 +172,14 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
-// Execute runs the root command and maps errors to exit codes.
+// Execute runs the root command and maps errors to exit codes. Before handing
+// off to cobra, it checks whether the invocation targets an external plugin
+// (pc-<name>) and, if so, dispatches to it. Built-in commands take precedence.
 func Execute() int {
 	root := NewRootCmd()
+	if handled, code := dispatchPlugin(root, os.Args[1:]); handled {
+		return code
+	}
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return ExitCodeFor(err)
