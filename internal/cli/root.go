@@ -133,9 +133,15 @@ func NewRootCmd() *cobra.Command {
 		newNodeCmd(a),
 		newGuestCmd(a, vmKind),
 		newGuestCmd(a, ctKind),
+		newGuestTopCmd(a),
+		newStorageCmd(a),
+		newBackupCmd(a),
 		newTaskCmd(a),
 		newRawCmd(a),
 		newAPICmd(a),
+		newConfigCmd(a),
+		newContextCmd(a),
+		newAuthCmd(a),
 		newVersionCmd(a),
 	)
 	return root

@@ -136,8 +136,9 @@ func (s *Settings) Validate() error {
 			return errf("token auth requires a token id and secret")
 		}
 	case "ticket":
-		// Ticket auth lands in a later phase.
-		return errf("ticket auth is not yet implemented; use an API token")
+		if s.User == "" || s.Secret == "" {
+			return errf("ticket auth requires a user (user@realm) and password")
+		}
 	default:
 		return errf("unknown auth type %q", s.AuthType)
 	}

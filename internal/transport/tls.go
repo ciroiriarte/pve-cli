@@ -10,9 +10,28 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
+
+// NewHTTPClient builds a stdlib *http.Client with the given TLS policy and
+// timeout. Exported so other layers (e.g. ticket-auth login) can issue requests
+// with the same TLS handling without depending on the request pipeline.
+func NewHTTPClient(tlsConf TLSConfig, timeout time.Duration) (*http.Client, error) {
+	cfg, err := tlsConf.build()
+	if err != nil {
+		return nil, err
+	}
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: cfg},
+	}, nil
+}
 
 // TLSConfig describes how the client validates the server certificate.
 type TLSConfig struct {

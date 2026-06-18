@@ -64,13 +64,13 @@ func New(opt Options) (*Client, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return nil, fmt.Errorf("transport: BaseURL must be an absolute https URL, got %q", opt.BaseURL)
 	}
-	tlsCfg, err := opt.TLS.build()
-	if err != nil {
-		return nil, err
-	}
 	timeout := opt.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
+	}
+	hc, err := NewHTTPClient(opt.TLS, timeout)
+	if err != nil {
+		return nil, err
 	}
 	retries := opt.MaxRetries
 	if retries == 0 {
@@ -81,11 +81,8 @@ func New(opt Options) (*Client, error) {
 		ua = "pve-cli"
 	}
 	return &Client{
-		base: u,
-		hc: &http.Client{
-			Timeout:   timeout,
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
-		},
+		base:       u,
+		hc:         hc,
 		auth:       opt.Auth,
 		maxRetries: retries,
 		debug:      opt.Debug,

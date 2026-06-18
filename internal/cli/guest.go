@@ -41,6 +41,12 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestPowerCmd(a, spec, "stop", "Stop (hard)", true),
 		newGuestPowerCmd(a, spec, "shutdown", "Shut down (graceful)", true),
 		newGuestPowerCmd(a, spec, "reboot", "Reboot", true),
+		newGuestCreateCmd(a, spec),
+		newGuestCloneCmd(a, spec),
+		newGuestDeleteCmd(a, spec),
+		newGuestMigrateCmd(a, spec),
+		newGuestConfigCmd(a, spec),
+		newGuestSnapshotCmd(a, spec),
 	)
 	return cmd
 }

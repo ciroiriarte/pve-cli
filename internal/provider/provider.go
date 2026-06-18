@@ -62,10 +62,26 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 		return nil, err
 	}
 
+	tlsCfg := transport.TLSConfig{
+		CAFile:      s.TLSCAFile,
+		Fingerprint: s.TLSFinger,
+		Insecure:    s.TLSInsecure,
+	}
+
 	var ap auth.Provider
 	switch s.AuthType {
 	case "token":
 		t, err := auth.NewToken(s.TokenID, s.Secret)
+		if err != nil {
+			return nil, err
+		}
+		ap = t
+	case "ticket":
+		hc, err := transport.NewHTTPClient(tlsCfg, 0)
+		if err != nil {
+			return nil, err
+		}
+		t, err := auth.NewTicket(s.Server, s.User, s.Secret, hc)
 		if err != nil {
 			return nil, err
 		}
@@ -75,13 +91,9 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 	}
 
 	cl, err := transport.New(transport.Options{
-		BaseURL: s.Server,
-		Auth:    ap,
-		TLS: transport.TLSConfig{
-			CAFile:      s.TLSCAFile,
-			Fingerprint: s.TLSFinger,
-			Insecure:    s.TLSInsecure,
-		},
+		BaseURL:   s.Server,
+		Auth:      ap,
+		TLS:       tlsCfg,
 		Debug:     debug,
 		UserAgent: "pve-cli",
 		RateQPS:   s.RateQPS,
