@@ -38,6 +38,15 @@ func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path st
 // kindEndpoint maps a guest kind to its API path segment.
 func kindEndpoint(spec guestSpec) string { return string(spec.kind) } // "qemu" | "lxc"
 
+// ensureProvisionable refuses provisioning verbs on PDM, which has no
+// create/clone/delete/config-write API (only power/migrate/snapshot/monitor).
+func ensureProvisionable(p provider.Provider, op string) error {
+	if p.Name() == "pdm" {
+		return fmt.Errorf("%s is not available via PDM (it has no provisioning API); set provider: pve and target the cluster directly", op)
+	}
+	return nil
+}
+
 // waitFlags registers the standard --wait/--no-wait/--wait-timeout trio shared
 // by all task-producing mutations. Effective wait = *wait && !*noWait.
 func waitFlags(cmd *cobra.Command, wait, noWait *bool, timeout *int) {
@@ -68,6 +77,9 @@ func newGuestCloneCmd(a *app, spec guestSpec) *cobra.Command {
 			newid, err := strconv.Atoi(args[1])
 			if err != nil {
 				return fmt.Errorf("invalid newid %q: must be a number", args[1])
+			}
+			if err := ensureProvisionable(p, "clone"); err != nil {
+				return err
 			}
 			params := url.Values{"newid": {args[1]}}
 			if name != "" {
@@ -115,6 +127,9 @@ func newGuestDeleteCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := ensureProvisionable(p, "delete"); err != nil {
+				return err
+			}
 			if err := confirm(a, fmt.Sprintf("permanently delete %s %d (%s) on %s?", spec.label, g.VMID, g.Name, g.Node)); err != nil {
 				return err
 			}
@@ -152,6 +167,9 @@ func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			g, err := resolveGuest(cmd.Context(), p, spec, args[0], node)
 			if err != nil {
+				return err
+			}
+			if err := ensureProvisionable(p, "migrate"); err != nil {
 				return err
 			}
 			params := url.Values{"target": {targetNode}}
@@ -193,6 +211,9 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 					return err
 				}
 				return a.render(guestConfigTable(g, cfg))
+			}
+			if err := ensureProvisionable(p, "config --set"); err != nil {
+				return err
 			}
 			params := url.Values{}
 			for _, kv := range set {
@@ -237,6 +258,9 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			p, err := a.Provider()
 			if err != nil {
+				return err
+			}
+			if err := ensureProvisionable(p, "create"); err != nil {
 				return err
 			}
 			params := url.Values{"vmid": {args[0]}}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ciroiriarte/pve-cli/internal/domain"
@@ -176,27 +177,93 @@ func (p *PDM) Raw(ctx context.Context, method, path string, params url.Values) (
 	return p.cl.DoRaw(ctx, req)
 }
 
-// Proxied per-remote lifecycle is not wrapped yet; surface a clear pointer to
-// the escape hatch rather than guessing the proxy semantics.
-func (p *PDM) GuestPower(context.Context, domain.Guest, string) (protocol.TaskHandle, error) {
-	return protocol.TaskHandle{}, lifecycleUnsupported("power")
-}
-func (p *PDM) GuestConfig(context.Context, domain.Guest) (map[string]any, error) {
-	return nil, lifecycleUnsupported("config")
-}
-func (p *PDM) TaskStatus(context.Context, protocol.TaskHandle) (protocol.TaskStatus, error) {
-	return protocol.TaskStatus{}, lifecycleUnsupported("task status")
-}
-func (p *PDM) ListTasks(context.Context, string) ([]protocol.TaskStatus, error) {
-	return nil, lifecycleUnsupported("task list")
-}
-func (p *PDM) TaskLog(context.Context, protocol.TaskHandle, provider.LogOptions) ([]protocol.LogLine, error) {
-	return nil, lifecycleUnsupported("task log")
+// PDM proxies a subset of guest power actions (start/stop/shutdown/resume) at
+// /pve/remotes/{remote}/{kind}/{vmid}/{action}. reboot and provisioning are not
+// proxied — those return ErrUnsupported.
+var pdmPowerActions = map[string]bool{"start": true, "stop": true, "shutdown": true, "resume": true}
+
+// GuestPower performs a proxied power action on the guest's remote.
+func (p *PDM) GuestPower(ctx context.Context, g domain.Guest, action string) (protocol.TaskHandle, error) {
+	if !pdmPowerActions[action] {
+		return protocol.TaskHandle{}, fmt.Errorf("%q is not available via PDM (it proxies start/stop/shutdown/resume); use `pc raw` or target the cluster (%w)", action, provider.ErrUnsupported)
+	}
+	if g.Remote == "" {
+		return protocol.TaskHandle{}, fmt.Errorf("guest %d has no remote; resolve it via PDM first", g.VMID)
+	}
+	path := fmt.Sprintf("/pve/remotes/%s/%s/%d/%s", g.Remote, guestEndpoint(g.Kind), g.VMID, action)
+	var upid string
+	if err := p.cl.Do(ctx, &transport.Request{Method: "POST", Path: path, Form: url.Values{}}, &upid); err != nil {
+		return protocol.TaskHandle{}, err
+	}
+	h, err := protocol.ParseUPID(upid)
+	if err != nil {
+		h = protocol.TaskHandle{UPID: upid, Node: g.Node}
+	}
+	h.Backend, h.Remote = "pdm", g.Remote
+	if h.Node == "" {
+		h.Node = g.Node
+	}
+	h.Display = fmt.Sprintf("%s %s %d on %s", action, g.Kind, g.VMID, g.Remote)
+	return h, nil
 }
 
-func lifecycleUnsupported(op string) error {
-	return fmt.Errorf("%s via PDM is not wrapped yet (%w); use `pc raw pve remotes <remote> ...` or target the cluster directly",
-		op, provider.ErrUnsupported)
+// GuestConfig reads a guest's config via the proxy.
+func (p *PDM) GuestConfig(ctx context.Context, g domain.Guest) (map[string]any, error) {
+	path := fmt.Sprintf("/pve/remotes/%s/%s/%d/config", g.Remote, guestEndpoint(g.Kind), g.VMID)
+	var cfg map[string]any
+	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path}, &cfg)
+	return cfg, err
+}
+
+// TaskStatus polls a proxied task. The handle must carry its remote.
+func (p *PDM) TaskStatus(ctx context.Context, h protocol.TaskHandle) (protocol.TaskStatus, error) {
+	if h.Remote == "" {
+		return protocol.TaskStatus{}, fmt.Errorf("PDM task status needs a remote (pass --remote or use a task from a PDM action)")
+	}
+	path := fmt.Sprintf("/pve/remotes/%s/tasks/%s/status", h.Remote, h.UPID)
+	var st protocol.TaskStatus
+	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path}, &st)
+	return st, err
+}
+
+// TaskLog fetches a proxied task's log.
+func (p *PDM) TaskLog(ctx context.Context, h protocol.TaskHandle, opts provider.LogOptions) ([]protocol.LogLine, error) {
+	if h.Remote == "" {
+		return nil, fmt.Errorf("PDM task log needs a remote")
+	}
+	q := url.Values{}
+	if opts.Start > 0 {
+		q.Set("start", strconv.Itoa(opts.Start-1))
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	var lines []protocol.LogLine
+	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: fmt.Sprintf("/pve/remotes/%s/tasks/%s/log", h.Remote, h.UPID), Query: q}, &lines)
+	return lines, err
+}
+
+// ListTasks aggregates recent tasks across all remotes.
+func (p *PDM) ListTasks(ctx context.Context, _ string) ([]protocol.TaskStatus, error) {
+	remotes, err := p.ListRemotes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var all []protocol.TaskStatus
+	for _, r := range remotes {
+		var ts []protocol.TaskStatus
+		if err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: "/pve/remotes/" + r.ID + "/tasks"}, &ts); err == nil {
+			all = append(all, ts...)
+		}
+	}
+	return all, nil
+}
+
+func guestEndpoint(k domain.GuestKind) string {
+	if k == domain.KindCT {
+		return "lxc"
+	}
+	return "qemu"
 }
 
 func kindFromType(t string) (domain.GuestKind, bool) {

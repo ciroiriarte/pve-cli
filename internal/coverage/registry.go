@@ -56,6 +56,16 @@ func init() {
 	// PDM-specific curated
 	reg("remote list/show", "GET", "/remotes/remote")
 	reg("node/guest list (pdm)", "GET", "/resources/list")
+	// PDM proxied lifecycle (power + config-read + task polling)
+	for _, kind := range []string{"qemu", "lxc"} {
+		for _, a := range []string{"start", "stop", "shutdown"} {
+			reg("vm/ct "+a+" (pdm)", "POST", "/pve/remotes/{remote}/"+kind+"/{vmid}/"+a)
+		}
+		reg("vm/ct show (pdm)", "GET", "/pve/remotes/{remote}/"+kind+"/{vmid}/config")
+	}
+	reg("task list (pdm)", "GET", "/pve/remotes/{remote}/tasks")
+	reg("task show/wait (pdm)", "GET", "/pve/remotes/{remote}/tasks/{upid}/status")
+	reg("task log (pdm)", "GET", "/pve/remotes/{remote}/tasks/{upid}/log")
 }
 
 // Classify reports the curated command for an endpoint, or ("", false) if the
