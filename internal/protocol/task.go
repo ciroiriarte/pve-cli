@@ -28,6 +28,12 @@ type TaskStatus struct {
 	PID        int    `json:"pid"`
 }
 
+// LogLine is one line of a task's log output.
+type LogLine struct {
+	N    int    `json:"n"` // 1-based line number
+	Text string `json:"t"`
+}
+
 // Done reports whether the task has finished running.
 func (t TaskStatus) Done() bool { return t.Status == "stopped" }
 

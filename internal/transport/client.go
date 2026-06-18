@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/ciroiriarte/pve-cli/internal/auth"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
 )
@@ -24,6 +26,8 @@ type Options struct {
 	MaxRetries int           // retries for idempotent requests (default 3)
 	Debug      bool          // log request/response metadata to stderr
 	UserAgent  string
+	RateQPS    float64 // client-side rate limit in requests/sec; <=0 disables
+	Burst      int     // token-bucket burst; defaults to max(1, ceil(RateQPS))
 }
 
 // Client is the base HTTP client. It is safe for concurrent use.
@@ -34,6 +38,7 @@ type Client struct {
 	maxRetries int
 	debug      bool
 	userAgent  string
+	limiter    *rate.Limiter
 }
 
 // Request is a single API call.
@@ -85,7 +90,23 @@ func New(opt Options) (*Client, error) {
 		maxRetries: retries,
 		debug:      opt.Debug,
 		userAgent:  ua,
+		limiter:    newLimiter(opt.RateQPS, opt.Burst),
 	}, nil
+}
+
+// newLimiter builds a token-bucket limiter, or nil when rate limiting is
+// disabled (qps <= 0).
+func newLimiter(qps float64, burst int) *rate.Limiter {
+	if qps <= 0 {
+		return nil
+	}
+	if burst < 1 {
+		burst = int(math.Ceil(qps))
+		if burst < 1 {
+			burst = 1
+		}
+	}
+	return rate.NewLimiter(rate.Limit(qps), burst)
 }
 
 // Do executes req, decoding the success envelope's data into out (which may be
@@ -120,6 +141,12 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(backoff(attempt)):
+			}
+		}
+
+		if c.limiter != nil {
+			if err := c.limiter.Wait(ctx); err != nil {
+				return nil, &protocol.APIError{Kind: protocol.KindTransport, Message: err.Error()}
 			}
 		}
 

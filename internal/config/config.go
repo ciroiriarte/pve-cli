@@ -26,11 +26,18 @@ type Context struct {
 
 // Profile is a connection target.
 type Profile struct {
-	Provider string         `yaml:"provider"` // "pve" | "pdm"
-	Server   string         `yaml:"server"`
-	Auth     AuthConfig     `yaml:"auth"`
-	TLS      TLSConfig      `yaml:"tls,omitempty"`
-	Defaults ProfileDefault `yaml:"defaults,omitempty"`
+	Provider  string         `yaml:"provider"` // "pve" | "pdm"
+	Server    string         `yaml:"server"`
+	Auth      AuthConfig     `yaml:"auth"`
+	TLS       TLSConfig      `yaml:"tls,omitempty"`
+	RateLimit RateLimit      `yaml:"rate_limit,omitempty"`
+	Defaults  ProfileDefault `yaml:"defaults,omitempty"`
+}
+
+// RateLimit configures client-side request throttling.
+type RateLimit struct {
+	QPS   float64 `yaml:"qps,omitempty"`
+	Burst int     `yaml:"burst,omitempty"`
 }
 
 // AuthConfig describes credentials for a profile.

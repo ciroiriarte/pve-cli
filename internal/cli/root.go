@@ -134,6 +134,7 @@ func NewRootCmd() *cobra.Command {
 		newGuestCmd(a, vmKind),
 		newGuestCmd(a, ctKind),
 		newTaskCmd(a),
+		newRawCmd(a),
 		newAPICmd(a),
 		newVersionCmd(a),
 	)

@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ciroiriarte/pve-cli/internal/output"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
+	"github.com/ciroiriarte/pve-cli/internal/provider"
 	"github.com/ciroiriarte/pve-cli/internal/task"
 )
 
@@ -15,7 +20,7 @@ func newTaskCmd(a *app) *cobra.Command {
 		Use:   "task",
 		Short: "Inspect and wait on cluster tasks (UPIDs)",
 	}
-	cmd.AddCommand(newTaskListCmd(a), newTaskShowCmd(a), newTaskWaitCmd(a))
+	cmd.AddCommand(newTaskListCmd(a), newTaskShowCmd(a), newTaskWaitCmd(a), newTaskLogCmd(a))
 	return cmd
 }
 
@@ -97,6 +102,79 @@ func newTaskWaitCmd(a *app) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "seconds to wait (0 = no limit)")
 	return cmd
+}
+
+func newTaskLogCmd(a *app) *cobra.Command {
+	var follow bool
+	var limit int
+	cmd := &cobra.Command{
+		Use:     "log <upid>",
+		Short:   "Print a task's log output",
+		Example: "  pc task log 'UPID:pve-01:...'\n  pc task log 'UPID:pve-01:...' --follow",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			h, err := protocol.ParseUPID(args[0])
+			if err != nil {
+				return err
+			}
+			return streamTaskLog(cmd.Context(), p, h, follow, limit)
+		},
+	}
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream new log lines until the task stops")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max lines per fetch (0 = server default)")
+	return cmd
+}
+
+// streamTaskLog prints task log lines. With follow, it polls for new lines
+// until the task stops.
+func streamTaskLog(ctx context.Context, p provider.Provider, h protocol.TaskHandle, follow bool, limit int) error {
+	next := 1
+	printFrom := func() error {
+		lines, err := p.TaskLog(ctx, h, provider.LogOptions{Start: next, Limit: limit})
+		if err != nil {
+			return err
+		}
+		for _, l := range lines {
+			fmt.Fprintln(os.Stdout, l.Text)
+			if l.N >= next {
+				next = l.N + 1
+			}
+		}
+		return nil
+	}
+	if err := printFrom(); err != nil {
+		return err
+	}
+	if !follow {
+		return nil
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		// Read status BEFORE draining the log, then drain, then check Done: any
+		// lines written up to (and after) the status read are captured by the
+		// drain that follows it, so a task that stops mid-cycle loses no trailing
+		// lines.
+		st, err := p.TaskStatus(ctx, h)
+		if err != nil {
+			return err
+		}
+		if err := printFrom(); err != nil {
+			return err
+		}
+		if st.Done() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func taskHandleTable(h protocol.TaskHandle) output.Tabular {

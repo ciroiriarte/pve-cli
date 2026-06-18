@@ -27,6 +27,12 @@ type GuestFilter struct {
 	Status string           // "" = any
 }
 
+// LogOptions controls task-log retrieval.
+type LogOptions struct {
+	Start int // first line to return (1-based); 0 = from the beginning
+	Limit int // max lines; 0 = server default
+}
+
 // Provider is the backend contract consumed by the CLI.
 type Provider interface {
 	Name() string
@@ -43,6 +49,8 @@ type Provider interface {
 
 	TaskStatus(ctx context.Context, h protocol.TaskHandle) (protocol.TaskStatus, error)
 	ListTasks(ctx context.Context, node string) ([]protocol.TaskStatus, error)
+	// TaskLog returns task log lines starting at line opts.Start (1-based).
+	TaskLog(ctx context.Context, h protocol.TaskHandle, opts LogOptions) ([]protocol.LogLine, error)
 
 	// Raw issues an arbitrary API call (backs `pc api`).
 	Raw(ctx context.Context, method, path string, params url.Values) ([]byte, error)
@@ -76,6 +84,8 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 		},
 		Debug:     debug,
 		UserAgent: "pve-cli",
+		RateQPS:   s.RateQPS,
+		Burst:     s.RateBurst,
 	})
 	if err != nil {
 		return nil, err

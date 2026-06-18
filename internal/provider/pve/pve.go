@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ciroiriarte/pve-cli/internal/domain"
@@ -211,6 +212,21 @@ func (p *PVE) nodeTasks(ctx context.Context, node string) ([]protocol.TaskStatus
 		ts[i].Node = node
 	}
 	return ts, err
+}
+
+// TaskLog returns task log lines via /nodes/{node}/tasks/{upid}/log.
+func (p *PVE) TaskLog(ctx context.Context, h protocol.TaskHandle, opts provider.LogOptions) ([]protocol.LogLine, error) {
+	q := url.Values{}
+	if opts.Start > 0 {
+		q.Set("start", strconv.Itoa(opts.Start-1)) // PVE 'start' is 0-based
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	path := fmt.Sprintf("/nodes/%s/tasks/%s/log", h.Node, url.PathEscape(h.UPID))
+	var lines []protocol.LogLine
+	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path, Query: q}, &lines)
+	return lines, err
 }
 
 // Raw issues an arbitrary API call.

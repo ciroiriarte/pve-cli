@@ -23,6 +23,8 @@ type Settings struct {
 	TLSCAFile   string
 	TLSFinger   string
 	TLSInsecure bool
+	RateQPS     float64
+	RateBurst   int
 	ProfileName string
 	ContextName string
 }
@@ -78,6 +80,8 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 		if prof.Defaults.Output != "" {
 			s.Output = prof.Defaults.Output
 		}
+		s.RateQPS = prof.RateLimit.QPS
+		s.RateBurst = prof.RateLimit.Burst
 		if sec, err := resolveSecret(prof.Auth); err != nil {
 			return nil, err
 		} else {

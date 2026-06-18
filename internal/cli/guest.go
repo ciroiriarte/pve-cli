@@ -99,7 +99,7 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 
 func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive bool) *cobra.Command {
 	var node string
-	var noWait bool
+	var wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
 		Use:     action + " <vmid>",
@@ -124,13 +124,15 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 			if err != nil {
 				return err
 			}
-			return finishTask(cmd.Context(), a, p, h, !noWait, timeout,
+			return finishTask(cmd.Context(), a, p, h, wait && !noWait, timeout,
 				fmt.Sprintf("%s %s %d (%s) on %s", action, spec.label, g.VMID, g.Name, g.Node))
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().BoolVar(&wait, "wait", true, "wait for the task to finish (default)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
 	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait for the task (0 = no limit)")
+	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
 	return cmd
 }
 
@@ -197,18 +199,18 @@ func finishTask(ctx context.Context, a *app, p provider.Provider, h protocol.Tas
 		return a.render(taskHandleTable(h))
 	}
 	spinner := isTTY()
-	st, err := task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{
+	// task.Wait returns a KindTaskFailed error when the task ends non-OK, so a
+	// success checkmark is only ever reached on genuine success.
+	if _, err := task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{
 		Timeout: secs(timeoutSecs),
 		Spinner: spinner,
 		Out:     stderrWriter(),
 		Label:   label,
-	})
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	if spinner {
 		fmt.Fprintf(stderrWriter(), "✔ %s\n", label)
 	}
-	_ = st
 	return nil
 }
