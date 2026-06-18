@@ -43,7 +43,8 @@ func (c *Client) DialWebsocket(ctx context.Context, path string, query url.Value
 		}
 	}
 
-	d := websocket.Dialer{TLSClientConfig: c.tlsConf, HandshakeTimeout: 15 * time.Second}
+	// Proxmox's vncwebsocket negotiates the "binary" subprotocol.
+	d := websocket.Dialer{TLSClientConfig: c.tlsConf, HandshakeTimeout: 15 * time.Second, Subprotocols: []string{"binary"}}
 	conn, resp, err := d.DialContext(ctx, u.String(), hdr)
 	if err != nil {
 		if resp != nil {

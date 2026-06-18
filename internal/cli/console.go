@@ -147,16 +147,19 @@ func newGuestConsoleCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer conn.Close()
 
-			// 3. raw local terminal + bridge
+			// 3. raw local terminal + bridge. Defer order matters (LIFO): register
+			// Restore first, then Close, so Close runs first on exit — the output
+			// goroutine stops before the terminal is restored (no stray frame).
 			fmt.Fprintf(stderrWriter(), "connected to %s %d serial console — press Ctrl-] to quit\n", spec.label, g.VMID)
 			fd := int(os.Stdin.Fd())
 			oldState, err := term.MakeRaw(fd)
 			if err != nil {
+				conn.Close()
 				return err
 			}
 			defer term.Restore(fd, oldState)
+			defer conn.Close()
 			cols, rows, _ := term.GetSize(int(os.Stdout.Fd()))
 			return runConsole(conn, t.User, t.Ticket, os.Stdin, os.Stdout, cols, rows)
 		},

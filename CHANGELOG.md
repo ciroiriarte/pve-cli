@@ -6,6 +6,21 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.6.0] — coverage matrix, PDM lifecycle verbs, serial console
+- **Added**: API coverage matrix — `internal/coverage` registry + `make coverage`
+  → `docs/coverage.md` (curated vs raw-only per provider; PVE 44/675, PDM 19/318).
+- **Added**: PDM curated lifecycle via the proxy — `pc --provider pdm vm
+  start/stop/shutdown/show` and task polling (`/pve/remotes/{remote}/…`);
+  provisioning verbs (create/clone/delete/migrate/config --set) refuse cleanly
+  on PDM.
+- **Added**: `pc vm/ct console [--serial N]` — interactive serial console over a
+  websocket (termproxy → vncwebsocket), raw-TTY bridge, Ctrl-] to detach
+  (PVE provider; requires a TTY). New deps: gorilla/websocket, x/term (pinned to
+  keep the go 1.22 floor).
+- Architect-reviewed (THOROUGH); fixed the coverage `create` mis-classification,
+  added the ws `binary` subprotocol, and ordered console teardown
+  (Close before TTY restore).
+
 ## [0.5.7] — live-hardening (found provisioning a real VM via the cluster API)
 - **Fixed**: `DELETE` (and other non-body methods) sent params as a form body,
   which PVE rejects (`501 Unexpected content`) — `pc vm delete --purge` failed.

@@ -3,8 +3,6 @@
 // listed here are reachable only via `pc raw` / `pc api`.
 package coverage
 
-import "fmt"
-
 // Curated maps "METHOD /path" (using the schema's {param} placeholders) to the
 // pc command that wraps it. Keep this in sync with the cobra command tree —
 // the coverage matrix and its test are driven entirely by this map.
@@ -28,7 +26,8 @@ func init() {
 	// guest listings + lifecycle (vm + ct)
 	reg("vm list", "GET", "/nodes/{node}/qemu")
 	reg("ct list", "GET", "/nodes/{node}/lxc")
-	regGuest("create", "POST", "")            // POST /nodes/{node}/qemu
+	reg("vm create", "POST", "/nodes/{node}/qemu") // vmid is a body param, not a path segment
+	reg("ct create", "POST", "/nodes/{node}/lxc")
 	regGuest("show/config", "GET", "/config") // also config (no --set)
 	regGuest("config --set", "PUT", "/config")
 	regGuest("clone", "POST", "/clone")
@@ -76,6 +75,3 @@ func Classify(method, path string) (string, bool) {
 	c, ok := Curated[method+" "+path]
 	return c, ok
 }
-
-// Key formats a method+path the way the registry stores it.
-func Key(method, path string) string { return fmt.Sprintf("%s %s", method, path) }
