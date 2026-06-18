@@ -18,10 +18,12 @@ is **`pc`**.
 | openSUSE Slowroll | x86_64 | `.rpm` | `openSUSE_Slowroll` |
 | openSUSE Tumbleweed | x86_64, aarch64 | `.rpm` | `openSUSE_Tumbleweed` |
 
-> **Not packaged:** Debian 12 and Ubuntu 22.04 — their stock Go toolchain is
-> older than the required Go 1.22, and (unlike openSUSE) there is no Go
-> side-repo for deb. Use the [from-source](#from-source) build there, or a newer
-> base. Other distros: build from source.
+> **Debian 12 / Ubuntu 22.04 (and any other distro):** there is no OBS *native*
+> package because their stock Go compiler is older than the required 1.22 (and,
+> unlike openSUSE, there's no Go side-repo for deb). This is a **build-time**
+> limit only — the binary is statically linked and runs there fine. Use the
+> [prebuilt static binary / `.deb` / `.rpm`](#github-releases-static-binary--deb--rpm)
+> from GitHub Releases, or build [from source](#from-source).
 
 In every command below, replace the **repo name** segment
 (`openSUSE_Leap_15.6`, `Debian_13`, …) with the row matching your system from
@@ -84,6 +86,37 @@ man pc
 Packages upgrade through your normal package manager
 (`zypper up` / `dnf upgrade` / `apt upgrade`) as new releases are published to
 the OBS repository.
+
+## GitHub Releases (static binary / .deb / .rpm)
+
+Every tagged release publishes **statically-linked** binaries plus
+distro-agnostic `.deb`/`.rpm` packages (built once on a modern toolchain via
+goreleaser). These install on **any** Linux regardless of its stock Go version —
+including **Debian 12, Ubuntu 22.04**, EL7-era systems, Alpine, etc. — and cover
+macOS and Windows too.
+
+Static binary (Linux/macOS/Windows, amd64/arm64):
+
+```bash
+# pick your os/arch from https://github.com/ciroiriarte/pve-cli/releases/latest
+curl -fsSL https://github.com/ciroiriarte/pve-cli/releases/latest/download/pve-cli_Linux_x86_64.tar.gz \
+  | tar xz pc
+sudo install -m0755 pc /usr/local/bin/pc
+pc version
+```
+
+Distro-agnostic package (e.g. Debian 12 / Ubuntu 22.04):
+
+```bash
+# .deb
+curl -fsSLO https://github.com/ciroiriarte/pve-cli/releases/latest/download/pve-cli_amd64.deb
+sudo apt install ./pve-cli_amd64.deb
+
+# .rpm
+sudo rpm -i https://github.com/ciroiriarte/pve-cli/releases/latest/download/pve-cli_amd64.rpm
+```
+
+(Exact asset names are shown on the release page; arm64 builds are published too.)
 
 ## From source
 

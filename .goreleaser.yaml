@@ -1,0 +1,77 @@
+# goreleaser config — builds static binaries + .deb/.rpm + archives on tag push.
+# Because the binary is built once on a modern toolchain (CGO_ENABLED=0, fully
+# static), the resulting packages install on ANY distro regardless of its stock
+# Go version — including Debian 12 and Ubuntu 22.04, which the OBS native build
+# can't target (their Go < 1.22). Validate locally with `goreleaser check`.
+version: 2
+
+project_name: pve-cli
+
+before:
+  hooks:
+    - go run ./cmd/gendocs dist   # man pages + completions for archives/packages
+
+builds:
+  - id: pc
+    main: ./cmd/pc
+    binary: pc
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/ciroiriarte/pve-cli/internal/version.Version={{ .Version }}
+      - -X github.com/ciroiriarte/pve-cli/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/ciroiriarte/pve-cli/internal/version.Date={{ .Date }}
+
+archives:
+  - id: default
+    ids: [pc]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - src: dist/man/man1/*.1
+        dst: man/man1
+      - src: dist/completions/*
+        dst: completions
+
+# Distro-agnostic .deb/.rpm built from the static binary (no per-distro compile).
+nfpms:
+  - id: packages
+    package_name: pve-cli
+    ids: [pc]
+    formats: [deb, rpm]
+    maintainer: Ciro Iriarte <ciro.iriarte+software@gmail.com>
+    description: Unofficial remote CLI for Proxmox VE (command: pc)
+    license: Apache-2.0
+    homepage: https://github.com/ciroiriarte/pve-cli
+    bindir: /usr/bin
+    contents:
+      - src: dist/man/man1/pc*.1
+        dst: /usr/share/man/man1/
+      - src: dist/completions/pc
+        dst: /usr/share/bash-completion/completions/pc
+      - src: dist/completions/_pc
+        dst: /usr/share/zsh/site-functions/_pc
+      - src: dist/completions/pc.fish
+        dst: /usr/share/fish/vendor_completions.d/pc.fish
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: ciroiriarte
+    name: pve-cli
+  name_template: "v{{ .Version }}"
