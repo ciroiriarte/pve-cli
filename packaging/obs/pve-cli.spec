@@ -64,8 +64,13 @@ go test ./...
 %{_bindir}/pc
 %{_mandir}/man1/pc*.1*
 %{_datadir}/bash-completion/completions/pc
+# Own the completion dirs ourselves: zsh/fish aren't dependencies, so on
+# openSUSE the post-build filelist check fails on otherwise-unowned dirs.
+%dir %{_datadir}/zsh
 %dir %{_datadir}/zsh/site-functions
 %{_datadir}/zsh/site-functions/_pc
+%dir %{_datadir}/fish
+%dir %{_datadir}/fish/vendor_completions.d
 %{_datadir}/fish/vendor_completions.d/pc.fish
 
 %changelog
