@@ -1,0 +1,19 @@
+# Build output
+/pc
+/dist/
+*.test
+*.out
+
+# Go
+/vendor/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Local secrets / config (never commit)
+*.local.yaml
+
+# Agent / tooling state (not project source)
+.omc/
+.claude/
