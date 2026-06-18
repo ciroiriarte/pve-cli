@@ -11,7 +11,7 @@ LDFLAGS   := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: all build test vet fmt tidy clean run docs
+.PHONY: all build test vet fmt tidy clean run docs coverage
 
 all: build
 
@@ -19,6 +19,10 @@ all: build
 # into dist/ (consumed by packaging). Regenerate in CI to catch drift.
 docs:
 	$(GO) run ./cmd/gendocs dist
+
+# Regenerate the API coverage matrix (docs/coverage.md) from the schemas.
+coverage:
+	$(GO) run ./cmd/coverage docs/coverage.md
 
 build:
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD)
