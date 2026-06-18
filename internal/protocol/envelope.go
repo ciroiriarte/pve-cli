@@ -7,10 +7,12 @@ import (
 	"strings"
 )
 
-// Envelope is the standard Proxmox JSON wrapper: {"data": ..., "errors": ...}.
+// Envelope is the standard Proxmox JSON wrapper. On errors Proxmox often sets a
+// top-level "message" and/or a per-parameter "errors" map.
 type Envelope struct {
-	Data   json.RawMessage   `json:"data"`
-	Errors map[string]string `json:"errors,omitempty"`
+	Data    json.RawMessage   `json:"data"`
+	Errors  map[string]string `json:"errors,omitempty"`
+	Message string            `json:"message,omitempty"`
 }
 
 // DecodeData unwraps a Proxmox success envelope into v.
@@ -37,19 +39,26 @@ func DecodeError(statusCode int, body []byte) *APIError {
 		RawBody:    string(body),
 	}
 
-	// Proxmox returns parameter errors in the envelope's "errors" map.
+	// Prefer the envelope's structured fields (top-level "message" and the
+	// per-parameter "errors" map) over the raw body when present.
+	text := string(body)
 	var env Envelope
-	if err := json.Unmarshal(body, &env); err == nil && len(env.Errors) > 0 {
-		e.Errors = env.Errors
-		if e.Kind == KindUnknown || e.Kind == KindServer {
-			e.Kind = KindValidation
+	if err := json.Unmarshal(body, &env); err == nil {
+		if len(env.Errors) > 0 {
+			e.Errors = env.Errors
+			if e.Kind == KindUnknown || e.Kind == KindServer {
+				e.Kind = KindValidation
+			}
+		}
+		if strings.TrimSpace(env.Message) != "" {
+			text = env.Message
 		}
 	}
 
-	e.Message = translate(statusCode, string(body))
+	e.Message = translate(statusCode, text)
 
 	// A "locked" message is a conflict regardless of the HTTP status Proxmox used.
-	if lockRe.MatchString(string(body)) {
+	if lockRe.MatchString(text) {
 		e.Kind = KindConflict
 	}
 	return e

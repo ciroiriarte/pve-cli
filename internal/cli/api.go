@@ -46,6 +46,6 @@ func newAPICmd(a *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringArrayVar(&data, "data", nil, "request parameter key=value (repeatable)")
+	cmd.Flags().StringArrayVarP(&data, "data", "d", nil, "request parameter key=value (repeatable)")
 	return cmd
 }

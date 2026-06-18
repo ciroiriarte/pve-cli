@@ -1,6 +1,9 @@
 package protocol
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseUPID(t *testing.T) {
 	upid := "UPID:pve-01:0001ABCD:0F1E2D3C:65000000:qmstart:100:root@pam:"
@@ -58,6 +61,21 @@ func TestDecodeErrorStatusMapping(t *testing.T) {
 		if got := DecodeError(c.code, []byte("oops")).Kind; got != c.want {
 			t.Errorf("status %d: kind = %v, want %v", c.code, got, c.want)
 		}
+	}
+}
+
+func TestDecodeErrorExtractsEnvelopeMessage(t *testing.T) {
+	// Proxmox 500s carry a top-level "message"; it must not render blank.
+	body := []byte(`{"data":null,"message":"Configuration file 'nodes/bigiron/qemu-server/9999.conf' does not exist\n"}`)
+	e := DecodeError(500, body)
+	if e.Message == "" {
+		t.Fatal("message should be extracted from envelope, got empty")
+	}
+	if !strings.Contains(e.Message, "does not exist") {
+		t.Errorf("message = %q, want it to contain 'does not exist'", e.Message)
+	}
+	if strings.Contains(e.Message, "\n") {
+		t.Errorf("message should be trimmed to a single line, got %q", e.Message)
 	}
 }
 

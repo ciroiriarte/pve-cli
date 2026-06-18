@@ -9,6 +9,7 @@ import (
 
 	"github.com/ciroiriarte/pve-cli/internal/auth"
 	"github.com/ciroiriarte/pve-cli/internal/domain"
+	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/ciroiriarte/pve-cli/internal/provider"
 	"github.com/ciroiriarte/pve-cli/internal/transport"
 )
@@ -113,6 +114,31 @@ func TestResolveGuestAndPower(t *testing.T) {
 	}
 	if !st.OK() {
 		t.Fatalf("task not OK: %+v", st)
+	}
+}
+
+// TestTaskStatusUPIDNotDoubleEncoded guards the live-found bug where a token
+// UPID's '!' was double-encoded (%2521), making PVE reject it as "no such task".
+func TestTaskStatusUPIDNotDoubleEncoded(t *testing.T) {
+	var gotPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/nodes/pve-01/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path // net/http decodes the path exactly once
+		w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := newTestProvider(t, srv.URL)
+
+	h, err := protocol.ParseUPID("UPID:pve-01:0001ABCD:0002:6A00:qmclone:9001:root@pam!pvecli:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.TaskStatus(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotPath, "root@pam!pvecli") {
+		t.Errorf("server saw path %q; the UPID '!' was double-encoded (expected a literal '!')", gotPath)
 	}
 }
 

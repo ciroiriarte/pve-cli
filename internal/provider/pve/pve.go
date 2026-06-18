@@ -179,7 +179,9 @@ func (p *PVE) GuestConfig(ctx context.Context, g domain.Guest) (map[string]any, 
 
 // TaskStatus polls a task's status.
 func (p *PVE) TaskStatus(ctx context.Context, h protocol.TaskHandle) (protocol.TaskStatus, error) {
-	path := fmt.Sprintf("/nodes/%s/tasks/%s/status", h.Node, url.PathEscape(h.UPID))
+	// Pass the UPID raw: the transport URL-encodes the path exactly once.
+	// Pre-escaping here would double-encode the '!' in token UPIDs.
+	path := fmt.Sprintf("/nodes/%s/tasks/%s/status", h.Node, h.UPID)
 	var st protocol.TaskStatus
 	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path}, &st)
 	return st, err
@@ -223,7 +225,7 @@ func (p *PVE) TaskLog(ctx context.Context, h protocol.TaskHandle, opts provider.
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
-	path := fmt.Sprintf("/nodes/%s/tasks/%s/log", h.Node, url.PathEscape(h.UPID))
+	path := fmt.Sprintf("/nodes/%s/tasks/%s/log", h.Node, h.UPID) // raw UPID; see TaskStatus
 	var lines []protocol.LogLine
 	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: path, Query: q}, &lines)
 	return lines, err
