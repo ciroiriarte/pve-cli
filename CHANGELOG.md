@@ -6,6 +6,23 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.5.7] — live-hardening (found provisioning a real VM via the cluster API)
+- **Fixed**: `DELETE` (and other non-body methods) sent params as a form body,
+  which PVE rejects (`501 Unexpected content`) — `pc vm delete --purge` failed.
+  Params for GET/DELETE now go in the query; only POST/PUT/PATCH carry a body.
+- **Added**: `--wait`/`--no-wait`/`--wait-timeout` on `vm/ct clone`, `delete`,
+  `migrate`, `create` (previously only on power verbs); shared `waitFlags` helper.
+- **Added**: `vm/ct clone --storage` to target a pool on a full clone.
+
+## [0.5.6] — live-verified PDM (found against a real PDM 1.1 endpoint)
+- **Fixed**: ticket auth captures the `Set-Cookie` (PDM uses an HttpOnly
+  `__Host-PDMAuthCookie` with no body `ticket`); fall back to the body ticket for PVE.
+- **Fixed**: PDM provider — remotes live at `/remotes/remote`; resource types are
+  prefixed (`pve-qemu`/`pve-lxc`/`pve-node`); render short node hostnames.
+
+## [0.5.5] — offline packaging
+- Vendored Go modules in-tree + Debian `.dsc` so OBS builds `.deb`/`.rpm` offline.
+
 ## [0.5.4] / [0.5.3] / [0.5.2] / [0.5.1] — packaging, licensing, build
 - **Packaging**: OBS project `home:ciriarte:pve-cli` for Debian 12/13,
   Ubuntu 22.04/24.04, Rocky 9/10, openSUSE Leap 15.6/16.0, Slowroll, Tumbleweed

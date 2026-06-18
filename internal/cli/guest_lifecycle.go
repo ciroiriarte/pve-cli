@@ -38,9 +38,18 @@ func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path st
 // kindEndpoint maps a guest kind to its API path segment.
 func kindEndpoint(spec guestSpec) string { return string(spec.kind) } // "qemu" | "lxc"
 
+// waitFlags registers the standard --wait/--no-wait/--wait-timeout trio shared
+// by all task-producing mutations. Effective wait = *wait && !*noWait.
+func waitFlags(cmd *cobra.Command, wait, noWait *bool, timeout *int) {
+	cmd.Flags().BoolVar(wait, "wait", true, "wait for the task to finish (default)")
+	cmd.Flags().BoolVar(noWait, "no-wait", false, "return immediately with the task id")
+	cmd.Flags().IntVar(timeout, "wait-timeout", 0, "seconds to wait (0 = no limit)")
+	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
+}
+
 func newGuestCloneCmd(a *app, spec guestSpec) *cobra.Command {
-	var node, name, targetNode string
-	var full, noWait bool
+	var node, name, targetNode, storage string
+	var full, wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
 		Use:     "clone <vmid> <newid>",
@@ -70,23 +79,26 @@ func newGuestCloneCmd(a *app, spec guestSpec) *cobra.Command {
 			if full {
 				params.Set("full", "1")
 			}
+			if storage != "" {
+				params.Set("storage", storage)
+			}
 			path := fmt.Sprintf("/nodes/%s/%s/%d/clone", g.Node, kindEndpoint(spec), g.VMID)
 			return rawMutate(cmd.Context(), a, p, "POST", path, params,
-				fmt.Sprintf("clone %s %d -> %d", spec.label, g.VMID, newid), !noWait, timeout)
+				fmt.Sprintf("clone %s %d -> %d", spec.label, g.VMID, newid), wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the source guest")
 	cmd.Flags().StringVar(&name, "name", "", "name for the clone")
 	cmd.Flags().StringVar(&targetNode, "target-node", "", "destination node")
 	cmd.Flags().BoolVar(&full, "full", false, "full clone (copy disks) instead of linked")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
-	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait (0 = no limit)")
+	cmd.Flags().StringVar(&storage, "storage", "", "target storage/pool (full clone)")
+	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }
 
 func newGuestDeleteCmd(a *app, spec guestSpec) *cobra.Command {
 	var node string
-	var purge, noWait bool
+	var purge, wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
 		Use:     "delete <vmid>",
@@ -112,19 +124,18 @@ func newGuestDeleteCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			path := fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(spec), g.VMID)
 			return rawMutate(cmd.Context(), a, p, "DELETE", path, params,
-				fmt.Sprintf("delete %s %d", spec.label, g.VMID), !noWait, timeout)
+				fmt.Sprintf("delete %s %d", spec.label, g.VMID), wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest")
 	cmd.Flags().BoolVar(&purge, "purge", false, "also remove from backup jobs / HA")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
-	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait (0 = no limit)")
+	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }
 
 func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, targetNode string
-	var online, noWait bool
+	var online, wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
 		Use:     "migrate <vmid>",
@@ -149,14 +160,13 @@ func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			path := fmt.Sprintf("/nodes/%s/%s/%d/migrate", g.Node, kindEndpoint(spec), g.VMID)
 			return rawMutate(cmd.Context(), a, p, "POST", path, params,
-				fmt.Sprintf("migrate %s %d -> %s", spec.label, g.VMID, targetNode), !noWait, timeout)
+				fmt.Sprintf("migrate %s %d -> %s", spec.label, g.VMID, targetNode), wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "current node hosting the guest")
 	cmd.Flags().StringVar(&targetNode, "target-node", "", "destination node (required)")
 	cmd.Flags().BoolVar(&online, "online", false, "live migration")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
-	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait (0 = no limit)")
+	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }
 
@@ -210,7 +220,7 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, name string
 	var memory, cores int
 	var set []string
-	var noWait bool
+	var wait, noWait bool
 	var timeout int
 	cmd := &cobra.Command{
 		Use:   "create <vmid>",
@@ -248,7 +258,7 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			path := fmt.Sprintf("/nodes/%s/%s", node, kindEndpoint(spec))
 			return rawMutate(cmd.Context(), a, p, "POST", path, params,
-				fmt.Sprintf("create %s %s", spec.label, args[0]), !noWait, timeout)
+				fmt.Sprintf("create %s %s", spec.label, args[0]), wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "target node (required)")
@@ -256,8 +266,7 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 	cmd.Flags().IntVar(&memory, "memory", 0, "memory in MiB")
 	cmd.Flags().IntVar(&cores, "cores", 0, "CPU cores")
 	cmd.Flags().StringArrayVar(&set, "set", nil, "any additional key=value param (repeatable)")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
-	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait (0 = no limit)")
+	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }
 

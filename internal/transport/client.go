@@ -169,13 +169,28 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status int, err error) {
 	u := *c.base
 	u.Path = "/api2/json" + req.Path
-	if len(req.Query) > 0 {
-		u.RawQuery = req.Query.Encode()
+
+	// Only POST/PUT/PATCH carry a request body; for GET/DELETE/etc. any params
+	// go in the query string (PVE rejects a body on DELETE with HTTP 501).
+	write := !isIdempotent(req.Method)
+	bodyMethod := req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch
+
+	query := url.Values{}
+	for k, vs := range req.Query {
+		query[k] = append(query[k], vs...)
+	}
+	if !bodyMethod {
+		for k, vs := range req.Form {
+			query[k] = append(query[k], vs...)
+		}
+	}
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
 	}
 
 	var reqBody io.Reader
-	write := !isIdempotent(req.Method)
-	if write && len(req.Form) > 0 {
+	sendBody := bodyMethod && len(req.Form) > 0
+	if sendBody {
 		reqBody = strings.NewReader(req.Form.Encode())
 	}
 
@@ -185,7 +200,7 @@ func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("User-Agent", c.userAgent)
-	if write && len(req.Form) > 0 {
+	if sendBody {
 		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	if c.auth != nil {
