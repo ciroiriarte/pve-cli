@@ -65,10 +65,13 @@ read whose data is cluster-wide or on shared storage, route it through
 `nodeOrAuto`.
 
 ### 5. Naming: hierarchical noun-verb over compound-hyphen leaves
-Prefer `remote node status` over `remote node-status`, `ceph osd tree` over
-`ceph osd-tree`. New commands should follow the hierarchical form; legacy
-hyphenated spellings, where they exist, stay as hidden aliases for one release
-(migration tracked in #5).
+Prefer `remote node status` over `remote node-status`. New commands follow the
+hierarchical form via the `group`/`withSubs` helpers; legacy hyphenated spellings
+stay as `hidden()` back-compat aliases. Done for `remote` (cluster/node/updates),
+`auto-install` (prepared/tokens/installations), and `resources location`. Two
+exceptions kept as flat leaves: `ceph osd-tree` (the name `osd` is already the
+PVE node-scoped mgmt command, so it can't nest) and `resources top-entities` /
+`remote next-id` (single-concept leaves with no clean hierarchical form).
 
 ### 6. Onboarding nudges go to stderr, TTY-gated
 Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to

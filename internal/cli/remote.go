@@ -58,8 +58,15 @@ func newRemoteCmd(a *app) *cobra.Command {
 		newRemoteAddCmd(a),
 		newRemoteUpdateCmd(a),
 		newRemoteRemoveCmd(a),
-		newRemoteClusterStatusCmd(a),
-		newRemoteUpdatesCmd(a),
+		// hierarchical noun-verb; flat hyphenated names kept as hidden aliases
+		group("cluster", "Inspect a remote cluster",
+			newRemoteClusterStatusCmd(a, "status <id>")),
+		hidden(newRemoteClusterStatusCmd(a, "cluster-status <id>")),
+		withSubs(newRemoteUpdatesCmd(a),
+			simpleGet(a, "list <id>", "List pending node updates on a remote", 1,
+				func(a []string) string { return "/pve/remotes/" + a[0] + "/updates" }, "node", "status")),
+		hidden(simpleGet(a, "updates-list <id>", "List pending node updates on a remote", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/updates" }, "node", "status")),
 		// per-remote PVE reads (proxied)
 		simpleGet(a, "resources <id>", "List a remote's cluster resources", 1,
 			func(a []string) string { return "/pve/remotes/" + a[0] + "/resources" }, "type", "id", "node", "status"),
@@ -67,16 +74,21 @@ func newRemoteCmd(a *app) *cobra.Command {
 			func(a []string) string { return "/pve/remotes/" + a[0] + "/options" }),
 		simpleGet(a, "next-id <id>", "Get the next free VMID on a remote", 1,
 			func(a []string) string { return "/pve/remotes/" + a[0] + "/cluster-nextid" }),
-		simpleGet(a, "updates-list <id>", "List pending node updates on a remote", 1,
-			func(a []string) string { return "/pve/remotes/" + a[0] + "/updates" }, "node", "status"),
 		simpleGet(a, "firewall <id>", "Show a remote's datacenter firewall rules", 1,
 			func(a []string) string { return "/pve/remotes/" + a[0] + "/firewall/rules" }, "pos", "type", "action", "proto", "dport"),
-		simpleGet(a, "node-storage <id> <node>", "List storages on a remote node", 2,
-			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/storage" }, "storage", "type", "content", "enabled"),
-		simpleGet(a, "node-status <id> <node>", "Show a remote node's status", 2,
-			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/status" }),
-		simpleGet(a, "node-network <id> <node>", "List a remote node's network interfaces", 2,
-			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/network" }, "iface", "type", "method", "address"),
+		group("node", "Inspect a remote's nodes",
+			simpleGet(a, "status <id> <node>", "Show a remote node's status", 2,
+				func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/status" }),
+			simpleGet(a, "network <id> <node>", "List a remote node's network interfaces", 2,
+				func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/network" }, "iface", "type", "method", "address"),
+			simpleGet(a, "storage <id> <node>", "List storages on a remote node", 2,
+				func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/storage" }, "storage", "type", "content", "enabled")),
+		hidden(simpleGet(a, "node-status <id> <node>", "Show a remote node's status", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/status" })),
+		hidden(simpleGet(a, "node-network <id> <node>", "List a remote node's network interfaces", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/network" }, "iface", "type", "method", "address")),
+		hidden(simpleGet(a, "node-storage <id> <node>", "List storages on a remote node", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/storage" }, "storage", "type", "content", "enabled")),
 	)
 	return cmd
 }
@@ -182,9 +194,9 @@ func newRemoteRemoveCmd(a *app) *cobra.Command {
 	}
 }
 
-func newRemoteClusterStatusCmd(a *app) *cobra.Command {
+func newRemoteClusterStatusCmd(a *app, use string) *cobra.Command {
 	return &cobra.Command{
-		Use: "cluster-status <id>", Short: "Show a remote cluster's node/quorum status", Args: cobra.ExactArgs(1),
+		Use: use, Short: "Show a remote cluster's node/quorum status", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := a.providerWithRemotes()
 			if err != nil {

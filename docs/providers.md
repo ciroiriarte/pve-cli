@@ -33,7 +33,7 @@ than guessing.
 | `access` (user/group/token/role/acl/realm) | ✅ | ✅ | provider-agnostic — `/access/*` exists on both |
 | `storage`, `backup` | ✅ | ➖ | PVE-scoped today |
 | `task list/show/wait/log` | ✅ | ✅ | PDM task ids are `pve:<remote>!UPID:…`; the task commands accept them |
-| `remote …` (list/show/add/update/remove, cluster-status, updates, per-remote reads) | ❌ | ✅ | PDM-only; refused on PVE |
+| `remote …` (list/show/add/update/delete, cluster status, node status·network·storage, updates, per-remote reads) | ❌ | ✅ | PDM-only; refused on PVE |
 | `sdn` (zones/vnets/subnets/controllers/ipams/dns/apply) | ✅ | ✅ | provider-aware: PVE `/cluster/sdn`, PDM `/sdn` (smaller set) |
 | `firewall` (cluster/node/guest via `--node`/`--vmid`) | ✅ | ➖ | rules/aliases/ipset/options/groups/macros |
 | `ceph` | ✅* | ✅ | PVE: node-scoped management (`--node`: osd/pool/service/config/health). PDM: cross-cluster monitoring (`<cluster>`) |
@@ -67,7 +67,7 @@ one remote):
 pc --provider pdm vm start 100 --remote dc-west
 pc --provider pdm vm snapshot create 100 pre-upgrade --remote dc-west
 pc --provider pdm vm migrate 100 --target-node node-2 --remote dc-west --online
-pc --provider pdm remote cluster-status dc-west
+pc --provider pdm remote cluster status dc-west
 ```
 
 The rest of PDM's API (ceph, sdn, subscriptions, pbs, certificates, access

@@ -89,6 +89,27 @@ func (a *app) renderGet(cmd *cobra.Command, p provider.Provider, path string, co
 
 // simpleGet builds a cobra command that GETs a fixed or arg-derived path on the
 // PDM provider (gated). pathFn receives the positional args and returns the path.
+// hidden marks a command as a hidden back-compat alias (kept working but off the
+// help tree) and returns it, for the hyphenated→hierarchical rename.
+func hidden(c *cobra.Command) *cobra.Command {
+	c.Hidden = true
+	return c
+}
+
+// group builds a parent command that namespaces related subcommands.
+func group(use, short string, subs ...*cobra.Command) *cobra.Command {
+	c := &cobra.Command{Use: use, Short: short}
+	c.AddCommand(subs...)
+	return c
+}
+
+// withSubs attaches subcommands to an existing command (e.g. turning a list
+// command into a parent that also namespaces related verbs) and returns it.
+func withSubs(parent *cobra.Command, subs ...*cobra.Command) *cobra.Command {
+	parent.AddCommand(subs...)
+	return parent
+}
+
 func simpleGet(a *app, use, short string, nargs int, pathFn func(args []string) string, cols ...string) *cobra.Command {
 	return &cobra.Command{
 		Use: use, Short: short, Args: cobra.ExactArgs(nargs),
@@ -137,11 +158,15 @@ func newCephCmd(a *app) *cobra.Command {
 // newResourcesCmd surfaces PDM's aggregate resource views.
 func newResourcesCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "resources", Aliases: []string{"res"}, Short: "PDM aggregate resource views (read-only)"}
+	locationInfo := func([]string) string { return "/resources/location-info" }
 	cmd.AddCommand(
 		simpleGet(a, "status", "Cluster-wide resource totals", 0, func([]string) string { return "/resources/status" }),
 		simpleGet(a, "top-entities", "Top resource consumers", 0, func([]string) string { return "/resources/top-entities" }),
 		simpleGet(a, "subscription", "Aggregate subscription status", 0, func([]string) string { return "/resources/subscription" }),
-		simpleGet(a, "location-info", "Resource location info", 0, func([]string) string { return "/resources/location-info" }),
+		group("location", "Resource location views",
+			simpleGet(a, "info", "Resource location info", 0, locationInfo)),
+		// back-compat alias for the former flat name
+		hidden(simpleGet(a, "location-info", "Resource location info", 0, locationInfo)),
 	)
 	return cmd
 }

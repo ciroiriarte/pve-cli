@@ -225,12 +225,12 @@ either wrapped by a **curated** `pc` command or reachable only via the
 | `GET /access/users/{userid}/token/{token-name}` | access token show |
 | `POST /access/users/{userid}/token/{token-name}` | access token create |
 | `GET /auto-install/installations` | auto-install installations |
-| `DELETE /auto-install/installations/{uuid}` | auto-install installation-delete |
+| `DELETE /auto-install/installations/{uuid}` | auto-install installations delete |
 | `GET /auto-install/prepared` | auto-install prepared |
-| `DELETE /auto-install/prepared/{id}` | auto-install prepared-delete |
-| `GET /auto-install/prepared/{id}` | auto-install prepared-show |
+| `DELETE /auto-install/prepared/{id}` | auto-install prepared delete |
+| `GET /auto-install/prepared/{id}` | auto-install prepared show |
 | `GET /auto-install/tokens` | auto-install tokens |
-| `DELETE /auto-install/tokens/{id}` | auto-install token-delete |
+| `DELETE /auto-install/tokens/{id}` | auto-install tokens delete |
 | `GET /ceph/clusters` | ceph clusters |
 | `GET /ceph/clusters/{cluster}` | ceph show |
 | `GET /ceph/clusters/{cluster}/flags` | ceph flags |
@@ -286,7 +286,7 @@ either wrapped by a **curated** `pc` command or reachable only via the
 | `GET /pbs/remotes/{remote}/datastore/{datastore}/snapshots` | pbs datastore snapshots |
 | `GET /pbs/remotes/{remote}/status` | pbs status |
 | `GET /pve/remotes/{remote}/cluster-nextid` | remote next-id |
-| `GET /pve/remotes/{remote}/cluster-status` | remote cluster-status |
+| `GET /pve/remotes/{remote}/cluster-status` | remote cluster status |
 | `GET /pve/remotes/{remote}/firewall/rules` | remote firewall |
 | `GET /pve/remotes/{remote}/lxc/{vmid}/config` | vm/ct show (pdm) |
 | `GET /pve/remotes/{remote}/lxc/{vmid}/firewall/options` | vm/ct firewall options (pdm) |
@@ -302,9 +302,9 @@ either wrapped by a **curated** `pc` command or reachable only via the
 | `POST /pve/remotes/{remote}/lxc/{vmid}/start` | vm/ct start (pdm) |
 | `GET /pve/remotes/{remote}/lxc/{vmid}/status` | vm/ct status (pdm) |
 | `POST /pve/remotes/{remote}/lxc/{vmid}/stop` | vm/ct stop (pdm) |
-| `GET /pve/remotes/{remote}/nodes/{node}/network` | remote node-network |
-| `GET /pve/remotes/{remote}/nodes/{node}/status` | remote node-status |
-| `GET /pve/remotes/{remote}/nodes/{node}/storage` | remote node-storage |
+| `GET /pve/remotes/{remote}/nodes/{node}/network` | remote node network |
+| `GET /pve/remotes/{remote}/nodes/{node}/status` | remote node status |
+| `GET /pve/remotes/{remote}/nodes/{node}/storage` | remote node storage |
 | `GET /pve/remotes/{remote}/options` | remote options |
 | `GET /pve/remotes/{remote}/qemu/{vmid}/config` | vm/ct show (pdm) |
 | `GET /pve/remotes/{remote}/qemu/{vmid}/firewall/options` | vm/ct firewall options (pdm) |
@@ -325,14 +325,14 @@ either wrapped by a **curated** `pc` command or reachable only via the
 | `GET /pve/remotes/{remote}/tasks` | task list (pdm) |
 | `GET /pve/remotes/{remote}/tasks/{upid}/log` | task log (pdm) |
 | `GET /pve/remotes/{remote}/tasks/{upid}/status` | task show/wait (pdm) |
-| `GET /pve/remotes/{remote}/updates` | remote updates-list |
+| `GET /pve/remotes/{remote}/updates` | remote updates list |
 | `GET /remotes/remote` | remote list/show |
 | `POST /remotes/remote` | remote add |
 | `DELETE /remotes/remote/{id}` | remote remove |
 | `PUT /remotes/remote/{id}` | remote update |
 | `GET /remotes/updates/summary` | remote updates |
 | `GET /resources/list` | node/guest list (pdm) |
-| `GET /resources/location-info` | resources location-info |
+| `GET /resources/location-info` | resources location info |
 | `GET /resources/status` | resources status |
 | `GET /resources/subscription` | resources subscription |
 | `GET /resources/top-entities` | resources top-entities |

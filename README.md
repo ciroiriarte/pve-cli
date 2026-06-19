@@ -118,7 +118,7 @@ pc sdn     zone vnet subnet controller (list·show·create·delete) | ipams dns 
 pc ceph    health osd pool service config                  # PVE mgmt; reads auto-pick a node, writes take --node
 pc access  user token role acl realm group                 # users, tokens, ACLs, realms
 pc task    list show wait log [--follow]
-pc remote  list show add update remove | cluster-status | updates | node-* | resources …  # PDM
+pc remote  list show add update delete | cluster status | node status·network·storage | updates [list] …  # PDM
 pc raw <segments...> | pc api <METHOD> <path> [-d k=v]     # full coverage / escape hatch
 pc config | context | auth | plugin | completion | version
 # PDM control-plane (provider: pdm): pc ceph | sdn | pbs | subscription | server | resources | auto-install

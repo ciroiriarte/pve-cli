@@ -136,7 +136,7 @@ pc --provider pdm remote list                         # managed clusters
 pc --provider pdm guest list                          # guests across all remotes (remote column)
 pc --provider pdm vm start 100 --remote MP02          # --remote disambiguates a shared vmid
 pc --provider pdm vm snapshot create 100 pre --remote MP02
-pc --provider pdm remote cluster-status MP02 ; pc --provider pdm remote updates
+pc --provider pdm remote cluster status MP02 ; pc --provider pdm remote updates
 pc --provider pdm ceph clusters                       # cross-cluster Ceph health
 ```
 
