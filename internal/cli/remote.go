@@ -164,18 +164,20 @@ func newRemoteUpdateCmd(a *app) *cobra.Command {
 
 func newRemoteRemoveCmd(a *app) *cobra.Command {
 	return &cobra.Command{
-		Use: "remove <id>", Aliases: []string{"rm", "delete"},
-		Short: "Remove a registered remote from PDM", Args: cobra.ExactArgs(1),
+		// Canonical verb is `delete` for consistency with vm/ct/pool delete;
+		// `remove`/`rm` stay as aliases so existing muscle memory keeps working.
+		Use: "delete <id>", Aliases: []string{"remove", "rm"},
+		Short: "Delete a registered remote from PDM", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := a.providerWithRemotes()
 			if err != nil {
 				return err
 			}
-			if err := confirm(a, fmt.Sprintf("remove remote %q from PDM?", args[0])); err != nil {
+			if err := confirm(a, fmt.Sprintf("delete remote %q from PDM?", args[0])); err != nil {
 				return err
 			}
 			return rawMutate(cmd.Context(), a, p, "DELETE", "/remotes/remote/"+args[0], nil,
-				fmt.Sprintf("remove remote %s", args[0]), true, 0)
+				fmt.Sprintf("delete remote %s", args[0]), true, 0)
 		},
 	}
 }
