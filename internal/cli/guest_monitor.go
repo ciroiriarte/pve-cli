@@ -47,14 +47,12 @@ func mapsTable(rows []map[string]any, preferred ...string) output.Tabular {
 // newGuestMonitorCmds returns the read-only monitoring commands shared by the
 // vm and ct trees. They work on both providers: PVE addresses the node, PDM
 // proxies the same endpoints under /pve/remotes/{remote}.
-func newGuestMonitorCmds(a *app, spec guestSpec) []*cobra.Command {
+// newGuestStatusCmd builds the live-runtime "status" command. It is shared by
+// the typed vm/ct trees and the unified `guest` command, so the path follows the
+// resolved guest's kind.
+func newGuestStatusCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, remote string
-	addScope := func(c *cobra.Command) {
-		c.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
-		c.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
-	}
-
-	status := &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "status <vmid>",
 		Short:   fmt.Sprintf("Show live runtime status of a %s", spec.label),
 		Example: fmt.Sprintf("  pc %s status 100", spec.noun),
@@ -80,7 +78,19 @@ func newGuestMonitorCmds(a *app, spec guestSpec) []*cobra.Command {
 			return a.render(guestConfigTable(g, st))
 		},
 	}
-	addScope(status)
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
+	return cmd
+}
+
+func newGuestMonitorCmds(a *app, spec guestSpec) []*cobra.Command {
+	var node, remote string
+	addScope := func(c *cobra.Command) {
+		c.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+		c.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
+	}
+
+	status := newGuestStatusCmd(a, spec)
 
 	pending := &cobra.Command{
 		Use:     "pending <vmid>",

@@ -26,6 +26,11 @@ type guestSpec struct {
 var (
 	vmKind = guestSpec{noun: "vm", kind: domain.KindVM, label: "VM"}
 	ctKind = guestSpec{noun: "ct", aliases: []string{"container"}, kind: domain.KindCT, label: "container"}
+	// guestKind drives the unified `pc guest` verbs. Its empty kind means "any":
+	// the vmid is resolved against /cluster/resources to learn VM-vs-CT (Proxmox
+	// uses a single id namespace, so a vmid is unambiguous), then routed to the
+	// right API path. No --type flag is needed.
+	guestKind = guestSpec{noun: "guest", kind: "", label: "guest"}
 )
 
 func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
@@ -160,7 +165,10 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 	if len(remoteOpt) > 0 {
 		remote = remoteOpt[0]
 	}
-	if node != "" {
+	// Typed commands (vm/ct) with an explicit --node skip auto-resolution. The
+	// unified `guest` command has no kind, so it must resolve to learn whether
+	// the vmid is a VM or CT — it falls through and applies --node as an override.
+	if node != "" && spec.kind != "" {
 		// Explicit node skips auto-resolution; carry remote too so PDM proxied
 		// calls (which are remote-scoped, not node-scoped) still work.
 		return domain.Guest{VMID: vmid, Kind: spec.kind, Node: node, Remote: remote}, nil
@@ -176,8 +184,11 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 		if err != nil {
 			return domain.Guest{}, err
 		}
-		if g.Kind != spec.kind {
-			return domain.Guest{}, fmt.Errorf("%d is a %s, not a %s", vmid, g.Kind, spec.label)
+		if err := enforceKind(spec, g); err != nil {
+			return domain.Guest{}, err
+		}
+		if node != "" {
+			g.Node = node
 		}
 		return g, nil
 	}
@@ -185,10 +196,22 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 	if err != nil {
 		return domain.Guest{}, err
 	}
-	if g.Kind != spec.kind {
-		return domain.Guest{}, fmt.Errorf("%d is a %s, not a %s", vmid, g.Kind, spec.label)
+	if err := enforceKind(spec, g); err != nil {
+		return domain.Guest{}, err
+	}
+	if node != "" {
+		g.Node = node
 	}
 	return g, nil
+}
+
+// enforceKind rejects a guest whose kind doesn't match a typed spec. The unified
+// `guest` spec has an empty kind and accepts whatever was resolved.
+func enforceKind(spec guestSpec, g domain.Guest) error {
+	if spec.kind != "" && g.Kind != spec.kind {
+		return fmt.Errorf("%d is a %s, not a %s", g.VMID, g.Kind, spec.label)
+	}
+	return nil
 }
 
 func guestsTable(guests []domain.Guest) output.Tabular {

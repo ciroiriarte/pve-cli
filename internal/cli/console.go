@@ -131,7 +131,7 @@ func newGuestConsoleCmd(a *app, spec guestSpec) *cobra.Command {
 			// 1. acquire a termproxy ticket
 			tp := url.Values{"serial": {fmt.Sprintf("serial%d", serial)}}
 			body, err := p.Raw(cmd.Context(), "POST",
-				fmt.Sprintf("/nodes/%s/%s/%d/termproxy", g.Node, kindEndpoint(spec), g.VMID), tp)
+				fmt.Sprintf("/nodes/%s/%s/%d/termproxy", g.Node, kindEndpoint(g.Kind), g.VMID), tp)
 			if err != nil {
 				return err
 			}
@@ -151,7 +151,7 @@ func newGuestConsoleCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			q := url.Values{"port": {fmt.Sprintf("%v", t.Port)}, "vncticket": {t.Ticket}}
 			conn, err := cl.DialWebsocket(cmd.Context(),
-				fmt.Sprintf("/nodes/%s/%s/%d/vncwebsocket", g.Node, kindEndpoint(spec), g.VMID), q)
+				fmt.Sprintf("/nodes/%s/%s/%d/vncwebsocket", g.Node, kindEndpoint(g.Kind), g.VMID), q)
 			if err != nil {
 				return err
 			}

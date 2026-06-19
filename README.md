@@ -106,7 +106,8 @@ pc vm      list show status pending rrddata create clone migrate config snapshot
            resize move-disk unlink template cloudinit agent console
            start stop shutdown reboot suspend resume reset delete
 pc ct      … (same verbs for LXC containers; move-volume instead of move-disk; alias: container)
-pc guest   list                         # unified VM + container view
+pc guest   list show status | start stop shutdown reboot suspend resume console
+           # unified VM + container view; lifecycle auto-detects VM vs CT by vmid
 pc node    list show | service apt network subscription
 pc storage list show status | content list·delete | prune-backups
 pc backup  create list | job list·show·create·delete

@@ -26,9 +26,15 @@ pc vm list                            # VMs (node auto-resolved)
 pc vm list --status running           # filter
 pc guest list                         # VMs + containers, unified
 pc vm list -c id -c name -c status -o value | sort -k3   # script-friendly columns
-pc vm show 100                        # config (key/value)
+pc vm show 100                        # config (native object in -o json)
 pc vm status 100                      # live runtime status
 pc node/guest list -o json | jq '.[]|select(.status=="running")|.vmid'
+
+# Don't know (or care) whether an id is a VM or a container? Use `pc guest`:
+# it resolves the type from the vmid and routes accordingly.
+pc guest show 102 ; pc guest status 102      # works for a VM or a CT
+pc guest start 102 ; pc guest stop 102 --yes # same verbs, type auto-detected
+pc guest console 100                          # serial console (PVE, ticket auth)
 ```
 
 ## Lifecycle (every mutation supports `--wait`/`--no-wait`/`--wait-timeout`)

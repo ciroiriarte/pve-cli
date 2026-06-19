@@ -71,6 +71,16 @@ Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to
 **stderr** and are gated on `isTTY()` so scripted/CI output stays clean. Never
 emit advisory text on stdout for machine-consumed commands.
 
+### 7. Guest commands route by resolved kind, not the command's spec
+`pc guest <verb>` is type-agnostic: `resolveGuest` looks the vmid up in
+`/cluster/resources` to learn VM-vs-CT (Proxmox shares one id namespace, so a
+vmid is unambiguous — no `--type` flag), and CLI path builders use the resolved
+`g.Kind` via `kindEndpoint(g.Kind)` / `guestBase(p, g)` — never `spec.kind`. The
+typed `vm`/`ct` trees still enforce their kind (`enforceKind`) and own
+provisioning (create/clone/delete/config-write), where the type is intrinsic.
+When adding a guest-scoped command, build paths from `g.Kind` so it works under
+`pc guest`, `pc vm`, and `pc ct` alike.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is

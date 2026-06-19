@@ -20,14 +20,14 @@ import (
 // active provider. PVE addresses guests by node; PDM proxies the PVE API under
 // /pve/remotes/{remote}, so the same suffixes (snapshot, migrate, status, …)
 // work for both once the base is right.
-func guestBase(p provider.Provider, g domain.Guest, spec guestSpec) (string, error) {
+func guestBase(p provider.Provider, g domain.Guest) (string, error) {
 	if p.Name() == "pdm" {
 		if g.Remote == "" {
 			return "", fmt.Errorf("guest %d has no remote; pass --remote to choose one", g.VMID)
 		}
-		return fmt.Sprintf("/pve/remotes/%s/%s/%d", g.Remote, kindEndpoint(spec), g.VMID), nil
+		return fmt.Sprintf("/pve/remotes/%s/%s/%d", g.Remote, kindEndpoint(g.Kind), g.VMID), nil
 	}
-	return fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(spec), g.VMID), nil
+	return fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(g.Kind), g.VMID), nil
 }
 
 // resolveGuestBase resolves the active provider, the guest, and its API base
@@ -41,7 +41,7 @@ func resolveGuestBase(cmd *cobra.Command, a *app, spec guestSpec, idArg, node, r
 	if err != nil {
 		return nil, domain.Guest{}, "", err
 	}
-	b, err := guestBase(p, g, spec)
+	b, err := guestBase(p, g)
 	return p, g, b, err
 }
 
@@ -67,8 +67,10 @@ func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path st
 	return finishTask(ctx, a, p, h, wait, timeout, label)
 }
 
-// kindEndpoint maps a guest kind to its API path segment.
-func kindEndpoint(spec guestSpec) string { return string(spec.kind) } // "qemu" | "lxc"
+// kindEndpoint maps a guest kind to its API path segment ("qemu" | "lxc").
+// Callers pass the resolved guest's kind (g.Kind) so the path follows the actual
+// guest type — which is what makes the type-agnostic `pc guest` verbs work.
+func kindEndpoint(k domain.GuestKind) string { return string(k) }
 
 // ensureProvisionable refuses provisioning verbs on PDM, which has no
 // create/clone/delete/config-write API (only power/migrate/snapshot/monitor).
@@ -126,7 +128,7 @@ func newGuestCloneCmd(a *app, spec guestSpec) *cobra.Command {
 			if storage != "" {
 				params.Set("storage", storage)
 			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/clone", g.Node, kindEndpoint(spec), g.VMID)
+			path := fmt.Sprintf("/nodes/%s/%s/%d/clone", g.Node, kindEndpoint(g.Kind), g.VMID)
 			return rawMutate(cmd.Context(), a, p, "POST", path, params,
 				fmt.Sprintf("clone %s %d -> %d", spec.label, g.VMID, newid), wait && !noWait, timeout)
 		},
@@ -169,7 +171,7 @@ func newGuestDeleteCmd(a *app, spec guestSpec) *cobra.Command {
 			if purge {
 				params.Set("purge", "1")
 			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(spec), g.VMID)
+			path := fmt.Sprintf("/nodes/%s/%s/%d", g.Node, kindEndpoint(g.Kind), g.VMID)
 			return rawMutate(cmd.Context(), a, p, "DELETE", path, params,
 				fmt.Sprintf("delete %s %d", spec.label, g.VMID), wait && !noWait, timeout)
 		},
@@ -203,7 +205,7 @@ func newGuestMigrateCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := guestBase(p, g, spec)
+			b, err := guestBase(p, g)
 			if err != nil {
 				return err
 			}
@@ -258,7 +260,7 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 				}
 				params.Set(k, v)
 			}
-			path := fmt.Sprintf("/nodes/%s/%s/%d/config", g.Node, kindEndpoint(spec), g.VMID)
+			path := fmt.Sprintf("/nodes/%s/%s/%d/config", g.Node, kindEndpoint(g.Kind), g.VMID)
 			if err := rawMutate(cmd.Context(), a, p, "PUT", path, params,
 				fmt.Sprintf("update %s %d config", spec.label, g.VMID), true, 0); err != nil {
 				return err
@@ -316,7 +318,7 @@ func newGuestCreateCmd(a *app, spec guestSpec) *cobra.Command {
 				}
 				params.Set(k, v)
 			}
-			path := fmt.Sprintf("/nodes/%s/%s", node, kindEndpoint(spec))
+			path := fmt.Sprintf("/nodes/%s/%s", node, kindEndpoint(spec.kind))
 			return rawMutate(cmd.Context(), a, p, "POST", path, params,
 				fmt.Sprintf("create %s %s", spec.label, args[0]), wait && !noWait, timeout)
 		},
