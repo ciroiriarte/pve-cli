@@ -115,7 +115,7 @@ pc pool    list show create update delete
 pc ha      status | resource list·show·add·remove | groups
 pc firewall rules aliases ipset options groups macros      # scope: --node / --vmid
 pc sdn     zone vnet subnet controller (list·show·create·delete) | ipams dns apply
-pc ceph    health osd pool service config                  # PVE (--node) management
+pc ceph    health osd pool service config                  # PVE mgmt; reads auto-pick a node, writes take --node
 pc access  user token role acl realm group                 # users, tokens, ACLs, realms
 pc task    list show wait log [--follow]
 pc remote  list show add update remove | cluster-status | updates | node-* | resources …  # PDM

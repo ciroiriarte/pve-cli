@@ -166,17 +166,20 @@ func newStorageCmd(a *app) *cobra.Command {
 	status := &cobra.Command{
 		Use: "status <storage>", Short: "Show storage usage/status on a node", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if statusNode == "" {
-				return fmt.Errorf("--node is required")
-			}
 			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
-			return a.renderGet(cmd, p, fmt.Sprintf("/nodes/%s/storage/%s/status", statusNode, args[0]))
+			// Shared storage (NFS/CephFS/PBS) reports the same from any node;
+			// default to an online node. Pass --node for node-local storage.
+			n, err := nodeOrAuto(cmd.Context(), p, statusNode)
+			if err != nil {
+				return err
+			}
+			return a.renderGet(cmd, p, fmt.Sprintf("/nodes/%s/storage/%s/status", n, args[0]))
 		},
 	}
-	status.Flags().StringVar(&statusNode, "node", "", "node (required)")
+	status.Flags().StringVar(&statusNode, "node", "", "node to query (optional; defaults to an online node)")
 
 	var pruneNode, pruneVMID string
 	var pruneApply bool
@@ -250,17 +253,23 @@ func newBackupCmd(a *app) *cobra.Command {
 	var lNode, lStorage string
 	list := &cobra.Command{
 		Use: "list", Short: "List backup volumes on a storage", Args: cobra.NoArgs,
-		Example: "  pc backup list --node pve-01 --storage backup-nfs",
+		Example: "  pc backup list --storage backup-nfs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if lNode == "" || lStorage == "" {
-				return fmt.Errorf("--node and --storage are required")
+			if lStorage == "" {
+				return fmt.Errorf("--storage is required")
 			}
 			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
+			// Backups on shared storage are visible from any node; default to an
+			// online one. Pass --node to target node-local storage.
+			n, err := nodeOrAuto(cmd.Context(), p, lNode)
+			if err != nil {
+				return err
+			}
 			t, err := rawListTabular(cmd.Context(), p,
-				fmt.Sprintf("/nodes/%s/storage/%s/content", lNode, lStorage),
+				fmt.Sprintf("/nodes/%s/storage/%s/content", n, lStorage),
 				url.Values{"content": {"backup"}},
 				[]string{"volid", "format", "size", "vmid", "ctime"})
 			if err != nil {
@@ -269,7 +278,7 @@ func newBackupCmd(a *app) *cobra.Command {
 			return a.render(t)
 		},
 	}
-	list.Flags().StringVar(&lNode, "node", "", "node (required)")
+	list.Flags().StringVar(&lNode, "node", "", "node to query (optional; defaults to an online node)")
 	list.Flags().StringVar(&lStorage, "storage", "", "storage (required)")
 
 	cmd.AddCommand(create, list, newBackupJobCmd(a))

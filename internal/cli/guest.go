@@ -214,6 +214,31 @@ func enforceKind(spec guestSpec, g domain.Guest) error {
 	return nil
 }
 
+// firstOnlineNode returns the name of an online cluster node. It lets read-only,
+// cluster-wide commands (Ceph info, shared-storage listings) make --node
+// optional: the data is identical from any node, so the user shouldn't have to
+// name one. Node-local resources still want an explicit --node.
+func firstOnlineNode(ctx context.Context, p provider.Provider) (string, error) {
+	nodes, err := p.ListNodes(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, n := range nodes {
+		if n.Name != "" && (n.Status == "" || n.Status == "online") {
+			return n.Name, nil
+		}
+	}
+	return "", fmt.Errorf("could not find an online node to route this request; pass --node explicitly")
+}
+
+// nodeOrAuto returns node when set, otherwise an online cluster node.
+func nodeOrAuto(ctx context.Context, p provider.Provider, node string) (string, error) {
+	if node != "" {
+		return node, nil
+	}
+	return firstOnlineNode(ctx, p)
+}
+
 func guestsTable(guests []domain.Guest) output.Tabular {
 	// Include the remote column only when present (PDM); keeps PVE output clean.
 	hasRemote := false

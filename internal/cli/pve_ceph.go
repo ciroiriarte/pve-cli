@@ -12,8 +12,10 @@ import (
 // two sets don't collide and each works on its own provider.
 func newCephMgmtCmds(a *app) []*cobra.Command {
 	// nodeGet/nodeMutate are small helpers requiring --node.
+	// Ceph state is cluster-wide, so these reads route through any online node
+	// when --node is omitted.
 	withNode := func(c *cobra.Command, node *string) *cobra.Command {
-		c.Flags().StringVar(node, "node", "", "cluster node to act on (required)")
+		c.Flags().StringVar(node, "node", "", "node to query (optional; defaults to an online node)")
 		return c
 	}
 
@@ -25,10 +27,11 @@ func newCephMgmtCmds(a *app) []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			if hNode == "" {
-				return fmt.Errorf("--node is required")
+			n, err := nodeOrAuto(cmd.Context(), p, hNode)
+			if err != nil {
+				return err
 			}
-			return a.renderGet(cmd, p, "/nodes/"+hNode+"/ceph/status")
+			return a.renderGet(cmd, p, "/nodes/"+n+"/ceph/status")
 		},
 	}
 	withNode(health, &hNode)
@@ -76,10 +79,11 @@ func newCephMgmtCmds(a *app) []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cfgNode == "" {
-				return fmt.Errorf("--node is required")
+			n, err := nodeOrAuto(cmd.Context(), p, cfgNode)
+			if err != nil {
+				return err
 			}
-			return a.renderGet(cmd, p, "/nodes/"+cfgNode+"/ceph/cfg/raw")
+			return a.renderGet(cmd, p, "/nodes/"+n+"/ceph/cfg/raw")
 		},
 	}
 	withNode(config, &cfgNode)
@@ -88,9 +92,9 @@ func newCephMgmtCmds(a *app) []*cobra.Command {
 }
 
 func newCephOSDCmd(a *app) *cobra.Command {
-	cmd := &cobra.Command{Use: "osd", Short: "Manage Ceph OSDs (requires --node)"}
+	cmd := &cobra.Command{Use: "osd", Short: "Manage Ceph OSDs (--node required for writes)"}
 	var node string
-	cmd.PersistentFlags().StringVar(&node, "node", "", "node (required)")
+	cmd.PersistentFlags().StringVar(&node, "node", "", "node (required for writes; optional for list)")
 	need := func() (string, error) {
 		if node == "" {
 			return "", fmt.Errorf("--node is required")
@@ -104,7 +108,8 @@ func newCephOSDCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := need()
+			// The OSD map is cluster-wide; any online node serves it.
+			n, err := nodeOrAuto(cmd.Context(), p, node)
 			if err != nil {
 				return err
 			}
@@ -151,9 +156,9 @@ func newCephOSDCmd(a *app) *cobra.Command {
 }
 
 func newCephPoolCmd(a *app) *cobra.Command {
-	cmd := &cobra.Command{Use: "pool", Short: "Manage Ceph pools (requires --node)"}
+	cmd := &cobra.Command{Use: "pool", Short: "Manage Ceph pools (--node required for writes)"}
 	var node string
-	cmd.PersistentFlags().StringVar(&node, "node", "", "node (required)")
+	cmd.PersistentFlags().StringVar(&node, "node", "", "node (required for writes; optional for list)")
 	need := func() (string, error) {
 		if node == "" {
 			return "", fmt.Errorf("--node is required")
@@ -167,7 +172,8 @@ func newCephPoolCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := need()
+			// Ceph pools are cluster-wide; any online node serves the list.
+			n, err := nodeOrAuto(cmd.Context(), p, node)
 			if err != nil {
 				return err
 			}

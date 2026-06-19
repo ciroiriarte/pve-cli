@@ -56,9 +56,13 @@ format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha2
 
 ### 4. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
-automatically from `/cluster/resources`. Prefer making `--node` an *optional
-override*, not a requirement, for reads whose data is cluster-wide or on shared
-storage (tracked in #10). `--node` stays available to disambiguate/override.
+automatically from `/cluster/resources`. Read-only cluster-wide commands make
+`--node` *optional* via `nodeOrAuto`/`firstOnlineNode` (ceph health/osd
+list/pool list/config, `storage status`, `backup list`) — they pick an online
+node when one isn't given. Writes (`ceph service/osd/pool` mutations,
+`prune-backups`) still require an explicit `--node`. When adding a node-scoped
+read whose data is cluster-wide or on shared storage, route it through
+`nodeOrAuto`.
 
 ### 5. Naming: hierarchical noun-verb over compound-hyphen leaves
 Prefer `remote node status` over `remote node-status`, `ceph osd tree` over

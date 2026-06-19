@@ -81,7 +81,7 @@ pc vm snapshot list 100
 pc vm snapshot rollback 100 pre-upgrade --yes
 pc vm snapshot delete 100 pre-upgrade --yes
 pc backup create 100 --storage backup-nfs --mode snapshot --wait
-pc backup list --node pve-01 --storage backup-nfs
+pc backup list --storage backup-nfs                  # --node optional (shared storage)
 pc backup job list                                   # scheduled vzdump jobs
 pc backup job create --set storage=backup-nfs --set schedule='02:00' --set all=1
 ```
@@ -89,7 +89,7 @@ pc backup job create --set storage=backup-nfs --set schedule='02:00' --set all=1
 ## Storage, pools, HA
 
 ```bash
-pc storage list ; pc storage status local --node pve-01
+pc storage list ; pc storage status local           # --node optional (defaults to an online node)
 pc storage content list local --node pve-01 --type iso
 pc storage content delete local backup/vzdump-qemu-100-....vma.zst --node pve-01
 pc storage prune-backups backup-nfs --node pve-01            # dry-run; add --apply
@@ -114,9 +114,9 @@ pc sdn apply                                          # commit pending SDN confi
 ## Ceph (PVE, node-scoped)
 
 ```bash
-pc ceph health --node pve-01
-pc ceph osd list --node pve-01 ; pc ceph osd out 12 --node pve-01
-pc ceph pool list --node pve-01
+pc ceph health                       # cluster-wide reads: --node optional (auto-picks a node)
+pc ceph osd list ; pc ceph osd out 12 --node pve-01   # writes still need --node
+pc ceph pool list
 pc ceph service restart --node pve-01 --service mon.pve-01
 ```
 
