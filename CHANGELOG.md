@@ -6,6 +6,28 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.8.0] — PDM control-plane curation by functional domain
+- **Added**: curated command groups for PDM's control plane (all PDM-provider
+  gated; refused with a clear message on PVE):
+  - `pc ceph` — clusters/status/summary/pools/osd-tree/mon/mgr/mds/fs/flags (read)
+  - `pc access` — users, tokens, roles, acl (list/set), realms (list/sync), tfa
+  - `pc sdn` — zones/vnets/controllers (list) + create-zone/create-vnet
+  - `pc pbs` — backup-server remotes, status, datastores/namespaces/snapshots
+  - `pc subscription` — node-status, keys (list/show/add/remove)
+  - `pc server` — auth realms (ad/ldap/openid CRUD), acme, certificate, notes,
+    views, and `server node` (PDM appliance host: status/time/dns/network/apt/…)
+  - `pc resources` — aggregate status/top-entities/subscription/location-info
+  - `pc auto-install` — installations/prepared/tokens (list + delete)
+  - `pc remote` gained per-remote PVE reads: resources, options, next-id,
+    updates-list, firewall, node-storage/status/network
+- Coverage: curated **PDM 45→138 (43%)**, PVE 60→80. Remaining ~180 PDM
+  endpoints (deep node/appliance admin, acme/cert writes, openid/tfa flows,
+  metric-collection, niche probes) stay reachable via `pc raw` / `pc api`.
+- Live-verified the read surface against PDM 1.1 (ceph across 3 clusters,
+  access users/roles/realms, sdn zones, subscription node-status, per-remote
+  resources/storage, appliance host status). Writes are confirm-gated but not
+  run against production PDM.
+
 ## [0.7.0] — broad PDM curation (snapshot, migrate, monitoring, remote mgmt)
 - **Added**: guest operations are now provider-aware — the same commands work on
   PVE (by node) and PDM (proxied via `/pve/remotes/{remote}`). New `--remote`
@@ -127,7 +149,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.7.0
 [0.6.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.6.1
 [0.5.4]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.5.4

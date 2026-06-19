@@ -10,6 +10,10 @@ func TestClassifyKnownEndpoints(t *testing.T) {
 		{"PUT", "/nodes/{node}/qemu/{vmid}/config"},
 		{"GET", "/version"},
 		{"GET", "/remotes/remote"},
+		{"GET", "/ceph/clusters"},
+		{"GET", "/access/users"},
+		{"GET", "/subscriptions/keys"},
+		{"GET", "/pbs/remotes"},
 	}
 	for _, c := range curated {
 		if _, ok := Classify(c.m, c.p); !ok {
@@ -18,8 +22,8 @@ func TestClassifyKnownEndpoints(t *testing.T) {
 	}
 
 	rawOnly := []struct{ m, p string }{
-		{"GET", "/access/users"},
-		{"POST", "/nodes/{node}/qemu/{vmid}/vncwebsocket"},
+		{"GET", "/config/acme/challenge-schema"},
+		{"POST", "/subscriptions/check"},
 		{"GET", "/cluster/ha/resources"},
 		{"POST", "/nodes/{node}/qemu/{vmid}/resize"},
 	}

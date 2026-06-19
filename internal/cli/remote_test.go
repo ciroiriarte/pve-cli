@@ -47,6 +47,19 @@ func pdmServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/qemu/100/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":{"qmpstatus":"running","name":"web","cpus":2}}`))
 	})
+	// PDM control-plane domains (read samples)
+	mux.HandleFunc("/api2/json/ceph/clusters", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"cluster":"ceph-a","name":"ceph-a"}]}`))
+	})
+	mux.HandleFunc("/api2/json/access/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"userid":"root@pam","enable":1},{"userid":"ops@pve","enable":1}]}`))
+	})
+	mux.HandleFunc("/api2/json/subscriptions/keys", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"key":"pdm-abc","status":"active"}]}`))
+	})
+	mux.HandleFunc("/api2/json/pbs/remotes", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"backup-1","type":"pbs"}]}`))
+	})
 	// proxied task polling
 	mux.HandleFunc("/api2/json/pve/remotes/dc-east/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":{"upid":"UPID:n1:...","node":"n1","type":"qmstop","status":"stopped","exitstatus":"OK"}}`))
@@ -214,6 +227,31 @@ func TestPDMGuestOpsViaProxy(t *testing.T) {
 		t.Fatalf("pdm status: out=%q err=%v", out, err)
 	}
 }
+
+func TestPDMControlPlaneDomains(t *testing.T) {
+	srv := pdmServer(t)
+	defer srv.Close()
+	cases := []struct{ args, want string }{
+		{"ceph clusters", "ceph-a"},
+		{"access user list", "ops@pve"},
+		{"subscription key list", "pdm-abc"},
+		{"pbs remotes", "backup-1"},
+	}
+	for _, c := range cases {
+		out, err := runCLI(t, withPDMCreds(srv, append([]string{}, splitArgs(c.args)...)...)...)
+		if err != nil || !strings.Contains(out, c.want) {
+			t.Errorf("%q: want %q, got out=%q err=%v", c.args, c.want, out, err)
+		}
+	}
+	// gated to PDM: refused on the PVE provider
+	pve := fakeServer(t)
+	defer pve.Close()
+	if _, err := runCLI(t, withCreds(pve, "ceph", "clusters")...); err == nil || !strings.Contains(err.Error(), "requires the PDM provider") {
+		t.Fatalf("expected PVE to refuse ceph, got %v", err)
+	}
+}
+
+func splitArgs(s string) []string { return strings.Fields(s) }
 
 func TestRemoteRejectedOnPVE(t *testing.T) {
 	// Default provider is pve; remote must refuse.

@@ -27,7 +27,8 @@ than guessing.
 | provisioning (`create`/`clone`/`config --set`/`delete`) | ✅ | ❌ | PDM has no provisioning API — target the cluster directly (`provider: pve`) |
 | `storage`, `backup` | ✅ | ➖ | PVE-scoped today |
 | `task list/show/wait/log` | ✅ | ✅ | PDM task ids are `pve:<remote>!UPID:…`; the task commands accept them |
-| `remote list/show/add/update/remove`, `cluster-status`, `updates` | ❌ | ✅ | PDM-only; refused on PVE |
+| `remote …` (list/show/add/update/remove, cluster-status, updates, per-remote reads) | ❌ | ✅ | PDM-only; refused on PVE |
+| `ceph`, `access`, `sdn`, `pbs`, `subscription`, `server`, `resources`, `auto-install` | ❌ | ✅ | PDM control-plane domains; refused on PVE. Reads + confirm-gated writes |
 | `console` | ✅ | ❌ | PVE only, ticket auth required (Proxmox rejects tokens on the console websocket) |
 | `raw` | ✅ | ✅ | walks the backend's own embedded schema |
 | `api` | ✅ | ✅ | raw passthrough to either API |

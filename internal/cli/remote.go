@@ -60,6 +60,23 @@ func newRemoteCmd(a *app) *cobra.Command {
 		newRemoteRemoveCmd(a),
 		newRemoteClusterStatusCmd(a),
 		newRemoteUpdatesCmd(a),
+		// per-remote PVE reads (proxied)
+		simpleGet(a, "resources <id>", "List a remote's cluster resources", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/resources" }, "type", "id", "node", "status"),
+		simpleGet(a, "options <id>", "Show a remote's datacenter options", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/options" }),
+		simpleGet(a, "next-id <id>", "Get the next free VMID on a remote", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/cluster-nextid" }),
+		simpleGet(a, "updates-list <id>", "List pending node updates on a remote", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/updates" }, "node", "status"),
+		simpleGet(a, "firewall <id>", "Show a remote's datacenter firewall rules", 1,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/firewall/rules" }, "pos", "type", "action", "proto", "dport"),
+		simpleGet(a, "node-storage <id> <node>", "List storages on a remote node", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/storage" }, "storage", "type", "content", "enabled"),
+		simpleGet(a, "node-status <id> <node>", "Show a remote node's status", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/status" }),
+		simpleGet(a, "node-network <id> <node>", "List a remote node's network interfaces", 2,
+			func(a []string) string { return "/pve/remotes/" + a[0] + "/nodes/" + a[1] + "/network" }, "iface", "type", "method", "address"),
 	)
 	return cmd
 }
