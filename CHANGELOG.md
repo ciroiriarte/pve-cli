@@ -6,12 +6,17 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
-## [0.10.1] — fix the release pipeline
+## [0.10.2] — release pipeline working
+- **Fixed**: the `before` hook generated man/completions into `dist/` —
+  goreleaser's own output dir — so `goreleaser release` aborted with
+  `dist is not empty`. Generated docs now go to `gendocs-out/`. With this and
+  the v0.10.1 fix, the `release` workflow finally publishes artifacts (static
+  binaries + `.deb`/`.rpm` + archives) — the first working GitHub Release.
+
+## [0.10.1] — fix the release pipeline (partial)
 - **Fixed**: `.goreleaser.yaml` had an unquoted `description` containing `: `
-  (`(command: pc)`), so `goreleaser check` failed to parse the YAML and the
-  `release` workflow failed on every tag since v0.6.1 (no GitHub Releases were
-  produced). Quoted the value; this is the first tag that publishes release
-  artifacts (static binaries + `.deb`/`.rpm` + archives).
+  (`(command: pc)`), which broke `goreleaser check` (YAML parse) on every tag
+  since v0.6.1. (The release still failed on a second issue — see 0.10.2.)
 
 ## [0.10.0] — Tier-2 PVE curation (SDN, firewall, Ceph management)
 - **Added**: `pc sdn` is now provider-aware and much richer — zones, vnets,
@@ -191,7 +196,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.2
 [0.10.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.1
 [0.10.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.0
 [0.9.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.9.0
