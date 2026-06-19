@@ -50,7 +50,7 @@ nfpms:
     ids: [pc]
     formats: [deb, rpm]
     maintainer: Ciro Iriarte <ciro.iriarte+software@gmail.com>
-    description: Unofficial remote CLI for Proxmox VE (command: pc)
+    description: "Unofficial remote CLI for Proxmox VE (command: pc)"
     license: Apache-2.0
     homepage: https://github.com/ciroiriarte/pve-cli
     bindir: /usr/bin

@@ -6,6 +6,13 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.10.1] — fix the release pipeline
+- **Fixed**: `.goreleaser.yaml` had an unquoted `description` containing `: `
+  (`(command: pc)`), so `goreleaser check` failed to parse the YAML and the
+  `release` workflow failed on every tag since v0.6.1 (no GitHub Releases were
+  produced). Quoted the value; this is the first tag that publishes release
+  artifacts (static binaries + `.deb`/`.rpm` + archives).
+
 ## [0.10.0] — Tier-2 PVE curation (SDN, firewall, Ceph management)
 - **Added**: `pc sdn` is now provider-aware and much richer — zones, vnets,
   subnets, controllers (list/show/create/delete), plus `ipams`, `dns`, and
@@ -184,7 +191,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.1
 [0.10.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.0
 [0.9.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.8.0
