@@ -31,7 +31,10 @@ than guessing.
 | `storage`, `backup` | ✅ | ➖ | PVE-scoped today |
 | `task list/show/wait/log` | ✅ | ✅ | PDM task ids are `pve:<remote>!UPID:…`; the task commands accept them |
 | `remote …` (list/show/add/update/remove, cluster-status, updates, per-remote reads) | ❌ | ✅ | PDM-only; refused on PVE |
-| `ceph`, `sdn`, `pbs`, `subscription`, `server`, `resources`, `auto-install` | ❌ | ✅ | PDM control-plane domains; refused on PVE. Reads + confirm-gated writes |
+| `sdn` (zones/vnets/subnets/controllers/ipams/dns/apply) | ✅ | ✅ | provider-aware: PVE `/cluster/sdn`, PDM `/sdn` (smaller set) |
+| `firewall` (cluster/node/guest via `--node`/`--vmid`) | ✅ | ➖ | rules/aliases/ipset/options/groups/macros |
+| `ceph` | ✅* | ✅ | PVE: node-scoped management (`--node`: osd/pool/service/config/health). PDM: cross-cluster monitoring (`<cluster>`) |
+| `pbs`, `subscription`, `server`, `resources`, `auto-install` | ❌ | ✅ | PDM control-plane domains; refused on PVE. Reads + confirm-gated writes |
 | `console` | ✅ | ❌ | PVE only, ticket auth required (Proxmox rejects tokens on the console websocket) |
 | `raw` | ✅ | ✅ | walks the backend's own embedded schema |
 | `api` | ✅ | ✅ | raw passthrough to either API |

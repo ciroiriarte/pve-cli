@@ -115,7 +115,7 @@ func anyGet(a *app, use, short string, nargs int, pathFn func(args []string) str
 
 // newCephCmd inspects Ceph on PDM-managed clusters (all read-only).
 func newCephCmd(a *app) *cobra.Command {
-	cmd := &cobra.Command{Use: "ceph", Short: "Inspect Ceph across PDM-managed clusters (read-only)"}
+	cmd := &cobra.Command{Use: "ceph", Short: "Inspect (PDM) and manage (PVE, --node) Ceph"}
 	cmd.AddCommand(
 		simpleGet(a, "clusters", "List Ceph clusters", 0, func([]string) string { return "/ceph/clusters" }, "cluster", "name"),
 		simpleGet(a, "show <cluster>", "Show a Ceph cluster", 1, func(a []string) string { return "/ceph/clusters/" + a[0] }),
@@ -129,6 +129,8 @@ func newCephCmd(a *app) *cobra.Command {
 		simpleGet(a, "fs <cluster>", "List CephFS filesystems", 1, func(a []string) string { return "/ceph/clusters/" + a[0] + "/fs" }, "name"),
 		simpleGet(a, "flags <cluster>", "Show Ceph flags", 1, func(a []string) string { return "/ceph/clusters/" + a[0] + "/flags" }),
 	)
+	// PVE node-scoped Ceph management (osd/pool/service/config/health, --node).
+	cmd.AddCommand(newCephMgmtCmds(a)...)
 	return cmd
 }
 
@@ -141,43 +143,5 @@ func newResourcesCmd(a *app) *cobra.Command {
 		simpleGet(a, "subscription", "Aggregate subscription status", 0, func([]string) string { return "/resources/subscription" }),
 		simpleGet(a, "location-info", "Resource location info", 0, func([]string) string { return "/resources/location-info" }),
 	)
-	return cmd
-}
-
-// newSDNCmd manages PDM software-defined networking objects.
-func newSDNCmd(a *app) *cobra.Command {
-	cmd := &cobra.Command{Use: "sdn", Short: "Manage PDM SDN zones, vnets, and controllers"}
-	cmd.AddCommand(
-		simpleGet(a, "zones", "List SDN zones", 0, func([]string) string { return "/sdn/zones" }, "zone", "type"),
-		simpleGet(a, "vnets", "List SDN vnets", 0, func([]string) string { return "/sdn/vnets" }, "vnet", "zone", "tag"),
-		simpleGet(a, "controllers", "List SDN controllers", 0, func([]string) string { return "/sdn/controllers" }, "controller", "type"),
-		newSDNCreateCmd(a, "zone", "/sdn/zones"),
-		newSDNCreateCmd(a, "vnet", "/sdn/vnets"),
-	)
-	return cmd
-}
-
-// newSDNCreateCmd builds a "create-<kind>" command taking --set key=value pairs,
-// since SDN objects have many type-specific fields.
-func newSDNCreateCmd(a *app, kind, path string) *cobra.Command {
-	var set []string
-	cmd := &cobra.Command{
-		Use:   "create-" + kind + " <id>",
-		Short: "Create an SDN " + kind + " (use --set for fields)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
-			if err != nil {
-				return err
-			}
-			params, err := setToValues(set)
-			if err != nil {
-				return err
-			}
-			params.Set(kind, args[0])
-			return rawMutate(cmd.Context(), a, p, "POST", path, params, "create "+kind+" "+args[0], true, 0)
-		},
-	}
-	cmd.Flags().StringArrayVar(&set, "set", nil, "field key=value (repeatable)")
 	return cmd
 }

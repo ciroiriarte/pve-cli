@@ -6,6 +6,22 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.10.0] — Tier-2 PVE curation (SDN, firewall, Ceph management)
+- **Added**: `pc sdn` is now provider-aware and much richer — zones, vnets,
+  subnets, controllers (list/show/create/delete), plus `ipams`, `dns`, and
+  `apply` (PVE `/cluster/sdn`; PDM uses `/sdn`).
+- **Added**: `pc firewall` (new) — multi-scope via `--node`/`--vmid`/`--ct`
+  (cluster, node, or guest): `rules` (list + `rule add`/`delete`), `aliases`,
+  `ipset`, `options`, and cluster-scope `groups`/`macros`.
+- **Added**: Ceph management under `pc ceph` (PVE, node-scoped via `--node`):
+  `health`, `osd` (list/in/out/scrub/destroy), `pool` (list/create/delete),
+  `service` (start/stop/restart), `config`. Coexists with the PDM monitoring
+  verbs (which take a `<cluster>`).
+- Coverage: curated **PVE 126→177 (26%)**. Live-verified against bigiron (PVE 9.1,
+  token) and MP02 (PVE 9.2, ticket): firewall + SDN reads on both; Ceph
+  health/osd/pool/config + SDN zones/vnets/subnets on MP02 (HEALTH_OK). SDN/Ceph
+  writes are confirm-gated and not run against the shared cluster.
+
 ## [0.9.0] — Tier-1 PVE curation (daily-driver breadth)
 - **Added**: guest extras (vm + ct) — `resize`, `template`; VM-only `reset`,
   `move-disk`, `unlink`, `sendkey`, `cloudinit` (show/dump/regenerate), and a
@@ -168,7 +184,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.0
 [0.9.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.7.0
