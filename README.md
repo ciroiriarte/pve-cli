@@ -18,8 +18,10 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
 
 - **Remote-first** — pure REST client; node-centric API paths are hidden (type
   `pc vm start 100`, not `… --node pve-01`).
-- **Curated commands** for the common workflows: guest lifecycle (create, clone,
-  migrate, snapshot, delete, power), nodes, storage, backups, tasks.
+- **Curated commands** for everyday work — guest lifecycle & disks, cloud-init,
+  guest agent, snapshots, migrate, console, nodes, storage, backups, pools, HA,
+  firewall, SDN, Ceph, and access — plus PDM fleet management. Recipes in the
+  [cookbook](docs/cookbook.md).
 - **Full API coverage** via schema-driven [`pc raw`](#full-api-coverage-pc-raw)
   and the `pc api` escape hatch — every endpoint is reachable.
 - **Two backends, one CLI** — a single PVE cluster, or a PDM fleet (`--provider pdm`)
@@ -33,12 +35,15 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
 
 ## Status
 
-Beta (`v0.5.x`). Milestones M1–M5 are complete: curated breadth, generated raw
-coverage, config/profiles, the PDM backend, and the plugin system. **`v1.0.0` is
-gated** on a live test battery against a PDM endpoint plus ticket-auth
-verification (see [CONTRIBUTING.md](CONTRIBUTING.md#versioning--the-v100-gate)).
-Direct-PVE workflows are verified against PVE 9.x; the PDM backend is
-implemented but not yet verified against a live PDM instance.
+Active development (`v0.10.x`, SemVer). **Both backends are live-verified**:
+direct PVE against PVE 9.1/9.2 (token *and* ticket auth), and the PDM backend
+against a live PDM 1.x fleet. Curated coverage is broad — daily-driver PVE
+(lifecycle + disks, cloud-init, guest agent, snapshots, migrate, console,
+storage, pools, HA, firewall, SDN, Ceph, access) and the PDM control plane
+(remotes, cross-cluster monitoring, Ceph/SDN/PBS/subscription/server domains);
+everything else is reachable via `pc raw` / `pc api`. Released binaries and
+`.deb`/`.rpm` packages are published on each tag. **`v1.0.0` is gated** on the
+full live test battery (see [CONTRIBUTING.md](CONTRIBUTING.md#versioning--the-v100-gate)).
 
 ## Install
 
@@ -97,26 +102,30 @@ pc vm list -o json | jq '.[] | select(.status=="running") | .vmid'
 ## Commands
 
 ```
-pc vm      list show create clone migrate config snapshot start stop shutdown reboot delete
-pc ct      … (same verbs for LXC containers; alias: container)
+pc vm      list show status pending rrddata create clone migrate config snapshot
+           resize move-disk unlink template cloudinit agent console
+           start stop shutdown reboot suspend resume reset delete
+pc ct      … (same verbs for LXC containers; move-volume instead of move-disk; alias: container)
 pc guest   list                         # unified VM + container view
-pc node    list show
-pc storage list show | content list
-pc backup  create list
+pc node    list show | service apt network subscription
+pc storage list show status | content list·delete | prune-backups
+pc backup  create list | job list·show·create·delete
+pc pool    list show create update delete
+pc ha      status | resource list·show·add·remove | groups
+pc firewall rules aliases ipset options groups macros      # scope: --node / --vmid
+pc sdn     zone vnet subnet controller (list·show·create·delete) | ipams dns apply
+pc ceph    health osd pool service config                  # PVE (--node) management
+pc access  user token role acl realm group                 # users, tokens, ACLs, realms
 pc task    list show wait log [--follow]
-pc remote  list show                    # PDM only (clusters managed by PDM)
-pc config  init view get set path       # config file
-pc context list use current             # select cluster/profile
-pc auth    login                        # store credentials (keyring)
-pc raw     <segments...>                # schema-driven full API coverage
-pc api     <METHOD> <path> [-d k=v ...] # raw escape hatch (like `gh api`)
-pc plugin  list                         # discovered pc-<name> plugins
-pc completion bash|zsh|fish|powershell
-pc version
+pc remote  list show add update remove | cluster-status | updates | node-* | resources …  # PDM
+pc raw <segments...> | pc api <METHOD> <path> [-d k=v]     # full coverage / escape hatch
+pc config | context | auth | plugin | completion | version
+# PDM control-plane (provider: pdm): pc ceph | sdn | pbs | subscription | server | resources | auto-install
 ```
 
-Run `pc <command> --help` for flags and examples. A full generated command
-reference (man pages + markdown) is produced by `make docs`.
+Run `pc <command> --help` for flags and examples; see the
+**[cookbook](docs/cookbook.md)** for day-to-day recipes. A full generated
+command reference (man pages + markdown) is produced by `make docs`.
 
 The node hosting a guest is resolved automatically from `/cluster/resources`, so
 `pc vm start 100` just works. Pass `--node` to override or disambiguate.

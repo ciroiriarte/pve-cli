@@ -10,9 +10,12 @@ Select the backend with `provider:` in the profile or `--provider pve|pdm`.
 Commands that a backend doesn't support fail fast with a clear message rather
 than guessing.
 
-> **Status:** the PVE backend is verified against PVE 9.x. The PDM backend is
-> implemented and unit/fixture-tested but **not yet verified against a live PDM
-> instance**; treat PDM support as experimental.
+> **Status:** both backends are live-verified — PVE against PVE 9.1/9.2 (token
+> *and* ticket auth) and PDM against a live PDM 1.x fleet. Note PDM's proxy only
+> exposes a subset of per-guest operations (status/config/snapshot/migrate/
+> pending/rrddata/firewall/power); the **guest agent, cloud-init, disk ops,
+> console, and provisioning are not proxied** and are refused on PDM — target
+> the cluster directly (`provider: pve`) for those.
 
 ## Capability matrix
 

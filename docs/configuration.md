@@ -82,6 +82,11 @@ auth: { type: ticket, user: "root@pam", secret_ref: "keyring://pve-cli/home" }
 The password is the profile "secret" (keyring/env/inline, as below). Provide it
 non-interactively with `PVE_CLI_PASSWORD`.
 
+> **Note:** the auth *type* is selected only by a profile's `auth.type`
+> (default `token`) — there is no `PVE_CLI_AUTH_TYPE` env var. So ticket auth
+> needs a profile with `type: ticket`; `PVE_CLI_USER`/`PVE_CLI_PASSWORD` then
+> supply the credentials. Env vars alone (no profile) always mean token auth.
+
 ## Secrets
 
 The `secret_ref` field dereferences a secret instead of storing it in plaintext:
@@ -99,7 +104,7 @@ keyring fall back to env vars or an explicit `secret:`.
 |---|---|
 | `PVE_CLI_SERVER` | API base URL |
 | `PVE_CLI_TOKEN_ID` / `PVE_CLI_TOKEN_SECRET` | token auth |
-| `PVE_CLI_USER` / `PVE_CLI_PASSWORD` | ticket auth |
+| `PVE_CLI_USER` / `PVE_CLI_PASSWORD` | ticket-auth credentials (type set via profile `auth.type: ticket`) |
 | `PVE_CLI_TLS_FINGERPRINT` | pinned SHA-256 fingerprint |
 | `PVE_CLI_INSECURE` | disable TLS verification (`true`/`false`) |
 | `PVE_CLI_OUTPUT` | default output format |

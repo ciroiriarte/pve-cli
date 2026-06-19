@@ -14,6 +14,9 @@ surface may change between minor releases.
 - **Docs**: added [docs/cookbook.md](docs/cookbook.md) — day-to-day recipes
   (lifecycle, disks/cloud-init, snapshots/backups, agent, storage/pools/HA,
   firewall/SDN/Ceph, PDM fleet, and report scripts) to keep the README light.
+  Refreshed the README (Status, Commands), `providers.md`, and `configuration.md`
+  to match the current surface: both backends live-verified, the full curated
+  command set, the PDM proxy boundary, and the ticket-auth-needs-a-profile note.
 
 ## [0.10.2] — release pipeline working
 - **Fixed**: the `before` hook generated man/completions into `dist/` —
