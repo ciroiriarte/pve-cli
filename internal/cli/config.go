@@ -239,6 +239,12 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stdout, "saved profile %q and set it as the current context (%s)\n", profile, path)
+			// One-time onboarding nudge: the command tree is deep, so shell
+			// completion is the fastest way to discover it. Stderr + TTY-gated
+			// so it never pollutes scripted/CI output.
+			if isTTY() {
+				fmt.Fprintln(os.Stderr, "[pc] tip: enable shell completion for faster command discovery — see `pc completion --help` (e.g. `pc completion bash`)")
+			}
 			return nil
 		},
 	}
