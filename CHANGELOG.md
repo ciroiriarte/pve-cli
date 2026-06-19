@@ -5,6 +5,8 @@ versioning is [SemVer](https://semver.org). While on `0.x`, the CLI/config/`json
 surface may change between minor releases.
 
 ## [Unreleased]
+
+## [0.10.3] — PDM proxy-boundary guard + docs refresh
 - **Fixed**: guest extras that PDM's proxy doesn't expose (agent, cloud-init,
   resize, move-disk/volume, unlink, sendkey, template, reset) now refuse cleanly
   on the PDM provider instead of surfacing a raw `404 Path not found`. (PDM
@@ -208,7 +210,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.10.3...HEAD
+[0.10.3]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.3
 [0.10.2]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.2
 [0.10.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.1
 [0.10.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.10.0
