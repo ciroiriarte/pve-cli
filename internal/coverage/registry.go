@@ -184,6 +184,63 @@ func init() {
 	reg("auto-install installation-delete", "DELETE", "/auto-install/installations/{uuid}")
 	reg("auto-install prepared-delete", "DELETE", "/auto-install/prepared/{id}")
 	reg("auto-install token-delete", "DELETE", "/auto-install/tokens/{id}")
+
+	// Tier 1 PVE curation (v0.9.0)
+	// guest extras (both kinds)
+	regGuest("resize", "PUT", "/resize")
+	regGuest("template", "POST", "/template")
+	// qemu-only guest extras
+	reg("vm reset", "POST", "/nodes/{node}/qemu/{vmid}/status/reset")
+	reg("vm move-disk", "POST", "/nodes/{node}/qemu/{vmid}/move_disk")
+	reg("vm unlink", "PUT", "/nodes/{node}/qemu/{vmid}/unlink")
+	reg("vm sendkey", "PUT", "/nodes/{node}/qemu/{vmid}/sendkey")
+	reg("vm cloudinit", "GET", "/nodes/{node}/qemu/{vmid}/cloudinit")
+	reg("vm cloudinit --regenerate", "PUT", "/nodes/{node}/qemu/{vmid}/cloudinit")
+	reg("vm cloudinit --dump", "GET", "/nodes/{node}/qemu/{vmid}/cloudinit/dump")
+	reg("vm agent network", "GET", "/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+	reg("vm agent osinfo", "GET", "/nodes/{node}/qemu/{vmid}/agent/get-osinfo")
+	reg("vm agent users", "GET", "/nodes/{node}/qemu/{vmid}/agent/get-users")
+	reg("vm agent info", "GET", "/nodes/{node}/qemu/{vmid}/agent/info")
+	reg("vm agent ping", "POST", "/nodes/{node}/qemu/{vmid}/agent/ping")
+	reg("vm agent fstrim", "POST", "/nodes/{node}/qemu/{vmid}/agent/fstrim")
+	reg("vm agent shutdown", "POST", "/nodes/{node}/qemu/{vmid}/agent/shutdown")
+	reg("vm agent exec", "POST", "/nodes/{node}/qemu/{vmid}/agent/exec")
+	reg("vm agent set-password", "POST", "/nodes/{node}/qemu/{vmid}/agent/set-user-password")
+	// lxc-only guest extras
+	reg("ct move-volume", "POST", "/nodes/{node}/lxc/{vmid}/move_volume")
+	// access groups (PVE)
+	reg("access groups", "GET", "/access/groups")
+	// pools
+	reg("pool list", "GET", "/pools")
+	reg("pool create", "POST", "/pools")
+	reg("pool show", "GET", "/pools/{poolid}")
+	reg("pool update", "PUT", "/pools/{poolid}")
+	reg("pool delete", "DELETE", "/pools/{poolid}")
+	// HA
+	reg("ha status", "GET", "/cluster/ha/status/current")
+	reg("ha resource list", "GET", "/cluster/ha/resources")
+	reg("ha resource add", "POST", "/cluster/ha/resources")
+	reg("ha resource show", "GET", "/cluster/ha/resources/{sid}")
+	reg("ha resource remove", "DELETE", "/cluster/ha/resources/{sid}")
+	reg("ha groups", "GET", "/cluster/ha/groups")
+	// node ops
+	reg("node service list", "GET", "/nodes/{node}/services")
+	for _, st := range []string{"start", "stop", "restart", "reload"} {
+		reg("node service "+st, "POST", "/nodes/{node}/services/{service}/"+st)
+	}
+	reg("node apt versions", "GET", "/nodes/{node}/apt/versions")
+	reg("node apt updates", "GET", "/nodes/{node}/apt/update")
+	reg("node network", "GET", "/nodes/{node}/network")
+	reg("node subscription", "GET", "/nodes/{node}/subscription")
+	// storage volume ops + backup jobs
+	reg("storage status", "GET", "/nodes/{node}/storage/{storage}/status")
+	reg("storage content delete", "DELETE", "/nodes/{node}/storage/{storage}/content/{volume}")
+	reg("storage prune-backups", "GET", "/nodes/{node}/storage/{storage}/prunebackups")
+	reg("storage prune-backups --apply", "DELETE", "/nodes/{node}/storage/{storage}/prunebackups")
+	reg("backup job list", "GET", "/cluster/backup")
+	reg("backup job create", "POST", "/cluster/backup")
+	reg("backup job show", "GET", "/cluster/backup/{id}")
+	reg("backup job delete", "DELETE", "/cluster/backup/{id}")
 }
 
 // Classify reports the curated command for an endpoint, or ("", false) if the

@@ -24,8 +24,8 @@ func TestClassifyKnownEndpoints(t *testing.T) {
 	rawOnly := []struct{ m, p string }{
 		{"GET", "/config/acme/challenge-schema"},
 		{"POST", "/subscriptions/check"},
-		{"GET", "/cluster/ha/resources"},
-		{"POST", "/nodes/{node}/qemu/{vmid}/resize"},
+		{"GET", "/cluster/ha/rules"},
+		{"POST", "/nodes/{node}/qemu/{vmid}/monitor"},
 	}
 	for _, c := range rawOnly {
 		if cmd, ok := Classify(c.m, c.p); ok {

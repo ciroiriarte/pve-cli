@@ -6,6 +6,25 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.9.0] — Tier-1 PVE curation (daily-driver breadth)
+- **Added**: guest extras (vm + ct) — `resize`, `template`; VM-only `reset`,
+  `move-disk`, `unlink`, `sendkey`, `cloudinit` (show/dump/regenerate), and a
+  `vm agent` group (ping/exec/network/osinfo/users/fstrim/shutdown/set-password);
+  CT-only `move-volume`. All provider-aware (work on PVE and the PDM proxy).
+- **Added**: `pc access` is now provider-agnostic (works on PVE *and* PDM where
+  the `/access/*` paths match) + `access groups`.
+- **Added**: `pc pool` (list/show/create/update/delete), `pc ha`
+  (status, resource list/show/add/remove, groups).
+- **Added**: node ops under `pc node` — `service` (list + start/stop/restart/reload),
+  `apt` (versions/updates), `network`, `subscription`.
+- **Added**: storage volume ops — `storage status`, `storage content delete`,
+  `storage prune-backups` (dry-run list, `--apply` to delete); and scheduled
+  `pc backup job` (list/show/create/delete).
+- Coverage: curated **PVE 80→126 (19%)**. Live-verified against bigiron (PVE 9.1,
+  token auth) and MP02 (PVE 9.2, ticket auth): reads + resize/reset/template
+  writes; guest-agent path confirmed (clean "agent not running" where the image
+  lacks it).
+
 ## [0.8.0] — PDM control-plane curation by functional domain
 - **Added**: curated command groups for PDM's control plane (all PDM-provider
   gated; refused with a clear message on PVE):
@@ -149,7 +168,8 @@ surface may change between minor releases.
   provider with node auto-resolution; `node`/`vm`/`ct` list·show·power; `task
   show/wait`; `pc api` escape hatch; table/json/yaml output; documented exit codes.
 
-[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ciroiriarte/pve-cli/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.7.0
 [0.6.1]: https://github.com/ciroiriarte/pve-cli/releases/tag/v0.6.1

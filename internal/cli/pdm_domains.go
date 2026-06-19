@@ -60,6 +60,12 @@ func (a *app) pdmGet(cmd *cobra.Command, path string, cols ...string) error {
 	if err != nil {
 		return err
 	}
+	return a.renderGet(cmd, p, path, cols...)
+}
+
+// renderGet GETs a path on the given provider and renders an array (mapsTable),
+// a single object (kvTable), or a scalar — provider-agnostic.
+func (a *app) renderGet(cmd *cobra.Command, p provider.Provider, path string, cols ...string) error {
 	body, err := p.Raw(cmd.Context(), "GET", path, nil)
 	if err != nil {
 		return err
@@ -81,13 +87,28 @@ func (a *app) pdmGet(cmd *cobra.Command, path string, cols ...string) error {
 	return a.render(output.Tabular{Columns: []string{"value"}, Rows: [][]string{{string(body)}}})
 }
 
-// simpleGet builds a cobra command that GETs a fixed or arg-derived path.
-// pathFn receives the positional args and returns the API path.
+// simpleGet builds a cobra command that GETs a fixed or arg-derived path on the
+// PDM provider (gated). pathFn receives the positional args and returns the path.
 func simpleGet(a *app, use, short string, nargs int, pathFn func(args []string) string, cols ...string) *cobra.Command {
 	return &cobra.Command{
 		Use: use, Short: short, Args: cobra.ExactArgs(nargs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.pdmGet(cmd, pathFn(args), cols...)
+		},
+	}
+}
+
+// anyGet is like simpleGet but provider-agnostic (works on whichever backend is
+// active), for endpoints that exist on both PVE and PDM (e.g. /access/*).
+func anyGet(a *app, use, short string, nargs int, pathFn func(args []string) string, cols ...string) *cobra.Command {
+	return &cobra.Command{
+		Use: use, Short: short, Args: cobra.ExactArgs(nargs),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			return a.renderGet(cmd, p, pathFn(args), cols...)
 		},
 	}
 }

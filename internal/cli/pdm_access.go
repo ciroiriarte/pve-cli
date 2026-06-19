@@ -8,12 +8,13 @@ import (
 
 // newAccessCmd manages PDM access control: users, tokens, roles, ACLs, realms.
 func newAccessCmd(a *app) *cobra.Command {
-	cmd := &cobra.Command{Use: "access", Short: "Manage PDM access control (users, tokens, roles, ACLs, realms)"}
+	cmd := &cobra.Command{Use: "access", Short: "Manage access control (users, tokens, roles, ACLs, realms)"}
 	cmd.AddCommand(newAccessUserCmd(a), newAccessTokenCmd(a), newAccessACLCmd(a),
-		simpleGet(a, "roles", "List roles and their privileges", 0, func([]string) string { return "/access/roles" }, "roleid", "privs", "special"),
-		simpleGet(a, "permissions", "Show the caller's effective permissions", 0, func([]string) string { return "/access/permissions" }),
+		anyGet(a, "roles", "List roles and their privileges", 0, func([]string) string { return "/access/roles" }, "roleid", "privs", "special"),
+		anyGet(a, "permissions", "Show the caller's effective permissions", 0, func([]string) string { return "/access/permissions" }),
 		newAccessRealmCmd(a),
-		simpleGet(a, "tfa [userid]", "List TFA entries", 0, func([]string) string { return "/access/tfa" }, "userid", "type", "description"),
+		anyGet(a, "groups", "List groups (PVE)", 0, func([]string) string { return "/access/groups" }, "groupid", "comment", "users"),
+		anyGet(a, "tfa [userid]", "List TFA entries", 0, func([]string) string { return "/access/tfa" }, "userid", "type", "description"),
 	)
 	return cmd
 }
@@ -21,14 +22,14 @@ func newAccessCmd(a *app) *cobra.Command {
 func newAccessUserCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "user", Short: "Manage PDM users"}
 	cmd.AddCommand(
-		simpleGet(a, "list", "List users", 0, func([]string) string { return "/access/users" }, "userid", "enable", "comment"),
-		simpleGet(a, "show <userid>", "Show a user", 1, func(a []string) string { return "/access/users/" + a[0] }),
+		anyGet(a, "list", "List users", 0, func([]string) string { return "/access/users" }, "userid", "enable", "comment"),
+		anyGet(a, "show <userid>", "Show a user", 1, func(a []string) string { return "/access/users/" + a[0] }),
 	)
 	var set []string
 	create := &cobra.Command{
 		Use: "create <userid>", Short: "Create a user (e.g. alice@pve)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
@@ -44,7 +45,7 @@ func newAccessUserCmd(a *app) *cobra.Command {
 	del := &cobra.Command{
 		Use: "delete <userid>", Aliases: []string{"rm"}, Short: "Delete a user", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
@@ -61,13 +62,13 @@ func newAccessUserCmd(a *app) *cobra.Command {
 func newAccessTokenCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "token", Short: "Manage API tokens for a user"}
 	cmd.AddCommand(
-		simpleGet(a, "list <userid>", "List a user's tokens", 1, func(a []string) string { return "/access/users/" + a[0] + "/token" }, "tokenid", "comment", "expire"),
-		simpleGet(a, "show <userid> <token>", "Show a token", 2, func(a []string) string { return "/access/users/" + a[0] + "/token/" + a[1] }),
+		anyGet(a, "list <userid>", "List a user's tokens", 1, func(a []string) string { return "/access/users/" + a[0] + "/token" }, "tokenid", "comment", "expire"),
+		anyGet(a, "show <userid> <token>", "Show a token", 2, func(a []string) string { return "/access/users/" + a[0] + "/token/" + a[1] }),
 	)
 	create := &cobra.Command{
 		Use: "create <userid> <token>", Short: "Create an API token (prints the secret once)", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
@@ -78,7 +79,7 @@ func newAccessTokenCmd(a *app) *cobra.Command {
 	del := &cobra.Command{
 		Use: "delete <userid> <token>", Aliases: []string{"rm"}, Short: "Delete an API token", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
@@ -95,13 +96,13 @@ func newAccessTokenCmd(a *app) *cobra.Command {
 
 func newAccessACLCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "acl", Short: "View and set access-control list entries"}
-	cmd.AddCommand(simpleGet(a, "list", "List ACL entries", 0, func([]string) string { return "/access/acl" }, "path", "ugid", "roleid", "type", "propagate"))
+	cmd.AddCommand(anyGet(a, "list", "List ACL entries", 0, func([]string) string { return "/access/acl" }, "path", "ugid", "roleid", "type", "propagate"))
 	var path, roles, ugids string
 	var asGroups, propagate, delete_ bool
 	set := &cobra.Command{
 		Use: "set", Short: "Set (or delete) an ACL entry", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
@@ -136,12 +137,12 @@ func newAccessACLCmd(a *app) *cobra.Command {
 func newAccessRealmCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "realm", Aliases: []string{"domain"}, Short: "Authentication realms"}
 	cmd.AddCommand(
-		simpleGet(a, "list", "List authentication realms", 0, func([]string) string { return "/access/domains" }, "realm", "type", "comment"),
+		anyGet(a, "list", "List authentication realms", 0, func([]string) string { return "/access/domains" }, "realm", "type", "comment"),
 	)
 	sync := &cobra.Command{
 		Use: "sync <realm>", Short: "Sync users/groups from a realm (LDAP/AD)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.pdmProvider()
+			p, err := a.Provider()
 			if err != nil {
 				return err
 			}

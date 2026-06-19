@@ -138,9 +138,77 @@ func newStorageCmd(a *app) *cobra.Command {
 	}
 	contentList.Flags().StringVar(&cNode, "node", "", "node (required)")
 	contentList.Flags().StringVar(&cType, "type", "", "filter by content type (backup|iso|images|vztmpl|...)")
-	content.AddCommand(contentList)
 
-	cmd.AddCommand(list, show, content)
+	var delNode string
+	contentDelete := &cobra.Command{
+		Use: "delete <storage> <volume>", Aliases: []string{"rm"}, Short: "Delete a volume (backup/ISO/image)", Args: cobra.ExactArgs(2),
+		Example: "  pc storage content delete local backup/vzdump-qemu-100-...vma.zst --node pve-01",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if delNode == "" {
+				return fmt.Errorf("--node is required (content is node-scoped)")
+			}
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			if err := confirm(a, fmt.Sprintf("delete volume %q from %s on %s?", args[1], args[0], delNode)); err != nil {
+				return err
+			}
+			return rawMutate(cmd.Context(), a, p, "DELETE",
+				fmt.Sprintf("/nodes/%s/storage/%s/content/%s", delNode, args[0], args[1]), nil,
+				"delete "+args[1], true, 0)
+		},
+	}
+	contentDelete.Flags().StringVar(&delNode, "node", "", "node (required)")
+	content.AddCommand(contentList, contentDelete)
+
+	var statusNode string
+	status := &cobra.Command{
+		Use: "status <storage>", Short: "Show storage usage/status on a node", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if statusNode == "" {
+				return fmt.Errorf("--node is required")
+			}
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			return a.renderGet(cmd, p, fmt.Sprintf("/nodes/%s/storage/%s/status", statusNode, args[0]))
+		},
+	}
+	status.Flags().StringVar(&statusNode, "node", "", "node (required)")
+
+	var pruneNode, pruneVMID string
+	var pruneApply bool
+	prune := &cobra.Command{
+		Use: "prune-backups <storage>", Short: "List (or apply) backup retention pruning", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if pruneNode == "" {
+				return fmt.Errorf("--node is required")
+			}
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			q := url.Values{}
+			if pruneVMID != "" {
+				q.Set("vmid", pruneVMID)
+			}
+			path := fmt.Sprintf("/nodes/%s/storage/%s/prunebackups", pruneNode, args[0])
+			if !pruneApply {
+				return a.renderGet(cmd, p, path+"?"+q.Encode(), "volid", "type", "vmid", "mark")
+			}
+			if err := confirm(a, fmt.Sprintf("apply pruning on %s/%s (deletes old backups)?", pruneNode, args[0])); err != nil {
+				return err
+			}
+			return rawMutate(cmd.Context(), a, p, "DELETE", path, q, "prune backups on "+args[0], true, 0)
+		},
+	}
+	prune.Flags().StringVar(&pruneNode, "node", "", "node (required)")
+	prune.Flags().StringVar(&pruneVMID, "vmid", "", "limit to a vmid")
+	prune.Flags().BoolVar(&pruneApply, "apply", false, "actually delete (default: dry-run list)")
+
+	cmd.AddCommand(list, show, content, status, prune)
 	return cmd
 }
 
@@ -204,7 +272,48 @@ func newBackupCmd(a *app) *cobra.Command {
 	list.Flags().StringVar(&lNode, "node", "", "node (required)")
 	list.Flags().StringVar(&lStorage, "storage", "", "storage (required)")
 
-	cmd.AddCommand(create, list)
+	cmd.AddCommand(create, list, newBackupJobCmd(a))
+	return cmd
+}
+
+// newBackupJobCmd manages scheduled backup jobs (cluster/backup).
+func newBackupJobCmd(a *app) *cobra.Command {
+	cmd := &cobra.Command{Use: "job", Short: "Manage scheduled backup jobs"}
+	cmd.AddCommand(
+		anyGet(a, "list", "List backup jobs", 0, func([]string) string { return "/cluster/backup" }, "id", "schedule", "storage", "enabled", "mode"),
+		anyGet(a, "show <id>", "Show a backup job", 1, func(a []string) string { return "/cluster/backup/" + a[0] }),
+	)
+	var set []string
+	create := &cobra.Command{
+		Use: "create", Short: "Create a backup job (use --set for fields)", Args: cobra.NoArgs,
+		Example: "  pc backup job create --set storage=backup-nfs --set schedule='02:00' --set all=1",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			params, err := setToValues(set)
+			if err != nil {
+				return err
+			}
+			return rawMutate(cmd.Context(), a, p, "POST", "/cluster/backup", params, "create backup job", true, 0)
+		},
+	}
+	create.Flags().StringArrayVar(&set, "set", nil, "field key=value (repeatable)")
+	del := &cobra.Command{
+		Use: "delete <id>", Aliases: []string{"rm"}, Short: "Delete a backup job", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			if err := confirm(a, fmt.Sprintf("delete backup job %q?", args[0])); err != nil {
+				return err
+			}
+			return rawMutate(cmd.Context(), a, p, "DELETE", "/cluster/backup/"+args[0], nil, "delete backup job "+args[0], true, 0)
+		},
+	}
+	cmd.AddCommand(create, del)
 	return cmd
 }
 

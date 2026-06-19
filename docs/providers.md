@@ -25,10 +25,13 @@ than guessing.
 | `snapshot` (create/list/delete/rollback) | ✅ | ✅ | PDM proxied |
 | `migrate` | ✅ | ✅ | one of PDM's supported operations (proxied) |
 | provisioning (`create`/`clone`/`config --set`/`delete`) | ✅ | ❌ | PDM has no provisioning API — target the cluster directly (`provider: pve`) |
+| guest extras (`resize`, `template`, `move-disk`/`move-volume`, `unlink`, `sendkey`, `cloudinit`, `agent`, `reset`) | ✅ | ➖ | provider-aware; `agent`/`cloudinit` are VM-only |
+| `pool`, `ha`, `node service/apt/network/subscription`, `storage status/content delete/prune-backups`, `backup job` | ✅ | ➖ | PVE daily-driver breadth (Tier 1); some `/access`, `/pools` paths also resolve on PDM |
+| `access` (user/group/token/role/acl/realm) | ✅ | ✅ | provider-agnostic — `/access/*` exists on both |
 | `storage`, `backup` | ✅ | ➖ | PVE-scoped today |
 | `task list/show/wait/log` | ✅ | ✅ | PDM task ids are `pve:<remote>!UPID:…`; the task commands accept them |
 | `remote …` (list/show/add/update/remove, cluster-status, updates, per-remote reads) | ❌ | ✅ | PDM-only; refused on PVE |
-| `ceph`, `access`, `sdn`, `pbs`, `subscription`, `server`, `resources`, `auto-install` | ❌ | ✅ | PDM control-plane domains; refused on PVE. Reads + confirm-gated writes |
+| `ceph`, `sdn`, `pbs`, `subscription`, `server`, `resources`, `auto-install` | ❌ | ✅ | PDM control-plane domains; refused on PVE. Reads + confirm-gated writes |
 | `console` | ✅ | ❌ | PVE only, ticket auth required (Proxmox rejects tokens on the console websocket) |
 | `raw` | ✅ | ✅ | walks the backend's own embedded schema |
 | `api` | ✅ | ✅ | raw passthrough to either API |

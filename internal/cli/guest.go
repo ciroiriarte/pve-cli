@@ -52,6 +52,7 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestConsoleCmd(a, spec),
 	)
 	cmd.AddCommand(newGuestMonitorCmds(a, spec)...)
+	cmd.AddCommand(newGuestExtraCmds(a, spec)...)
 	return cmd
 }
 
