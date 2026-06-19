@@ -15,7 +15,9 @@ func newAPICmd(a *app) *cobra.Command {
 		Use:   "api <METHOD> <path>",
 		Short: "Make a raw authenticated API call (escape hatch)",
 		Long: "Issue an arbitrary call against the Proxmox API, handling auth, base URL,\n" +
-			"and TLS for you. Use this for endpoints the curated commands don't cover yet.",
+			"and TLS for you. Use this for endpoints the curated commands don't cover yet.\n\n" +
+			"A mutating method (POST/PUT/DELETE) prompts for confirmation first (pass\n" +
+			"--yes to skip).",
 		Example: "  pc api GET /cluster/resources\n" +
 			"  pc api GET /nodes/pve-01/qemu\n" +
 			"  pc api POST /nodes/pve-01/qemu/100/status/start\n" +
@@ -34,6 +36,9 @@ func newAPICmd(a *app) *cobra.Command {
 					return fmt.Errorf("invalid --data %q: expected key=value", kv)
 				}
 				params.Add(k, v)
+			}
+			if err := confirmWrite(a, method, args[1]); err != nil {
+				return err
 			}
 			body, err := p.Raw(cmd.Context(), method, args[1], params)
 			if err != nil {

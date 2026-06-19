@@ -39,3 +39,14 @@ func confirm(a *app, prompt string) error {
 		return fmt.Errorf("aborted")
 	}
 }
+
+// confirmWrite gates a non-GET escape-hatch call (`pc raw` / `pc api`) so a
+// buried `--method DELETE` or an `api POST` can't mutate cluster state without a
+// prompt. Read methods pass through untouched; --yes/-y skips the prompt.
+func confirmWrite(a *app, method, path string) error {
+	switch strings.ToUpper(method) {
+	case "GET", "HEAD", "OPTIONS":
+		return nil
+	}
+	return confirm(a, fmt.Sprintf("%s %s — this may modify cluster state, proceed?", strings.ToUpper(method), path))
+}

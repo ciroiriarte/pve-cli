@@ -90,7 +90,10 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, remote string
 	cmd := &cobra.Command{
 		Use:     "show <vmid>",
-		Short:   fmt.Sprintf("Show a %s and its config", spec.label),
+		Short:   fmt.Sprintf("Show a %s: config plus live status", spec.label),
+		Long: fmt.Sprintf("Shows a complete snapshot of the %s — its configuration merged with live\n"+
+			"runtime status (status, uptime, cpu/mem). Use `config` for the raw config\n"+
+			"(and `--set` to modify it), or `status` for runtime fields only.", spec.label),
 		Example: fmt.Sprintf("  pc %s show 100", spec.noun),
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -105,6 +108,26 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			cfg, err := p.GuestConfig(cmd.Context(), g)
 			if err != nil {
 				return err
+			}
+			// Enrich with live status so `show` is a full snapshot — distinct from
+			// `config` (raw config) and `status` (runtime only). Best-effort: a
+			// status hiccup must not break showing the config. Config keys win on
+			// conflict (they're the authoritative definition).
+			if b, berr := guestBase(p, g); berr == nil {
+				statusPath := b + "/status/current"
+				if p.Name() == "pdm" {
+					statusPath = b + "/status"
+				}
+				if body, serr := p.Raw(cmd.Context(), "GET", statusPath, nil); serr == nil {
+					var st map[string]any
+					if protocol.DecodeData(body, &st) == nil {
+						for k, v := range st {
+							if _, ok := cfg[k]; !ok {
+								cfg[k] = v
+							}
+						}
+					}
+				}
 			}
 			return a.render(guestConfigTable(g, cfg))
 		},

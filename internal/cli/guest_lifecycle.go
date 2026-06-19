@@ -230,7 +230,10 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 	var set []string
 	cmd := &cobra.Command{
 		Use:     "config <vmid>",
-		Short:   fmt.Sprintf("Show or update %s config", spec.label),
+		Short:   fmt.Sprintf("Show the raw %s config, or modify it with --set", spec.label),
+		Long: fmt.Sprintf("Prints the raw %s configuration (no live status — use `show` for a full\n"+
+			"snapshot or `status` for runtime fields). With one or more --set key=value,\n"+
+			"updates the config instead.", spec.label),
 		Example: fmt.Sprintf("  pc %s config 100\n  pc %s config 100 --set cores=4 --set memory=4096", spec.noun, spec.noun),
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

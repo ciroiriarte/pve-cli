@@ -129,6 +129,13 @@ func newCephOSDCmd(a *app) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// in/out change data placement and trigger rebalancing; gate them.
+				// scrub is benign (just schedules a scrub), so it runs unprompted.
+				if act != "scrub" {
+					if err := confirm(a, fmt.Sprintf("mark OSD %s %q on %s (triggers Ceph rebalancing)?", args[0], act, n)); err != nil {
+						return err
+					}
+				}
 				return rawMutate(cmd.Context(), a, p, "POST", fmt.Sprintf("/nodes/%s/ceph/osd/%s/%s", n, args[0], act), nil,
 					fmt.Sprintf("osd %s %s", args[0], act), true, 0)
 			},

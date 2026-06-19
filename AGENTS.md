@@ -40,12 +40,22 @@ for `json`/`yaml`; `Rows`/`Columns` drive `table`/`value`/`csv`.
   delete`). Where an older name shipped (`remote remove`), keep it as an **alias**
   (`Aliases: []string{"remove", "rm"}`), don't break it.
 - Every destructive/disruptive command **prompts by default** and accepts
-  `-y/--yes`. Use the shared `confirm(a, msg)` helper.
+  `-y/--yes`. Use the shared `confirm(a, msg)` helper. This includes
+  non-obvious ones: `sdn apply`, `ceph osd in/out`, `ceph service stop/restart`,
+  `vm reset`/`template`, `snapshot rollback`.
+- The `raw`/`api` escape hatches gate any non-GET method behind `confirmWrite`,
+  so a buried `--method DELETE` can't mutate silently (`--yes` skips it).
 - Confirmation prompts should **echo target context** so a typo'd ID is caught —
   e.g. `permanently delete VM 200 (web-01) on pve-01?`. Follow this when adding
-  new destructive commands. (Broader policy tracked in #6.)
+  new destructive commands.
 
-### 3. TLS: trust-on-first-use pinning, never silent insecure
+### 3. show / config / status have distinct roles
+For guests: `show` = a full snapshot (config **merged with** live status — best
+effort, config keys win); `config` = the raw config only (and `--set` to modify);
+`status` = runtime fields only. Keep these roles distinct when touching them, and
+keep `show`'s status enrichment best-effort so a status hiccup never breaks it.
+
+### 4. TLS: trust-on-first-use pinning, never silent insecure
 `pc auth login` probes the server cert (`transport.ProbeServerCert`). A
 system-trusted cert is used as-is; an untrusted/self-signed one is shown by
 SHA-256 fingerprint and pinned into the profile **only on explicit `y`**.
@@ -54,7 +64,7 @@ Non-interactive runs never auto-pin (they print the fingerprint to re-run with
 display/pinning, never to carry credentials — keep it that way. Fingerprint
 format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha256`.
 
-### 4. Remote-first: hide node-centric API plumbing
+### 5. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
 automatically from `/cluster/resources`. Read-only cluster-wide commands make
 `--node` *optional* via `nodeOrAuto`/`firstOnlineNode` (ceph health/osd
@@ -64,7 +74,7 @@ node when one isn't given. Writes (`ceph service/osd/pool` mutations,
 read whose data is cluster-wide or on shared storage, route it through
 `nodeOrAuto`.
 
-### 5. Naming: hierarchical noun-verb over compound-hyphen leaves
+### 6. Naming: hierarchical noun-verb over compound-hyphen leaves
 Prefer `remote node status` over `remote node-status`. New commands follow the
 hierarchical form via the `group`/`withSubs` helpers; legacy hyphenated spellings
 stay as `hidden()` back-compat aliases. Done for `remote` (cluster/node/updates),
@@ -73,12 +83,12 @@ exceptions kept as flat leaves: `ceph osd-tree` (the name `osd` is already the
 PVE node-scoped mgmt command, so it can't nest) and `resources top-entities` /
 `remote next-id` (single-concept leaves with no clean hierarchical form).
 
-### 6. Onboarding nudges go to stderr, TTY-gated
+### 7. Onboarding nudges go to stderr, TTY-gated
 Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to
 **stderr** and are gated on `isTTY()` so scripted/CI output stays clean. Never
 emit advisory text on stdout for machine-consumed commands.
 
-### 7. Guest commands route by resolved kind, not the command's spec
+### 8. Guest commands route by resolved kind, not the command's spec
 `pc guest <verb>` is type-agnostic: `resolveGuest` looks the vmid up in
 `/cluster/resources` to learn VM-vs-CT (Proxmox shares one id namespace, so a
 vmid is unambiguous — no `--type` flag), and CLI path builders use the resolved

@@ -26,8 +26,9 @@ pc vm list                            # VMs (node auto-resolved)
 pc vm list --status running           # filter
 pc guest list                         # VMs + containers, unified
 pc vm list -c id -c name -c status -o value | sort -k3   # script-friendly columns
-pc vm show 100                        # config (native object in -o json)
-pc vm status 100                      # live runtime status
+pc vm show 100                        # full snapshot: config + live status
+pc vm config 100                      # raw config only (--set to modify)
+pc vm status 100                      # live runtime status only
 pc node/guest list -o json | jq '.[]|select(.status=="running")|.vmid'
 
 # Don't know (or care) whether an id is a VM or a container? Use `pc guest`:
@@ -115,7 +116,7 @@ pc sdn apply                                          # commit pending SDN confi
 
 ```bash
 pc ceph health                       # cluster-wide reads: --node optional (auto-picks a node)
-pc ceph osd list ; pc ceph osd out 12 --node pve-01   # writes still need --node
+pc ceph osd list ; pc ceph osd out 12 --node pve-01   # writes need --node + confirm (--yes to skip)
 pc ceph pool list
 pc ceph service restart --node pve-01 --service mon.pve-01
 ```
@@ -154,6 +155,9 @@ pc raw nodes pve-01 qemu 100 status current --method GET
 pc api GET /cluster/resources -o json | jq '.[].type' | sort -u
 pc --provider pdm api GET /resources/status
 ```
+
+> A mutating method (`POST`/`PUT`/`DELETE`) on `raw`/`api` prompts for
+> confirmation first — pass `--yes` to skip it in scripts.
 
 ## Reports (compose `vm list` + per-guest probes)
 

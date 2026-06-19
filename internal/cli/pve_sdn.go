@@ -52,6 +52,9 @@ func newSDNCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := confirm(a, "apply pending SDN configuration (reloads networking cluster-wide)?"); err != nil {
+				return err
+			}
 			return rawMutate(cmd.Context(), a, p, "PUT", b, nil, "apply SDN config", true, 0)
 		},
 	})

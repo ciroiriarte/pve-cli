@@ -33,7 +33,9 @@ func newRawCmd(a *app) *cobra.Command {
 		Long: "raw exposes the entire Proxmox API by walking the embedded schema tree.\n" +
 			"Type path segments (real values for {params}); --help on a path shows its\n" +
 			"methods and parameters. This guarantees coverage of endpoints the curated\n" +
-			"commands don't wrap yet.",
+			"commands don't wrap yet.\n\n" +
+			"GET is the default. A mutating --method (POST/PUT/DELETE) prompts for\n" +
+			"confirmation first (pass --yes to skip).",
 		Example: "  pc raw                                   # list top-level segments\n" +
 			"  pc raw version                           # GET /version\n" +
 			"  pc raw nodes pve-01 qemu 100 status current\n" +
@@ -81,6 +83,9 @@ func newRawCmd(a *app) *cobra.Command {
 			}
 			params, err := parseDataParams(data)
 			if err != nil {
+				return err
+			}
+			if err := confirmWrite(a, m, path); err != nil {
 				return err
 			}
 			body, err := p.Raw(cmd.Context(), m, path, params)
