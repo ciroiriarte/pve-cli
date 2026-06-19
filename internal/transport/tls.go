@@ -10,7 +10,9 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -92,6 +94,73 @@ func pinVerifier(want string) func([][]byte, [][]*x509.Certificate) error {
 		}
 		return nil
 	}
+}
+
+// ProbeServerCert connects to server without verifying the certificate and
+// returns the leaf certificate's SHA-256 fingerprint (formatted
+// "sha256:AA:BB:.." uppercase) plus whether that certificate chains to a
+// system-trusted root for the server's host. It powers trust-on-first-use
+// fingerprint pinning in `pc auth login` for self-signed clusters. The
+// InsecureSkipVerify here is deliberate: we hash and display the cert, we do
+// not trust it — the caller decides whether to pin.
+func ProbeServerCert(server string, timeout time.Duration) (fingerprint string, trusted bool, err error) {
+	hostPort, hostname, err := dialTarget(server)
+	if err != nil {
+		return "", false, err
+	}
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", hostPort, &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // intentional: cert is hashed+shown, not trusted
+		MinVersion:         tls.VersionTLS12,
+	})
+	if err != nil {
+		return "", false, err
+	}
+	defer conn.Close()
+
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return "", false, fmt.Errorf("server presented no certificate")
+	}
+	leaf := certs[0]
+	sum := sha256.Sum256(leaf.Raw)
+	fingerprint = "sha256:" + strings.ToUpper(colonize(hex.EncodeToString(sum[:])))
+
+	// Best-effort trust check against the system roots, using any intermediates
+	// the server sent. A self-signed Proxmox cert fails this (trusted=false),
+	// which is exactly the case we want to offer pinning for.
+	inter := x509.NewCertPool()
+	for _, c := range certs[1:] {
+		inter.AddCert(c)
+	}
+	if _, verr := leaf.Verify(x509.VerifyOptions{DNSName: hostname, Intermediates: inter}); verr == nil {
+		trusted = true
+	}
+	return fingerprint, trusted, nil
+}
+
+// dialTarget turns an https URL or host[:port] into a "host:port" dial target
+// (defaulting to port 443) and the bare hostname used for verification.
+func dialTarget(server string) (hostPort, hostname string, err error) {
+	s := strings.TrimSpace(server)
+	if !strings.Contains(s, "://") {
+		s = "https://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", "", fmt.Errorf("parse server url %q: %w", server, err)
+	}
+	if u.Hostname() == "" {
+		return "", "", fmt.Errorf("no host in server url %q", server)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(u.Hostname(), port), u.Hostname(), nil
 }
 
 // normalizeFingerprint strips an optional "sha256:" prefix and all colons, and

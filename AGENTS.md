@@ -45,19 +45,28 @@ for `json`/`yaml`; `Rows`/`Columns` drive `table`/`value`/`csv`.
   e.g. `permanently delete VM 200 (web-01) on pve-01?`. Follow this when adding
   new destructive commands. (Broader policy tracked in #6.)
 
-### 3. Remote-first: hide node-centric API plumbing
+### 3. TLS: trust-on-first-use pinning, never silent insecure
+`pc auth login` probes the server cert (`transport.ProbeServerCert`). A
+system-trusted cert is used as-is; an untrusted/self-signed one is shown by
+SHA-256 fingerprint and pinned into the profile **only on explicit `y`**.
+Non-interactive runs never auto-pin (they print the fingerprint to re-run with
+`--fingerprint`). `InsecureSkipVerify` is used **only** to fetch a cert for
+display/pinning, never to carry credentials — keep it that way. Fingerprint
+format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha256`.
+
+### 4. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
 automatically from `/cluster/resources`. Prefer making `--node` an *optional
 override*, not a requirement, for reads whose data is cluster-wide or on shared
 storage (tracked in #10). `--node` stays available to disambiguate/override.
 
-### 4. Naming: hierarchical noun-verb over compound-hyphen leaves
+### 5. Naming: hierarchical noun-verb over compound-hyphen leaves
 Prefer `remote node status` over `remote node-status`, `ceph osd tree` over
 `ceph osd-tree`. New commands should follow the hierarchical form; legacy
 hyphenated spellings, where they exist, stay as hidden aliases for one release
 (migration tracked in #5).
 
-### 5. Onboarding nudges go to stderr, TTY-gated
+### 6. Onboarding nudges go to stderr, TTY-gated
 Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to
 **stderr** and are gated on `isTTY()` so scripted/CI output stays clean. Never
 emit advisory text on stdout for machine-consumed commands.

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ciroiriarte/pve-cli/internal/config"
+	"github.com/ciroiriarte/pve-cli/internal/transport"
 )
 
 const keyringService = "pve-cli"
@@ -217,6 +219,32 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 				f.Contexts = map[string]config.Context{}
 			}
 
+			// Trust-on-first-use: when the user neither pinned a fingerprint nor
+			// opted out of verification, probe the server cert. Fresh Proxmox
+			// installs ship self-signed certs, so the common first-run outcome is
+			// an untrusted cert — offer to pin it instead of forcing --insecure or
+			// an out-of-band `openssl … -fingerprint` over SSH.
+			if fingerprint == "" && !insecure {
+				fp, trusted, perr := transport.ProbeServerCert(server, 10*time.Second)
+				switch {
+				case perr != nil:
+					fmt.Fprintf(os.Stderr, "[pc] could not reach %s to check its certificate (%v); saving the profile anyway\n", server, perr)
+				case trusted:
+					// System-trusted cert (public CA / already-trusted) — nothing to pin.
+				case isTTY():
+					fmt.Fprintf(os.Stderr, "\nThe server's certificate is not trusted by your system (self-signed?).\n  SHA-256 fingerprint: %s\n", fp)
+					if promptYesNo("Trust and pin this fingerprint? [y/N]: ") {
+						fingerprint = fp
+						fmt.Fprintln(os.Stderr, "[pc] pinned the server fingerprint for this profile.")
+					} else {
+						fmt.Fprintln(os.Stderr, "[pc] not pinned — commands will fail TLS verification until you pin a fingerprint (--fingerprint) or trust the CA.")
+					}
+				default:
+					// Non-interactive + untrusted: never auto-pin without confirmation.
+					fmt.Fprintf(os.Stderr, "[pc] server certificate is untrusted; re-run with --fingerprint %s to pin it (or --insecure).\n", fp)
+				}
+			}
+
 			auth := config.AuthConfig{Type: "token", TokenID: tokenID}
 			if err := keyring.Set(keyringService, profile, secret); err != nil {
 				fmt.Fprintf(os.Stderr, "[pc] keyring unavailable (%v); storing secret in config file\n", err)
@@ -255,6 +283,19 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "disable TLS verification for this profile")
 	return cmd
+}
+
+// promptYesNo asks a y/N question on stderr and returns true only on an
+// explicit yes. In non-interactive mode it returns false (never auto-confirm a
+// security decision like fingerprint pinning).
+func promptYesNo(prompt string) bool {
+	if !isTTY() {
+		return false
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	s := strings.ToLower(strings.TrimSpace(line))
+	return s == "y" || s == "yes"
 }
 
 func promptSecret(prompt string) (string, error) {

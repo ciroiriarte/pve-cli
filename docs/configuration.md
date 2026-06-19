@@ -118,7 +118,26 @@ In order of precedence: system CA → profile `ca_file` / `--cacert` →
 `PVE_CLI_TLS_FINGERPRINT`) → `--insecure` (opt-in, disables verification).
 Fingerprint pinning is the recommended way to trust a self-signed cluster.
 
-Get a node's fingerprint:
+### Trust on first use (recommended)
+
+When you run `pc auth login` against a server whose certificate isn't trusted by
+your system (the usual case for a fresh Proxmox install), `pc` shows the cert's
+SHA-256 fingerprint and offers to pin it into the profile:
+
+```text
+$ pc auth login https://pve1.example:8006 --token-id 'svc@pve!cli'
+
+The server's certificate is not trusted by your system (self-signed?).
+  SHA-256 fingerprint: sha256:06:05:62:…:9D
+Trust and pin this fingerprint? [y/N]: y
+[pc] pinned the server fingerprint for this profile.
+```
+
+A system-trusted (public-CA) certificate is detected and used as-is — no prompt.
+In non-interactive mode `pc` never auto-pins; it prints the fingerprint so you
+can re-run with `--fingerprint <value>` (or `--insecure`).
+
+To fetch a node's fingerprint out of band instead:
 
 ```bash
 ssh root@node "openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256"
