@@ -23,6 +23,15 @@ func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 		c.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
 	}
 	var base guestBaseFn = func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, string, error) {
+		// These extras (agent, cloud-init, resize, move-disk/volume, unlink,
+		// sendkey, template, reset) are NOT exposed by PDM's proxy — it only
+		// proxies status/config/snapshot/migrate/pending/rrddata/firewall/power.
+		// Refuse cleanly on PDM instead of surfacing a raw 404.
+		if p, err := a.Provider(); err != nil {
+			return nil, domain.Guest{}, "", err
+		} else if p.Name() == "pdm" {
+			return nil, domain.Guest{}, "", fmt.Errorf("this operation is not available via PDM (its proxy does not expose guest-agent / disk-management endpoints); set provider: pve and target the cluster directly")
+		}
 		return resolveGuestBase(cmd, a, spec, idArg, node, remote)
 	}
 

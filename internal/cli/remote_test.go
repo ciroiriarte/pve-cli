@@ -253,6 +253,22 @@ func TestPDMControlPlaneDomains(t *testing.T) {
 
 func splitArgs(s string) []string { return strings.Fields(s) }
 
+func TestGuestExtrasRefusedOnPDM(t *testing.T) {
+	srv := pdmServer(t)
+	defer srv.Close()
+	// PDM's proxy doesn't expose agent/disk-mgmt endpoints; these must refuse
+	// cleanly (before any API call) rather than surface a raw 404.
+	for _, args := range [][]string{
+		{"vm", "agent", "osinfo", "100"},
+		{"vm", "resize", "100", "--disk", "scsi0", "--size", "+1G"},
+		{"vm", "cloudinit", "100"},
+	} {
+		if _, err := runCLI(t, withPDMCreds(srv, args...)...); err == nil || !strings.Contains(err.Error(), "not available via PDM") {
+			t.Errorf("%v: expected PDM refusal, got %v", args, err)
+		}
+	}
+}
+
 func TestRemoteRejectedOnPVE(t *testing.T) {
 	// Default provider is pve; remote must refuse.
 	srv := fakeServer(t)

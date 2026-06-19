@@ -5,6 +5,15 @@ versioning is [SemVer](https://semver.org). While on `0.x`, the CLI/config/`json
 surface may change between minor releases.
 
 ## [Unreleased]
+- **Fixed**: guest extras that PDM's proxy doesn't expose (agent, cloud-init,
+  resize, move-disk/volume, unlink, sendkey, template, reset) now refuse cleanly
+  on the PDM provider instead of surfacing a raw `404 Path not found`. (PDM
+  proxies status/config/snapshot/migrate/pending/rrddata/firewall/power only —
+  confirmed live; the guest agent is not proxied, so cross-cluster OS/IP detail
+  needs a direct PVE connection.)
+- **Docs**: added [docs/cookbook.md](docs/cookbook.md) — day-to-day recipes
+  (lifecycle, disks/cloud-init, snapshots/backups, agent, storage/pools/HA,
+  firewall/SDN/Ceph, PDM fleet, and report scripts) to keep the README light.
 
 ## [0.10.2] — release pipeline working
 - **Fixed**: the `before` hook generated man/completions into `dist/` —

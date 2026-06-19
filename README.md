@@ -185,9 +185,11 @@ any token/user — see [docs/configuration.md](docs/configuration.md).)
 
 ## Documentation
 
+- [docs/cookbook.md](docs/cookbook.md) — day-to-day recipes (lifecycle, snapshots, agent, firewall, SDN, Ceph, PDM, reports)
 - [docs/install.md](docs/install.md) — per-distribution package install commands
 - [docs/configuration.md](docs/configuration.md) — auth, profiles, contexts, env vars, TLS
 - [docs/providers.md](docs/providers.md) — PVE vs PDM capability matrix
+- [docs/coverage.md](docs/coverage.md) — curated-vs-raw endpoint coverage per provider
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, project layout, releases, the v1.0.0 gate
 - [CHANGELOG.md](CHANGELOG.md) — release history
 - `make docs` — generates man pages, shell completions, and a full markdown command reference
