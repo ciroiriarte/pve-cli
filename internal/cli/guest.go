@@ -42,7 +42,7 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestPowerCmd(a, spec, "shutdown", "Shut down (graceful)", true),
 		newGuestPowerCmd(a, spec, "reboot", "Reboot", true),
 		newGuestPowerCmd(a, spec, "suspend", "Suspend (pause)", true),
-		newGuestPowerCmd(a, spec, "resume", "Resume a suspended guest", false),
+		newGuestPowerCmd(a, spec, "resume", "Resume", false),
 		newGuestCreateCmd(a, spec),
 		newGuestCloneCmd(a, spec),
 		newGuestDeleteCmd(a, spec),
@@ -217,22 +217,19 @@ func guestsTable(guests []domain.Guest) output.Tabular {
 }
 
 func guestConfigTable(g domain.Guest, cfg map[string]any) output.Tabular {
-	type kv struct {
-		Key   string `json:"key"`
-		Value any    `json:"value"`
-	}
 	keys := make([]string, 0, len(cfg))
 	for k := range cfg {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	rows := make([][]string, 0, len(cfg))
-	raw := make([]kv, 0, len(cfg))
 	for _, k := range keys {
 		rows = append(rows, []string{k, fmt.Sprintf("%v", cfg[k])})
-		raw = append(raw, kv{Key: k, Value: cfg[k]})
 	}
-	return output.Tabular{Columns: []string{"key", "value"}, Rows: rows, Raw: raw}
+	// json/yaml emit the native config object (e.g. {"cores":4,...}) so callers
+	// can script `jq '.cores'`; the human key/value table is built from Rows.
+	// (The [][]string Rows still render the sorted table for -o table/value/csv.)
+	return output.Tabular{Columns: []string{"key", "value"}, Rows: rows, Raw: cfg}
 }
 
 // finishTask either waits for a task (with optional spinner) or prints its id.
