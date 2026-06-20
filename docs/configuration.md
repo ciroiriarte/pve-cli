@@ -98,6 +98,21 @@ The `secret_ref` field dereferences a secret instead of storing it in plaintext:
 A plaintext `secret:` is supported but warns on use. Headless machines without a
 keyring fall back to env vars or an explicit `secret:`.
 
+## Troubleshooting auth
+
+When a command fails with a generic auth or connection error, run:
+
+```bash
+pc config test-auth            # resolve creds + one live authenticated request
+pc config test-auth --offline  # resolution/keyring only, no network
+```
+
+It prints the resolved context/profile/provider/server, whether the secret
+dereferenced (and from where — keyring, env, or inline), and the result of a
+single authenticated request. This pinpoints the common failures: a locked or
+absent OS keyring on a headless host, a missing `secret_ref`, or a wrong
+token/fingerprint.
+
 ## Environment variables
 
 | Variable | Overrides |

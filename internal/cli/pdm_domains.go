@@ -26,6 +26,34 @@ func setToValues(set []string) (url.Values, error) {
 	return v, nil
 }
 
+// boolParam renders a bool as the Proxmox API's "1"/"0".
+func boolParam(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}
+
+// mergeSet builds request params from promoted first-class flags (base; only
+// non-empty values included) and then overlays generic --set entries, which win
+// on conflict so --set stays a complete escape hatch for uncurated keys.
+func mergeSet(base map[string]string, set []string) (url.Values, error) {
+	v := url.Values{}
+	for k, val := range base {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	for _, kv := range set {
+		k, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid --set %q: expected key=value", kv)
+		}
+		v.Set(k, val)
+	}
+	return v, nil
+}
+
 // pdmProvider returns the active provider, requiring it to be PDM (these
 // command groups wrap PDM-native control-plane endpoints).
 func (a *app) pdmProvider() (provider.Provider, error) {

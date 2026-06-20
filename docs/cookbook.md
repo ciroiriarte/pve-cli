@@ -84,7 +84,9 @@ pc vm snapshot delete 100 pre-upgrade --yes
 pc backup create 100 --storage backup-nfs --mode snapshot --wait
 pc backup list --storage backup-nfs                  # --node optional (shared storage)
 pc backup job list                                   # scheduled vzdump jobs
-pc backup job create --set storage=backup-nfs --set schedule='02:00' --set all=1
+pc backup job create --storage backup-nfs --schedule '02:00' --all   # first-class flags
+pc backup job create --storage backup-nfs --vmid 100,101 --mode snapshot
+#   (--set k=v still works as an escape hatch for any other field)
 ```
 
 ## Storage, pools, HA
@@ -107,8 +109,9 @@ pc firewall rule add --node pve-01 --set type=in --set action=ACCEPT --set proto
 pc firewall options --vmid 100 ; pc firewall macros
 # SDN (PVE /cluster/sdn) — remember to apply
 pc sdn zone list ; pc sdn vnet list ; pc sdn subnet list vnet0
-pc sdn zone create dmz --type vlan --set bridge=vmbr0
-pc sdn vnet create v100 --zone dmz --set tag=100
+pc sdn zone create dmz --type vlan --bridge vmbr0
+pc sdn vnet create v100 --zone dmz --tag 100
+pc sdn subnet create v100 10.0.0.0/24 --gateway 10.0.0.1 --snat
 pc sdn apply                                          # commit pending SDN config
 ```
 

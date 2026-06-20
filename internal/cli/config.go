@@ -25,6 +25,7 @@ func newConfigCmd(a *app) *cobra.Command {
 		newConfigGetCmd(),
 		newConfigSetCmd(),
 		newConfigInitCmd(),
+		newConfigTestAuthCmd(a),
 	)
 	return cmd
 }
@@ -172,6 +173,89 @@ func newContextCmd(a *app) *cobra.Command {
 			},
 		},
 	)
+	return cmd
+}
+
+// newConfigTestAuthCmd diagnoses why auth/connection might be failing: it shows
+// the resolved profile/context, whether the secret dereferenced (keyring/env),
+// and (unless --offline) makes one authenticated request to confirm the
+// credentials work. Helpful on headless hosts where a locked OS keyring yields
+// an opaque error.
+func newConfigTestAuthCmd(a *app) *cobra.Command {
+	var offline bool
+	cmd := &cobra.Command{
+		Use:   "test-auth",
+		Short: "Diagnose credential resolution, keyring, and connectivity",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			f, err := config.Load(config.DefaultPath())
+			if err != nil {
+				return fmt.Errorf("config: cannot load %s: %w", config.DefaultPath(), err)
+			}
+			// Resolving settings dereferences the secret (keyring/env); a failure
+			// here is usually the real problem (e.g. a locked/absent keyring).
+			s, err := a.resolvedSettings()
+			if err != nil {
+				fmt.Fprintf(out, "credential resolution: FAILED\n  %v\n", err)
+				return err
+			}
+
+			secretSrc := ""
+			if prof, ok := f.Profiles[s.ProfileName]; ok {
+				switch {
+				case prof.Auth.SecretRef != "":
+					secretSrc = prof.Auth.SecretRef
+				case prof.Auth.Secret != "":
+					secretSrc = "inline (plaintext in config)"
+				}
+			}
+			if secretSrc == "" {
+				// No profile-based secret; it came from env (PVE_CLI_*) or a flag,
+				// or nowhere.
+				if s.Secret != "" {
+					secretSrc = "env or flag"
+				} else {
+					secretSrc = "(none)"
+				}
+			}
+			id := s.TokenID
+			if s.AuthType == "ticket" {
+				id = s.User
+			}
+			fmt.Fprintf(out, "context:    %s\n", orElse(s.ContextName, "(none)"))
+			fmt.Fprintf(out, "profile:    %s\n", orElse(s.ProfileName, "(none)"))
+			fmt.Fprintf(out, "provider:   %s\n", s.Provider)
+			fmt.Fprintf(out, "server:     %s\n", orElse(s.Server, "(unset)"))
+			fmt.Fprintf(out, "auth type:  %s\n", orElse(s.AuthType, "token"))
+			fmt.Fprintf(out, "identity:   %s\n", orElse(id, "(unset)"))
+			fmt.Fprintf(out, "secret:     %s  (resolved: %t)\n", secretSrc, s.Secret != "")
+
+			if s.Secret == "" {
+				return fmt.Errorf("no credential resolved; check the profile's secret_ref/keyring, env vars, or pass --token-secret")
+			}
+			if s.Server == "" {
+				return fmt.Errorf("no server configured; set --server or the profile's server")
+			}
+			if offline {
+				fmt.Fprintln(out, "probe:      SKIPPED (--offline)")
+				return nil
+			}
+
+			p, err := a.Provider()
+			if err != nil {
+				fmt.Fprintf(out, "client:     FAILED\n  %v\n", err)
+				return err
+			}
+			if _, err := p.Raw(cmd.Context(), "GET", "/version", nil); err != nil {
+				fmt.Fprintf(out, "probe:      FAILED (GET /version)\n  %v\n", err)
+				return err
+			}
+			fmt.Fprintln(out, "probe:      OK — authenticated request to /version succeeded")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&offline, "offline", false, "skip the live authenticated request")
 	return cmd
 }
 

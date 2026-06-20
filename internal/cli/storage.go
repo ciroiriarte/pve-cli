@@ -293,22 +293,45 @@ func newBackupJobCmd(a *app) *cobra.Command {
 		anyGet(a, "show <id>", "Show a backup job", 1, func(a []string) string { return "/cluster/backup/" + a[0] }),
 	)
 	var set []string
+	var jStorage, jSchedule, jMode, jVMID string
+	var jAll, jEnabled bool
 	create := &cobra.Command{
-		Use: "create", Short: "Create a backup job (use --set for fields)", Args: cobra.NoArgs,
-		Example: "  pc backup job create --set storage=backup-nfs --set schedule='02:00' --set all=1",
+		Use: "create", Short: "Create a scheduled backup job", Args: cobra.NoArgs,
+		Example: "  pc backup job create --storage backup-nfs --schedule '02:00' --all\n" +
+			"  pc backup job create --storage backup-nfs --vmid 100,101 --mode snapshot",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := a.Provider()
 			if err != nil {
 				return err
 			}
-			params, err := setToValues(set)
+			base := map[string]string{
+				"storage":  jStorage,
+				"schedule": jSchedule,
+				"mode":     jMode,
+				"vmid":     jVMID,
+			}
+			// Booleans map to 0/1 only when the user set them, so the API keeps
+			// its own defaults otherwise.
+			if cmd.Flags().Changed("all") {
+				base["all"] = boolParam(jAll)
+			}
+			if cmd.Flags().Changed("enabled") {
+				base["enabled"] = boolParam(jEnabled)
+			}
+			params, err := mergeSet(base, set)
 			if err != nil {
 				return err
 			}
 			return rawMutate(cmd.Context(), a, p, "POST", "/cluster/backup", params, "create backup job", true, 0)
 		},
 	}
-	create.Flags().StringArrayVar(&set, "set", nil, "field key=value (repeatable)")
+	create.Flags().StringVar(&jStorage, "storage", "", "target storage")
+	create.Flags().StringVar(&jSchedule, "schedule", "", "schedule (e.g. '02:00' or 'mon..fri 22:00')")
+	create.Flags().StringVar(&jMode, "mode", "", "snapshot|suspend|stop")
+	create.Flags().StringVar(&jVMID, "vmid", "", "comma-separated guest ids to back up")
+	create.Flags().BoolVar(&jAll, "all", false, "back up all guests")
+	create.Flags().BoolVar(&jEnabled, "enabled", true, "whether the job is enabled")
+	create.Flags().StringArrayVar(&set, "set", nil, "any other field key=value (escape hatch, repeatable)")
 	del := &cobra.Command{
 		Use: "delete <id>", Aliases: []string{"rm"}, Short: "Delete a backup job", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

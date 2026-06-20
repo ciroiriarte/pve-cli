@@ -111,6 +111,15 @@ universally. Tabular commands are marked via `markTabular` (in `simpleGet`) plus
 a name-based walk (`tabularVerbs`). The hide is a display toggle restored after
 each render, so it never affects parsing.
 
+### 11. Promote hot keys to flags; keep `--set` as the escape hatch
+Create commands expose the common fields as first-class flags (e.g. `backup job
+create --storage --schedule --all`, `sdn vnet create --tag`) for completion and
+discoverability, and keep `--set key=value` for uncurated fields. Build params
+with `mergeSet(base, set)` — promoted flags form the base, `--set` overlays and
+wins on conflict. Booleans use `boolParam` and are only sent when `Changed()`,
+so the API keeps its defaults otherwise. `pc config test-auth` is the auth
+diagnostic for keyring/credential/connectivity failures.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is

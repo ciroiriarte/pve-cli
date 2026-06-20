@@ -68,11 +68,11 @@ func newSDNZoneCmd(a *app) *cobra.Command {
 		sdnShow(a, "show <zone>", "Show a zone", "/zones/"),
 		sdnDelete(a, "zone", "/zones/"),
 	)
-	var typ string
+	var typ, bridge string
 	var set []string
 	create := &cobra.Command{
-		Use: "create <zone>", Short: "Create a zone (--type required; --set for fields)", Args: cobra.ExactArgs(1),
-		Example: "  pc sdn zone create dmz --type vlan --set bridge=vmbr0",
+		Use: "create <zone>", Short: "Create a zone (--type required)", Args: cobra.ExactArgs(1),
+		Example: "  pc sdn zone create dmz --type vlan --bridge vmbr0",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, b, err := a.sdnBase()
 			if err != nil {
@@ -81,7 +81,7 @@ func newSDNZoneCmd(a *app) *cobra.Command {
 			if typ == "" {
 				return fmt.Errorf("--type is required (e.g. vlan, vxlan, qinq, simple, evpn)")
 			}
-			params, err := setToValues(set)
+			params, err := mergeSet(map[string]string{"bridge": bridge}, set)
 			if err != nil {
 				return err
 			}
@@ -91,7 +91,8 @@ func newSDNZoneCmd(a *app) *cobra.Command {
 		},
 	}
 	create.Flags().StringVar(&typ, "type", "", "zone type")
-	create.Flags().StringArrayVar(&set, "set", nil, "field key=value (repeatable)")
+	create.Flags().StringVar(&bridge, "bridge", "", "underlying bridge (e.g. vmbr0; vlan/qinq)")
+	create.Flags().StringArrayVar(&set, "set", nil, "any other field key=value (escape hatch, repeatable)")
 	cmd.AddCommand(create)
 	return cmd
 }
@@ -103,10 +104,11 @@ func newSDNVnetCmd(a *app) *cobra.Command {
 		sdnShow(a, "show <vnet>", "Show a vnet", "/vnets/"),
 		sdnDelete(a, "vnet", "/vnets/"),
 	)
-	var zone string
+	var zone, tag, alias string
 	var set []string
 	create := &cobra.Command{
 		Use: "create <vnet>", Short: "Create a vnet (--zone required)", Args: cobra.ExactArgs(1),
+		Example: "  pc sdn vnet create v100 --zone dmz --tag 100",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, b, err := a.sdnBase()
 			if err != nil {
@@ -115,7 +117,7 @@ func newSDNVnetCmd(a *app) *cobra.Command {
 			if zone == "" {
 				return fmt.Errorf("--zone is required")
 			}
-			params, err := setToValues(set)
+			params, err := mergeSet(map[string]string{"tag": tag, "alias": alias}, set)
 			if err != nil {
 				return err
 			}
@@ -125,7 +127,9 @@ func newSDNVnetCmd(a *app) *cobra.Command {
 		},
 	}
 	create.Flags().StringVar(&zone, "zone", "", "parent zone")
-	create.Flags().StringArrayVar(&set, "set", nil, "field key=value (repeatable)")
+	create.Flags().StringVar(&tag, "tag", "", "VLAN/VXLAN tag")
+	create.Flags().StringVar(&alias, "alias", "", "vnet alias/description")
+	create.Flags().StringArrayVar(&set, "set", nil, "any other field key=value (escape hatch, repeatable)")
 	cmd.AddCommand(create)
 	return cmd
 }
@@ -143,14 +147,21 @@ func newSDNSubnetCmd(a *app) *cobra.Command {
 		},
 	})
 	var set []string
+	var gateway string
+	var snat bool
 	create := &cobra.Command{
 		Use: "create <vnet> <subnet>", Short: "Create a subnet (e.g. 10.0.0.0/24)", Args: cobra.ExactArgs(2),
+		Example: "  pc sdn subnet create v100 10.0.0.0/24 --gateway 10.0.0.1 --snat",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, b, err := a.sdnBase()
 			if err != nil {
 				return err
 			}
-			params, err := setToValues(set)
+			base := map[string]string{"gateway": gateway}
+			if cmd.Flags().Changed("snat") {
+				base["snat"] = boolParam(snat)
+			}
+			params, err := mergeSet(base, set)
 			if err != nil {
 				return err
 			}
@@ -159,7 +170,9 @@ func newSDNSubnetCmd(a *app) *cobra.Command {
 			return rawMutate(cmd.Context(), a, p, "POST", b+"/vnets/"+args[0]+"/subnets", params, "create subnet "+args[1], true, 0)
 		},
 	}
-	create.Flags().StringArrayVar(&set, "set", nil, "field key=value (e.g. --set gateway=10.0.0.1)")
+	create.Flags().StringVar(&gateway, "gateway", "", "subnet gateway IP")
+	create.Flags().BoolVar(&snat, "snat", false, "enable SNAT for the subnet")
+	create.Flags().StringArrayVar(&set, "set", nil, "any other field key=value (escape hatch, repeatable)")
 	del := &cobra.Command{
 		Use: "delete <vnet> <subnet>", Aliases: []string{"rm"}, Short: "Delete a subnet", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
