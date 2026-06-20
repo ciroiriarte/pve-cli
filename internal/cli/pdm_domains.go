@@ -111,12 +111,12 @@ func withSubs(parent *cobra.Command, subs ...*cobra.Command) *cobra.Command {
 }
 
 func simpleGet(a *app, use, short string, nargs int, pathFn func(args []string) string, cols ...string) *cobra.Command {
-	return &cobra.Command{
+	return markTabular(&cobra.Command{
 		Use: use, Short: short, Args: cobra.ExactArgs(nargs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.pdmGet(cmd, pathFn(args), cols...)
 		},
-	}
+	})
 }
 
 // anyGet is like simpleGet but provider-agnostic (works on whichever backend is

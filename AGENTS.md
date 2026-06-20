@@ -98,6 +98,19 @@ provisioning (create/clone/delete/config-write), where the type is intrinsic.
 When adding a guest-scoped command, build paths from `g.Kind` so it works under
 `pc guest`, `pc vm`, and `pc ct` alike.
 
+### 9. The active backend is surfaced; provider errors name the current provider
+`--help` appends an `Active backend: <provider> (context, server)` footer
+(resolved via `resolvedSettings`, best-effort). Every provider-mismatch error
+should name the current provider (e.g. `…(current provider: pve); set provider: pdm`)
+so the pve/pdm split isn't invisible.
+
+### 10. Table-only global flags are scoped to read commands in help
+`--column`/`--sort`/`--no-headers` stay persistent (functional everywhere) but
+the help func hides them on non-tabular subcommands — only `--format` is shown
+universally. Tabular commands are marked via `markTabular` (in `simpleGet`) plus
+a name-based walk (`tabularVerbs`). The hide is a display toggle restored after
+each render, so it never affects parsing.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is

@@ -82,6 +82,63 @@ func (a *app) overrides() config.Overrides {
 	return ov
 }
 
+// tabularAnnotation marks commands that render a table, so the table-only global
+// flags (--column/--sort/--no-headers) are shown in their help but hidden on
+// non-tabular commands (mutators, console, raw/api) where they're meaningless.
+const tabularAnnotation = "pc.tabular"
+
+// tabularVerbs are command names that produce row/columnar output. Used by a
+// one-time tree walk so we don't have to annotate every read command by hand.
+var tabularVerbs = map[string]bool{
+	"list": true, "show": true, "status": true, "current": true, "view": true,
+	"rules": true, "tree": true, "summary": true, "health": true, "options": true,
+	"permissions": true, "roles": true, "flags": true, "datastore": true,
+	"remotes": true, "clusters": true, "groups": true, "aliases": true,
+}
+
+func markTabular(c *cobra.Command) *cobra.Command {
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations[tabularAnnotation] = "1"
+	return c
+}
+
+func isTabular(c *cobra.Command) bool {
+	return c != nil && c.Annotations[tabularAnnotation] == "1"
+}
+
+// annotateTabularReads walks the command tree once, marking read commands by
+// name (in addition to the explicit markTabular in shared builders).
+func annotateTabularReads(c *cobra.Command) {
+	if tabularVerbs[c.Name()] {
+		markTabular(c)
+	}
+	for _, sub := range c.Commands() {
+		annotateTabularReads(sub)
+	}
+}
+
+// setTableFlagsHidden toggles the table-only global flags' visibility in help.
+// They stay functional regardless — this only affects what `--help` lists.
+func setTableFlagsHidden(root *cobra.Command, hidden bool) {
+	for _, n := range []string{"column", "sort", "no-headers"} {
+		if f := root.PersistentFlags().Lookup(n); f != nil {
+			f.Hidden = hidden
+		}
+	}
+}
+
+// resolvedSettings resolves the effective settings (config + env + flags) without
+// building a client — used to surface the active provider/context.
+func (a *app) resolvedSettings() (*config.Settings, error) {
+	f, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return nil, err
+	}
+	return config.Resolve(f, a.overrides())
+}
+
 // providerName resolves the configured backend ("pve"|"pdm") without building a
 // client or requiring credentials — used to pick the schema for `pc raw`.
 func (a *app) providerName() string {
@@ -180,6 +237,32 @@ func NewRootCmd() *cobra.Command {
 		newAuthCmd(a),
 		newVersionCmd(a),
 	)
+
+	// Mark read commands so the table-only global flags only clutter their help.
+	annotateTabularReads(root)
+
+	// Custom help: (a) hide --column/--sort/--no-headers on non-tabular
+	// subcommands (they stay functional, just off that command's help); and
+	// (b) append a footer with the resolved backend so the pve/pdm split isn't
+	// invisible. The root keeps the table flags (they're discoverable there).
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		hide := c != c.Root() && !isTabular(c)
+		if hide {
+			setTableFlagsHidden(c.Root(), true)
+		}
+		defaultHelp(c, args)
+		if hide {
+			setTableFlagsHidden(c.Root(), false)
+		}
+		if s, err := a.resolvedSettings(); err == nil && s.Provider != "" {
+			ctx := s.ContextName
+			if ctx == "" {
+				ctx = "(none)"
+			}
+			fmt.Fprintf(c.OutOrStdout(), "\nActive backend: %s  (context: %s, server: %s)\n", s.Provider, ctx, orElse(s.Server, "(unset)"))
+		}
+	})
 	return root
 }
 

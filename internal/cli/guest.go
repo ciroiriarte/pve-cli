@@ -201,7 +201,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 			ResolveGuestInRemote(context.Context, int, string) (domain.Guest, error)
 		})
 		if !ok {
-			return domain.Guest{}, fmt.Errorf("--remote is only supported with the PDM provider")
+			return domain.Guest{}, fmt.Errorf("--remote is only supported with the PDM provider (current provider: %s); set provider: pdm or drop --remote", p.Name())
 		}
 		g, err := gr.ResolveGuestInRemote(ctx, vmid, remote)
 		if err != nil {
