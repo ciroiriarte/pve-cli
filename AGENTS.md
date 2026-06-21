@@ -111,7 +111,14 @@ universally. Tabular commands are marked via `markTabular` (in `simpleGet`) plus
 a name-based walk (`tabularVerbs`). The hide is a display toggle restored after
 each render, so it never affects parsing.
 
-### 11. Promote hot keys to flags; keep `--set` as the escape hatch
+### 11. `auth login` supports token and ticket auth via mutually-exclusive flags
+`pc auth login` takes exactly one of `--token-id` (token) or `--user` (ticket,
+prompts for the password). Both paths share the credential-storage logic: the
+secret/password goes to the keyring (inline fallback), the profile records
+`auth.type` accordingly, and the TOFU fingerprint probe runs for both. Verify a
+login with `pc config test-auth`.
+
+### 12. Promote hot keys to flags; keep `--set` as the escape hatch
 Create commands expose the common fields as first-class flags (e.g. `backup job
 create --storage --schedule --all`, `sdn vnet create --tag`) for completion and
 discoverability, and keep `--set key=value` for uncurated fields. Build params

@@ -266,29 +266,53 @@ func newAuthCmd(a *app) *cobra.Command {
 }
 
 func newAuthLoginCmd(a *app) *cobra.Command {
-	var tokenID, secret, profile, fingerprint, provider string
+	var tokenID, secret, user, password, profile, fingerprint, provider string
 	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "login <server-url>",
-		Short: "Store an API token credential as a profile",
-		Long: "Stores the token secret in the OS keyring (falling back to the config file\n" +
-			"if no keyring is available) and writes a profile + context.",
-		Example: "  pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret XXXX",
-		Args:    cobra.ExactArgs(1),
+		Short: "Store a credential (API token or user/password) as a profile",
+		Long: "Writes a profile + context, storing the credential in the OS keyring\n" +
+			"(falling back to the config file if no keyring is available).\n\n" +
+			"Choose one auth method:\n" +
+			"  --token-id <user@realm!name>   API token (recommended; non-interactive)\n" +
+			"  --user <user@realm>            ticket auth (prompts for the password)\n\n" +
+			"The secret/password is prompted if not passed. After login, verify with\n" +
+			"`pc config test-auth`.",
+		Example: "  pc auth login https://pve1:8006 --token-id 'svc@pve!cli'\n" +
+			"  pc auth login https://pve1:8006 --user root@pam",
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			server := args[0]
-			if tokenID == "" {
-				return fmt.Errorf("--token-id is required")
-			}
-			if secret == "" {
-				s, err := promptSecret("Token secret: ")
-				if err != nil {
-					return err
-				}
-				secret = s
+			if (tokenID == "") == (user == "") {
+				return fmt.Errorf("provide exactly one of --token-id (token auth) or --user (ticket auth)")
 			}
 			if profile == "" {
 				profile = "default"
+			}
+
+			// cred is the credential stored in the keyring: the token secret
+			// (token auth) or the user's password (ticket auth).
+			var cred string
+			auth := config.AuthConfig{Type: "token", TokenID: tokenID}
+			if tokenID != "" {
+				if secret == "" {
+					s, err := promptSecret("Token secret: ")
+					if err != nil {
+						return err
+					}
+					secret = s
+				}
+				cred = secret
+			} else {
+				auth = config.AuthConfig{Type: "ticket", User: user}
+				if password == "" {
+					pw, err := promptSecret(fmt.Sprintf("Password for %s: ", user))
+					if err != nil {
+						return err
+					}
+					password = pw
+				}
+				cred = password
 			}
 
 			path := config.DefaultPath()
@@ -329,10 +353,9 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 				}
 			}
 
-			auth := config.AuthConfig{Type: "token", TokenID: tokenID}
-			if err := keyring.Set(keyringService, profile, secret); err != nil {
-				fmt.Fprintf(os.Stderr, "[pc] keyring unavailable (%v); storing secret in config file\n", err)
-				auth.Secret = secret
+			if err := keyring.Set(keyringService, profile, cred); err != nil {
+				fmt.Fprintf(os.Stderr, "[pc] keyring unavailable (%v); storing credential in config file\n", err)
+				auth.Secret = cred
 			} else {
 				auth.SecretRef = fmt.Sprintf("keyring://%s/%s", keyringService, profile)
 			}
@@ -360,8 +383,11 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&tokenID, "token-id", "", "API token id (user@realm!name)")
+	cmd.Flags().StringVar(&tokenID, "token-id", "", "API token id (user@realm!name) — token auth")
 	cmd.Flags().StringVar(&secret, "token-secret", "", "API token secret (prompted if omitted)")
+	cmd.Flags().StringVar(&user, "user", "", "user (user@realm) — ticket auth")
+	cmd.Flags().StringVar(&password, "password", "", "ticket-auth password (prompted if omitted)")
+	cmd.MarkFlagsMutuallyExclusive("token-id", "user")
 	cmd.Flags().StringVar(&profile, "profile", "default", "profile name to write")
 	cmd.Flags().StringVar(&fingerprint, "fingerprint", "", "pin the server cert SHA-256 fingerprint")
 	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")

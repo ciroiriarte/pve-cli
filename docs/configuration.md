@@ -14,10 +14,11 @@ durable fallback.
 ## Quick setup
 
 ```bash
-pc auth login https://pve1.example:8006 --token-id 'svc@pve!cli'
+pc auth login https://pve1.example:8006 --token-id 'svc@pve!cli'   # API token
+pc auth login https://pve1.example:8006 --user root@pam            # or user/password
 ```
 
-This prompts for the token secret, stores it in your OS keyring, writes a
+This prompts for the secret/password, stores it in your OS keyring, writes a
 profile + context, and makes it current. Inspect or edit afterwards:
 
 ```bash
@@ -73,14 +74,21 @@ Tokens**. Provide `token_id` (`user@realm!tokenname`) + secret.
 ### Ticket (user + password)
 
 `pc` logs in via `/access/ticket`, caches the ticket (~2 h) and sends the CSRF
-token on writes automatically.
+token on writes automatically. Set it up with `--user` (prompts for the password
+and stores it in the keyring):
+
+```bash
+pc auth login https://pve1.example:8006 --user root@pam
+```
+
+…which writes:
 
 ```yaml
 auth: { type: ticket, user: "root@pam", secret_ref: "keyring://pve-cli/home" }
 ```
 
 The password is the profile "secret" (keyring/env/inline, as below). Provide it
-non-interactively with `PVE_CLI_PASSWORD`.
+non-interactively with `PVE_CLI_PASSWORD` (or `--password` at login).
 
 > **Note:** the auth *type* is selected only by a profile's `auth.type`
 > (default `token`) — there is no `PVE_CLI_AUTH_TYPE` env var. So ticket auth
