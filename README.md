@@ -109,7 +109,7 @@ pc ct      … (same verbs for LXC containers; move-volume instead of move-disk;
 pc guest   list show status | start stop shutdown reboot suspend resume console
            # unified VM + container view; lifecycle auto-detects VM vs CT by vmid
 pc node    list show | service apt network subscription
-pc storage list show status | content list·delete | prune-backups
+pc storage list show status | content list·upload·delete | prune-backups
 pc backup  create list | job list·show·create·delete
 pc pool    list show create update delete
 pc ha      status | resource list·show·add·remove | groups

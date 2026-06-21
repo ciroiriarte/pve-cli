@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -160,7 +166,7 @@ func newStorageCmd(a *app) *cobra.Command {
 		},
 	}
 	contentDelete.Flags().StringVar(&delNode, "node", "", "node (required)")
-	content.AddCommand(contentList, contentDelete)
+	content.AddCommand(contentList, contentDelete, newStorageUploadCmd(a))
 
 	var statusNode string
 	status := &cobra.Command{
@@ -212,6 +218,140 @@ func newStorageCmd(a *app) *cobra.Command {
 	prune.Flags().BoolVar(&pruneApply, "apply", false, "actually delete (default: dry-run list)")
 
 	cmd.AddCommand(list, show, content, status, prune)
+	return cmd
+}
+
+// uploader is the optional provider capability for multipart file uploads
+// (PVE-only). PDM has no storage-upload API, so it simply won't satisfy it.
+type uploader interface {
+	RawBody(ctx context.Context, method, path, contentType string, body io.Reader, contentLength int64) ([]byte, error)
+}
+
+// detectUploadContent guesses the storage content type from a filename, so the
+// user rarely needs --content. Empty means "couldn't tell".
+func detectUploadContent(name string) string {
+	low := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(low, ".iso"):
+		return "iso"
+	case strings.HasSuffix(low, ".tar.gz"), strings.HasSuffix(low, ".tgz"),
+		strings.HasSuffix(low, ".tar.xz"), strings.HasSuffix(low, ".txz"),
+		strings.HasSuffix(low, ".tar.zst"), strings.HasSuffix(low, ".tar.bz2"):
+		return "vztmpl"
+	}
+	return ""
+}
+
+func newStorageUploadCmd(a *app) *cobra.Command {
+	var node, content, filename, checksum, checksumAlgo string
+	var wait, noWait bool
+	var timeout int
+	cmd := &cobra.Command{
+		Use:   "upload <storage> <file>",
+		Short: "Upload an ISO, container template, or snippet to a storage",
+		Long: "Streams a local file to a storage via the multipart upload API. The content\n" +
+			"type is auto-detected from the extension (.iso -> iso; .tar.{gz,xz,zst} ->\n" +
+			"vztmpl); override with --content. Returns a task (use --wait/--no-wait).",
+		Example: "  pc storage content upload local /isos/debian-13.iso\n" +
+			"  pc storage content upload local tmpl.tar.zst --content vztmpl --node pve-01",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			storage, srcPath := args[0], args[1]
+			p, err := a.Provider()
+			if err != nil {
+				return err
+			}
+			up, ok := p.(uploader)
+			if !ok {
+				return fmt.Errorf("upload is only available with the pve provider (not %s)", p.Name())
+			}
+
+			name := filename
+			if name == "" {
+				name = filepath.Base(srcPath)
+			}
+			ctype := content
+			if ctype == "" {
+				if ctype = detectUploadContent(name); ctype == "" {
+					return fmt.Errorf("cannot detect content type for %q; pass --content iso|vztmpl|snippets|import", name)
+				}
+			}
+			if checksum != "" && checksumAlgo == "" {
+				return fmt.Errorf("--checksum-algorithm is required with --checksum (md5|sha1|sha256|sha512)")
+			}
+
+			f, err := os.Open(srcPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			fi, err := f.Stat()
+			if err != nil {
+				return err
+			}
+
+			// Storage content is node-scoped; shared storage (NFS/CephFS/PBS) is
+			// reachable from any online node, node-local needs the right --node.
+			n, err := nodeOrAuto(cmd.Context(), p, node)
+			if err != nil {
+				return err
+			}
+
+			// pveproxy rejects chunked transfer-encoding, so we must send a
+			// Content-Length. Build the multipart prefix (fields + file header) and
+			// suffix (closing boundary) into a buffer to measure them exactly, then
+			// stream prefix -> file -> suffix so the file itself never buffers.
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			if err := mw.WriteField("content", ctype); err != nil {
+				return err
+			}
+			if checksum != "" {
+				if err := mw.WriteField("checksum", checksum); err != nil {
+					return err
+				}
+				if err := mw.WriteField("checksum-algorithm", checksumAlgo); err != nil {
+					return err
+				}
+			}
+			if _, err := mw.CreateFormFile("filename", name); err != nil {
+				return err
+			}
+			prefixLen := buf.Len()
+			if err := mw.Close(); err != nil { // appends the closing boundary
+				return err
+			}
+			prefix := buf.Bytes()[:prefixLen]
+			suffix := buf.Bytes()[prefixLen:]
+			contentLength := int64(len(prefix)) + fi.Size() + int64(len(suffix))
+			reader := io.MultiReader(bytes.NewReader(prefix), f, bytes.NewReader(suffix))
+
+			path := fmt.Sprintf("/nodes/%s/storage/%s/upload", n, storage)
+			body, err := up.RawBody(cmd.Context(), "POST", path, mw.FormDataContentType(), reader, contentLength)
+			if err != nil {
+				return err
+			}
+			// The upload runs as a task; reuse the shared wait/print UX.
+			var upid string
+			if err := protocol.DecodeData(body, &upid); err != nil || upid == "" {
+				fmt.Fprintf(stderrWriter(), "uploaded %s to %s\n", name, storage)
+				return nil
+			}
+			h, err := parseTaskArg(upid)
+			if err != nil {
+				return nil
+			}
+			label := fmt.Sprintf("upload %s -> %s", name, storage)
+			h.Display = label
+			return finishTask(cmd.Context(), a, p, h, wait && !noWait, timeout, label)
+		},
+	}
+	cmd.Flags().StringVar(&node, "node", "", "node to upload through (optional; defaults to an online node)")
+	cmd.Flags().StringVar(&content, "content", "", "content type: iso|vztmpl|snippets|import (auto-detected from extension)")
+	cmd.Flags().StringVar(&filename, "filename", "", "stored filename (defaults to the source basename)")
+	cmd.Flags().StringVar(&checksum, "checksum", "", "expected checksum of the file")
+	cmd.Flags().StringVar(&checksumAlgo, "checksum-algorithm", "", "checksum algorithm (md5|sha1|sha256|sha512)")
+	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }
 

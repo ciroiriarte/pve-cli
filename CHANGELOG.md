@@ -5,6 +5,12 @@ versioning is [SemVer](https://semver.org). While on `0.x`, the CLI/config/`json
 surface may change between minor releases.
 
 ## [Unreleased]
+- **Added**: `pc storage content upload <storage> <file>` — uploads ISOs,
+  container templates, or snippets via the multipart storage API (content type
+  auto-detected from the extension, optional `--checksum`). Streams the file with
+  a computed `Content-Length` (pveproxy rejects chunked encoding) so multi-GB
+  images don't buffer in memory; task-polled like other mutations. Closes the
+  main upload gap vs. proxmoxer.
 
 ## [0.11.0] — UX review: command clarity, safety, and onboarding
 

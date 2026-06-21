@@ -94,6 +94,8 @@ pc backup job create --storage backup-nfs --vmid 100,101 --mode snapshot
 ```bash
 pc storage list ; pc storage status local           # --node optional (defaults to an online node)
 pc storage content list local --node pve-01 --type iso
+pc storage content upload local /isos/debian-13.iso        # ISO/template upload (content auto-detected)
+pc storage content upload local tmpl.tar.zst --content vztmpl --checksum <sha256> --checksum-algorithm sha256
 pc storage content delete local backup/vzdump-qemu-100-....vma.zst --node pve-01
 pc storage prune-backups backup-nfs --node pve-01            # dry-run; add --apply
 pc pool list ; pc pool create web ; pc pool update web --vms 100,101

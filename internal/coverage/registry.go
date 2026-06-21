@@ -53,6 +53,7 @@ func init() {
 	reg("storage show", "GET", "/storage/{storage}")
 	reg("storage list --node", "GET", "/nodes/{node}/storage")
 	reg("storage content list / backup list", "GET", "/nodes/{node}/storage/{storage}/content")
+	reg("storage content upload", "POST", "/nodes/{node}/storage/{storage}/upload")
 	reg("backup create", "POST", "/nodes/{node}/vzdump")
 
 	// tasks

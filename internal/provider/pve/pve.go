@@ -5,6 +5,7 @@ package pve
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -246,6 +247,19 @@ func (p *PVE) Raw(ctx context.Context, method, path string, params url.Values) (
 		req.Form = params
 	}
 	return p.cl.DoRaw(ctx, req)
+}
+
+// RawBody issues a write with a streamed body and explicit content type — used
+// for multipart file uploads (e.g. ISOs/templates to storage). PVE-only; the
+// CLI reaches it via an optional-interface assertion.
+func (p *PVE) RawBody(ctx context.Context, method, path, contentType string, body io.Reader, contentLength int64) ([]byte, error) {
+	return p.cl.DoRaw(ctx, &transport.Request{
+		Method:        strings.ToUpper(method),
+		Path:          normalizePath(path),
+		Body:          body,
+		ContentType:   contentType,
+		ContentLength: contentLength,
+	})
 }
 
 func kindFromType(t string) (domain.GuestKind, bool) {

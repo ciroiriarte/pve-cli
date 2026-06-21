@@ -52,6 +52,16 @@ type Request struct {
 	// Form holds application/x-www-form-urlencoded params for write methods,
 	// matching how the Proxmox API expects input.
 	Form url.Values
+	// Body, when set on a write method, is sent as the raw request body with
+	// ContentType (overriding Form) — used for multipart file uploads. Because
+	// the body is read once, requests with a Body must be non-idempotent (POST),
+	// which are never retried.
+	Body        io.Reader
+	ContentType string
+	// ContentLength, when > 0, is set on the request so the body is sent with a
+	// Content-Length header instead of chunked transfer-encoding (which Proxmox's
+	// pveproxy rejects with HTTP 501). Required for streamed Body uploads.
+	ContentLength int64
 }
 
 // New builds a Client from Options.
@@ -193,19 +203,28 @@ func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status
 	}
 
 	var reqBody io.Reader
-	sendBody := bodyMethod && len(req.Form) > 0
-	if sendBody {
+	contentType := ""
+	switch {
+	case bodyMethod && req.Body != nil:
+		reqBody = req.Body
+		contentType = req.ContentType
+	case bodyMethod && len(req.Form) > 0:
 		reqBody = strings.NewReader(req.Form.Encode())
+		contentType = "application/x-www-form-urlencoded"
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, u.String(), reqBody)
 	if err != nil {
 		return nil, 0, err
 	}
+	if req.Body != nil && req.ContentLength > 0 {
+		// Send Content-Length (no chunked encoding — pveproxy rejects it).
+		httpReq.ContentLength = req.ContentLength
+	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("User-Agent", c.userAgent)
-	if sendBody {
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if contentType != "" {
+		httpReq.Header.Set("Content-Type", contentType)
 	}
 	if c.auth != nil {
 		if err := c.auth.Apply(httpReq, write); err != nil {
