@@ -180,6 +180,46 @@ func TestPDMRemoteFlagDisambiguates(t *testing.T) {
 	}
 }
 
+// #11: the colliding-vmid guard must be consistent across every single-guest
+// verb (reads and writes, vm and ct), since they all funnel through
+// resolveGuest -> ResolveGuest. A vmid present on >1 remote must be refused with
+// the --remote hint before any action — verified live against PDM (vmid 100 on
+// MP01/MP02/SDC) and locked in here.
+func TestPDMCollisionConsistentAcrossVerbs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/remotes/remote", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"dc-east","type":"pve","nodes":["n1:8006"]},{"id":"dc-west","type":"pve","nodes":["n3:8006"]}]}`))
+	})
+	mux.HandleFunc("/api2/json/resources/list", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[
+			{"remote":"dc-east","resources":[{"type":"pve-qemu","vmid":100,"name":"east","node":"n1","status":"running"}]},
+			{"remote":"dc-west","resources":[{"type":"pve-qemu","vmid":100,"name":"west","node":"n3","status":"running"}]}
+		]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Each single-guest invocation must refuse the colliding vmid at resolution.
+	// `start`/`migrate` are mutations — the refusal must happen before any POST,
+	// so the mux above intentionally has no action endpoints.
+	cases := [][]string{
+		{"vm", "status", "100"},
+		{"vm", "pending", "100"},
+		{"vm", "config", "100"},
+		{"vm", "rrddata", "100"},
+		{"vm", "snapshot", "list", "100"},
+		{"vm", "start", "100", "--no-wait"},
+		{"vm", "migrate", "100", "--target-node", "x"},
+		{"ct", "show", "100"},
+	}
+	for _, args := range cases {
+		_, err := runCLI(t, withPDMCreds(srv, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "use --remote") {
+			t.Errorf("%v: expected collision refusal with --remote hint, got %v", args, err)
+		}
+	}
+}
+
 func TestPDMVmResumeViaProxy(t *testing.T) {
 	srv := pdmServer(t)
 	defer srv.Close()

@@ -127,6 +127,14 @@ wins on conflict. Booleans use `boolParam` and are only sent when `Changed()`,
 so the API keeps its defaults otherwise. `pc config test-auth` is the auth
 diagnostic for keyring/credential/connectivity failures.
 
+### 13. PDM single-guest ops refuse a colliding vmid
+On `provider=pdm`, a vmid can exist on several remotes. All single-guest verbs
+funnel through `resolveGuest` → the PDM provider's `ResolveGuest`, which returns
+a `KindConflict` (exit 4) listing the remotes and pointing at `--remote`; with
+`--remote` it routes via `ResolveGuestInRemote` (bad remote → not-found/exit 3).
+Because every verb shares this path, the guard is uniform across reads and writes
+— keep new single-guest commands on `resolveGuest` so they inherit it.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is
