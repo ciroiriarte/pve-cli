@@ -6,6 +6,60 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.11.0] — UX review: command clarity, safety, and onboarding
+
+A sweep driven by a multi-model UX/interface review of the command surface
+(16 findings, all live-verified — PVE on a 9.1 node, PDM against a live fleet).
+
+- **Added**: `pc guest` is no longer list-only — it gained type-agnostic
+  lifecycle verbs (`show`, `status`, `start`, `stop`, `shutdown`, `reboot`,
+  `suspend`, `resume`, `console`). Because Proxmox shares one id namespace, a
+  vmid is unambiguous, so `pc guest start 100` resolves whether 100 is a VM or a
+  container and routes accordingly — no need to know the type up front.
+- **Added**: trust-on-first-use TLS pinning in `pc auth login` — an untrusted
+  (self-signed) server cert is shown by SHA-256 fingerprint and pinned into the
+  profile on confirmation, replacing the manual `openssl`-over-SSH dance.
+- **Added**: ticket (user/password) auth via `pc auth login --user <user@realm>`
+  (mutually exclusive with `--token-id`); the password is stored in the keyring.
+- **Added**: `pc config test-auth` — diagnoses credential resolution, keyring
+  reachability, and connectivity (one authenticated request; `--offline` to skip)
+  for the opaque auth failures common on headless hosts.
+- **Added**: first-class flags on create commands — `backup job create`
+  (`--storage/--schedule/--mode/--vmid/--all/--enabled`) and `sdn`
+  (`--bridge/--tag/--alias/--gateway/--snat`); `--set key=value` stays as the
+  escape hatch and still overrides.
+- **Added**: `--help` now shows an `Active backend: <provider> (context, server)`
+  footer, and a one-time shell-completion tip prints after `pc auth login`.
+- **Changed**: `pc vm/ct show` is now a full snapshot (config **merged with**
+  live status); `config` is the raw config only (`--set` to modify); `status` is
+  runtime fields only — three previously-overlapping commands now have distinct
+  roles.
+- **Changed**: hierarchical noun-verb commands for the PDM subtrees —
+  `remote cluster status`, `remote node status|network|storage`,
+  `remote updates list`, `auto-install prepared show|delete`,
+  `resources location info`. The old hyphenated names keep working as hidden
+  aliases.
+- **Changed**: `delete` is the canonical destructive verb (`pc remote delete`;
+  `remove`/`rm` remain as aliases).
+- **Changed**: `--node` is now optional on cluster-wide reads (`ceph
+  health/osd list/pool list/config`, `storage status`, `backup list`) — they
+  auto-resolve an online node. Writes still require an explicit `--node`.
+- **Changed**: the table-only flags (`--column`/`--sort`/`--no-headers`) are
+  hidden from help on non-tabular commands (they still work everywhere); only
+  `--format` is shown universally.
+- **Changed**: provider-mismatch errors now name the active provider.
+- **Fixed**: `pc vm/ct show|status|config -o json` emitted an array of
+  `{key,value}` pairs instead of a native object, so `jq '.cores'` failed. They
+  now emit a native object, restoring the documented json scripting contract.
+- **Fixed/Safety**: previously-ungated disruptive operations now confirm
+  (respecting `-y/--yes`): `sdn apply`, `ceph osd in/out`, and any non-GET method
+  on the `raw`/`api` escape hatches (a buried `--method DELETE` no longer mutates
+  silently).
+
+> **0.x surface change:** the json-shape fix and the `show`/`config`/`status`
+> role split change those commands' output — scripts should target the
+> documented `json`/`yaml` contract.
+
 ## [0.10.3] — PDM proxy-boundary guard + docs refresh
 - **Fixed**: guest extras that PDM's proxy doesn't expose (agent, cloud-init,
   resize, move-disk/volume, unlink, sendkey, template, reset) now refuse cleanly
