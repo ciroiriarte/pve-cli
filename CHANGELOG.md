@@ -5,12 +5,16 @@ versioning is [SemVer](https://semver.org). While on `0.x`, the CLI/config/`json
 surface may change between minor releases.
 
 ## [Unreleased]
+
+## [0.11.1] — storage upload
 - **Added**: `pc storage content upload <storage> <file>` — uploads ISOs,
   container templates, or snippets via the multipart storage API (content type
   auto-detected from the extension, optional `--checksum`). Streams the file with
   a computed `Content-Length` (pveproxy rejects chunked encoding) so multi-GB
   images don't buffer in memory; task-polled like other mutations. Closes the
-  main upload gap vs. proxmoxer.
+  main upload gap vs. proxmoxer. Verified live (upload → list → delete).
+- **Build**: `make check` / `make fmtcheck` mirror CI's gofmt gate locally so
+  formatting can't slip into a red CI run.
 
 ## [0.11.0] — UX review: command clarity, safety, and onboarding
 

@@ -6,8 +6,8 @@
   <service name="tar_scm">
     <param name="scm">git</param>
     <param name="url">https://github.com/ciroiriarte/pve-cli</param>
-    <param name="version">0.11.0</param>
-    <param name="revision">v0.11.0</param>
+    <param name="version">0.11.1</param>
+    <param name="revision">v0.11.1</param>
     <param name="filename">pve-cli</param>
   </service>
   <service name="set_version">
