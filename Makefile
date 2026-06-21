@@ -11,9 +11,12 @@ LDFLAGS   := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: all build test vet fmt tidy clean run docs coverage
+.PHONY: all build test vet fmt fmtcheck check tidy clean run docs coverage
 
 all: build
+
+# Run the same gates as CI in one shot — use before committing/pushing.
+check: fmtcheck vet test build
 
 # Generate man pages, shell completions, and the markdown command reference
 # into dist/ (consumed by packaging). Regenerate in CI to catch drift.
@@ -35,6 +38,13 @@ vet:
 
 fmt:
 	$(GO) fmt ./...
+
+# Fail if any non-vendored file isn't gofmt-clean (mirrors the CI gofmt gate).
+fmtcheck:
+	@unformatted=$$(gofmt -l . | grep -v '^vendor/' || true); \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt needed (run 'make fmt'):"; echo "$$unformatted"; exit 1; \
+	fi
 
 tidy:
 	$(GO) mod tidy

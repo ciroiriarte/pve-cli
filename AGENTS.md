@@ -11,6 +11,10 @@ the code and must be preserved.
   `export PATH="$HOME/.local/go/bin:$PATH"`.
 - `make build` → `./pc` · `make test` (unit + httptest integration) · `make vet`
   · `make docs` (man pages, completions, markdown reference).
+- **`make check` before committing** — runs the full CI gate (`fmtcheck` + vet +
+  test + build). CI fails on unformatted code, and `make test`/`vet` alone do
+  **not** catch gofmt, so run `make check` (or at least `make fmtcheck`) or CI
+  will go red. `make fmt` fixes formatting.
 - Live test node **bigiron** (`https://10.2.0.210:8006`, PVE 9.1.6) drives the
   v1.0.0 live gate; token + TLS fingerprint are in the maintainer's notes. Auth
   for ad-hoc checks via `PVE_CLI_SERVER` / `PVE_CLI_TOKEN_ID` /
