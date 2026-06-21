@@ -229,8 +229,8 @@ func newGuestConfigCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, remote string
 	var set []string
 	cmd := &cobra.Command{
-		Use:     "config <vmid>",
-		Short:   fmt.Sprintf("Show the raw %s config, or modify it with --set", spec.label),
+		Use:   "config <vmid>",
+		Short: fmt.Sprintf("Show the raw %s config, or modify it with --set", spec.label),
 		Long: fmt.Sprintf("Prints the raw %s configuration (no live status — use `show` for a full\n"+
 			"snapshot or `status` for runtime fields). With one or more --set key=value,\n"+
 			"updates the config instead.", spec.label),

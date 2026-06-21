@@ -89,8 +89,8 @@ func newGuestListCmd(a *app, spec guestSpec) *cobra.Command {
 func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, remote string
 	cmd := &cobra.Command{
-		Use:     "show <vmid>",
-		Short:   fmt.Sprintf("Show a %s: config plus live status", spec.label),
+		Use:   "show <vmid>",
+		Short: fmt.Sprintf("Show a %s: config plus live status", spec.label),
 		Long: fmt.Sprintf("Shows a complete snapshot of the %s — its configuration merged with live\n"+
 			"runtime status (status, uptime, cpu/mem). Use `config` for the raw config\n"+
 			"(and `--set` to modify it), or `status` for runtime fields only.", spec.label),
