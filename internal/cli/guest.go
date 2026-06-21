@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -180,13 +181,14 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 // resolveGuest finds a guest by vmid, honoring an explicit --node override and
 // an optional --remote (PDM) to disambiguate a vmid present on several remotes.
 func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idArg, node string, remoteOpt ...string) (domain.Guest, error) {
-	vmid, err := strconv.Atoi(idArg)
-	if err != nil {
-		return domain.Guest{}, fmt.Errorf("invalid vmid %q: must be a number", idArg)
-	}
 	remote := ""
 	if len(remoteOpt) > 0 {
 		remote = remoteOpt[0]
+	}
+	vmid, err := strconv.Atoi(idArg)
+	if err != nil {
+		// A non-numeric argument is a guest name — look it up.
+		return resolveGuestByName(ctx, p, spec, idArg, node, remote)
 	}
 	// Typed commands (vm/ct) with an explicit --node skip auto-resolution. The
 	// unified `guest` command has no kind, so it must resolve to learn whether
@@ -235,6 +237,45 @@ func enforceKind(spec guestSpec, g domain.Guest) error {
 		return fmt.Errorf("%d is a %s, not a %s", g.VMID, g.Kind, spec.label)
 	}
 	return nil
+}
+
+// resolveGuestByName resolves a guest from its name when the CLI argument isn't
+// a vmid. Names aren't unique in Proxmox, so multiple matches are a conflict that
+// points back at the vmid. The kind (vm/ct), --node, and --remote (PDM) scope
+// the search.
+func resolveGuestByName(ctx context.Context, p provider.Provider, spec guestSpec, name, node, remote string) (domain.Guest, error) {
+	guests, err := p.ListGuests(ctx, provider.GuestFilter{Kind: spec.kind, Node: node})
+	if err != nil {
+		return domain.Guest{}, err
+	}
+	var matches []domain.Guest
+	for _, g := range guests {
+		if g.Name == name && (remote == "" || strings.EqualFold(g.Remote, remote)) {
+			matches = append(matches, g)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		scope := ""
+		switch {
+		case remote != "":
+			scope = fmt.Sprintf(" on remote %q", remote)
+		case node != "":
+			scope = fmt.Sprintf(" on node %q", node)
+		}
+		return domain.Guest{}, &protocol.APIError{Kind: protocol.KindNotFound,
+			Message: fmt.Sprintf("no %s named %q found%s", spec.label, name, scope)}
+	case 1:
+		return matches[0], nil
+	default:
+		ids := make([]string, 0, len(matches))
+		for _, m := range matches {
+			ids = append(ids, strconv.Itoa(m.VMID))
+		}
+		return domain.Guest{}, &protocol.APIError{Kind: protocol.KindConflict,
+			Message: fmt.Sprintf("%d guests named %q (vmids: %s); use the vmid to disambiguate",
+				len(matches), name, strings.Join(ids, ", "))}
+	}
 }
 
 // firstOnlineNode returns the name of an online cluster node. It lets read-only,

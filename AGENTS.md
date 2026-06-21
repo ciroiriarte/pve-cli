@@ -100,7 +100,9 @@ vmid is unambiguous — no `--type` flag), and CLI path builders use the resolve
 typed `vm`/`ct` trees still enforce their kind (`enforceKind`) and own
 provisioning (create/clone/delete/config-write), where the type is intrinsic.
 When adding a guest-scoped command, build paths from `g.Kind` so it works under
-`pc guest`, `pc vm`, and `pc ct` alike.
+`pc guest`, `pc vm`, and `pc ct` alike. `resolveGuest` also accepts a guest
+**name** (non-numeric arg → `resolveGuestByName`, scoped by kind/`--node`/
+`--remote`), so every single-guest verb takes a name for free.
 
 ### 9. The active backend is surfaced; provider errors name the current provider
 `--help` appends an `Active backend: <provider> (context, server)` footer

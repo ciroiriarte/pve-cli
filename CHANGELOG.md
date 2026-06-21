@@ -5,6 +5,10 @@ versioning is [SemVer](https://semver.org). While on `0.x`, the CLI/config/`json
 surface may change between minor releases.
 
 ## [Unreleased]
+- **Added**: single-guest commands accept a guest **name** as well as a vmid
+  (`pc vm start web-01`, `pc guest console db-02`). A non-numeric argument is
+  resolved against the cluster (scoped by kind/`--node`/`--remote`); a name
+  shared by multiple guests is a clear conflict that lists the vmids.
 
 ## [0.11.1] — storage upload
 - **Added**: `pc storage content upload <storage> <file>` — uploads ISOs,

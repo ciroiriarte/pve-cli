@@ -27,6 +27,7 @@ pc vm list --status running           # filter
 pc guest list                         # VMs + containers, unified
 pc vm list -c id -c name -c status -o value | sort -k3   # script-friendly columns
 pc vm show 100                        # full snapshot: config + live status
+pc vm show web-01                     # …or address a guest by name (any single-guest verb)
 pc vm config 100                      # raw config only (--set to modify)
 pc vm status 100                      # live runtime status only
 pc node/guest list -o json | jq '.[]|select(.status=="running")|.vmid'
