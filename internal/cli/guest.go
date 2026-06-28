@@ -55,6 +55,7 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 		newGuestMigrateCmd(a, spec),
 		newGuestConfigCmd(a, spec),
 		newGuestSnapshotCmd(a, spec),
+		newGuestTagCmd(a, spec),
 		newGuestConsoleCmd(a, spec),
 	)
 	cmd.AddCommand(newGuestMonitorCmds(a, spec)...)
@@ -64,10 +65,11 @@ func newGuestCmd(a *app, spec guestSpec) *cobra.Command {
 
 func newGuestListCmd(a *app, spec guestSpec) *cobra.Command {
 	var node, status string
+	var tags []string
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   fmt.Sprintf("List %ss", spec.label),
-		Example: fmt.Sprintf("  pc %s list\n  pc %s list --status running -o json", spec.noun, spec.noun),
+		Example: fmt.Sprintf("  pc %s list\n  pc %s list --status running -o json\n  pc %s list --tag prod", spec.noun, spec.noun, spec.noun),
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := a.Provider()
@@ -78,12 +80,14 @@ func newGuestListCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			guests = filterGuestsByTags(guests, tags)
 			sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
 			return a.render(guestsTable(guests))
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "filter by node")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (running|stopped)")
+	cmd.Flags().StringArrayVar(&tags, "tag", nil, "filter by tag (repeatable; matches any)")
 	return cmd
 }
 
@@ -304,17 +308,24 @@ func nodeOrAuto(ctx context.Context, p provider.Provider, node string) (string, 
 }
 
 func guestsTable(guests []domain.Guest) output.Tabular {
-	// Include the remote column only when present (PDM); keeps PVE output clean.
-	hasRemote := false
+	// Include the remote column only when present (PDM) and the tags column only
+	// when some guest is tagged; keeps the common PVE output clean.
+	hasRemote, hasTags := false, false
 	for _, g := range guests {
 		if g.Remote != "" {
 			hasRemote = true
-			break
+		}
+		if strings.TrimSpace(g.Tags) != "" {
+			hasTags = true
 		}
 	}
-	cols := []string{"vmid", "name", "kind", "node", "status", "maxmem", "uptime"}
+	cols := []string{"vmid", "name", "kind"}
 	if hasRemote {
-		cols = []string{"vmid", "name", "kind", "remote", "node", "status", "maxmem", "uptime"}
+		cols = append(cols, "remote")
+	}
+	cols = append(cols, "node", "status", "maxmem", "uptime")
+	if hasTags {
+		cols = append(cols, "tags")
 	}
 	t := output.Tabular{Columns: cols, Raw: guests}
 	for _, g := range guests {
@@ -323,6 +334,9 @@ func guestsTable(guests []domain.Guest) output.Tabular {
 			row = append(row, g.Remote)
 		}
 		row = append(row, g.Node, g.Status, humanBytes(g.MaxMem), humanUptime(g.Uptime))
+		if hasTags {
+			row = append(row, joinTags(splitTags(g.Tags)))
+		}
 		t.Rows = append(t.Rows, row)
 	}
 	return t

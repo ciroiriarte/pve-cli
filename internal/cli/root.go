@@ -217,6 +217,7 @@ func NewRootCmd() *cobra.Command {
 		newStorageCmd(a),
 		newBackupCmd(a),
 		newSnapshotCmd(a),
+		newTagCmd(a),
 		newPoolCmd(a),
 		newHACmd(a),
 		newFirewallCmd(a),
