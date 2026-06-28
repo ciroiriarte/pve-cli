@@ -84,6 +84,7 @@ type pdmResource struct {
 	MaxMem int64   `json:"maxmem"`
 	MaxCPU float64 `json:"maxcpu"`
 	Uptime int64   `json:"uptime"`
+	Tags   string  `json:"tags"`
 }
 
 func (p *PDM) resources(ctx context.Context) ([]resourceEntry, error) {
@@ -131,7 +132,7 @@ func (p *PDM) ListGuests(ctx context.Context, f provider.GuestFilter) ([]domain.
 			}
 			out = append(out, domain.Guest{
 				VMID: r.VMID, Name: r.Name, Kind: kind, Node: r.Node,
-				Status: r.Status, MaxMem: r.MaxMem, MaxCPU: r.MaxCPU, Uptime: r.Uptime, Remote: e.Remote,
+				Status: r.Status, MaxMem: r.MaxMem, MaxCPU: r.MaxCPU, Uptime: r.Uptime, Tags: r.Tags, Remote: e.Remote,
 			})
 		}
 	}

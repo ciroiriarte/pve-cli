@@ -34,7 +34,8 @@ func newGuestTopCmd(a *app) *cobra.Command {
 	}
 	list.Flags().StringVar(&node, "node", "", "filter by node")
 	list.Flags().StringVar(&status, "status", "", "filter by status")
-	list.Flags().StringArrayVar(&tags, "tag", nil, "filter by tag (repeatable; matches any)")
+	list.Flags().StringSliceVar(&tags, "tag", nil, "filter by tag (comma-separated or repeatable; matches any)")
+	_ = list.RegisterFlagCompletionFunc("tag", completeTagNames(a))
 	cmd.AddCommand(list)
 
 	// Type-agnostic lifecycle/read verbs: `pc guest start 100` resolves whether

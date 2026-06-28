@@ -87,7 +87,8 @@ func newGuestListCmd(a *app, spec guestSpec) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&node, "node", "", "filter by node")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (running|stopped)")
-	cmd.Flags().StringArrayVar(&tags, "tag", nil, "filter by tag (repeatable; matches any)")
+	cmd.Flags().StringSliceVar(&tags, "tag", nil, "filter by tag (comma-separated or repeatable; matches any)")
+	_ = cmd.RegisterFlagCompletionFunc("tag", completeTagNames(a))
 	return cmd
 }
 

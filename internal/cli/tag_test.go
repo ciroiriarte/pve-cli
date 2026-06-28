@@ -71,15 +71,35 @@ func TestFilterGuestsByTags(t *testing.T) {
 }
 
 func TestParseIDSet(t *testing.T) {
-	got, err := parseIDSet("100, 101 ,102")
+	got, err := parseIDSet([]string{"100", " 101 ", "102"})
 	if err != nil || !got[100] || !got[101] || !got[102] {
 		t.Fatalf("parseIDSet = %v, %v", got, err)
 	}
-	if s, _ := parseIDSet(""); s != nil {
-		t.Errorf("empty csv should be nil, got %v", s)
+	if s, _ := parseIDSet(nil); s != nil {
+		t.Errorf("empty should be nil, got %v", s)
 	}
-	if _, err := parseIDSet("100,x"); err == nil {
+	if _, err := parseIDSet([]string{"100", "x"}); err == nil {
 		t.Error("expected error on non-numeric id")
+	}
+}
+
+func TestTagEntryMismatch(t *testing.T) {
+	g := domain.Guest{VMID: 100, Name: "web", Kind: domain.KindVM}
+	// Same identity → no mismatch.
+	if tagEntryMismatch(tagExportEntry{VMID: 100, Name: "web", Kind: "vm"}, g) {
+		t.Error("identical identity should not mismatch")
+	}
+	// Recycled vmid: name differs → mismatch.
+	if !tagEntryMismatch(tagExportEntry{VMID: 100, Name: "db", Kind: "vm"}, g) {
+		t.Error("name change should mismatch")
+	}
+	// Kind differs → mismatch.
+	if !tagEntryMismatch(tagExportEntry{VMID: 100, Name: "web", Kind: "ct"}, g) {
+		t.Error("kind change should mismatch")
+	}
+	// Legacy export without name/kind → treated as don't-care.
+	if tagEntryMismatch(tagExportEntry{VMID: 100, Tags: []string{"a"}}, g) {
+		t.Error("empty backup identity should not mismatch (back-compat)")
 	}
 }
 
