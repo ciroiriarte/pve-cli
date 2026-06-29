@@ -29,4 +29,8 @@ jobs:
       - name: changelog drift
         run: |
           go run -mod=vendor ./cmd/genchangelog
-          git diff --exit-status packaging/obs/debian/changelog packaging/obs/pve-cli.changes
+          if [ -n "$(git status --porcelain packaging/obs/debian/changelog packaging/obs/pve-cli.changes)" ]; then
+            echo "::error::OBS changelogs are stale — run 'make changelog' and commit"
+            git --no-pager diff packaging/obs/debian/changelog packaging/obs/pve-cli.changes
+            exit 1
+          fi
