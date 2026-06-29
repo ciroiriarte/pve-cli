@@ -1,4 +1,78 @@
 -------------------------------------------------------------------
+Sun Jun 28 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.12.0-1
+
+- Snapshots and tags. Cluster-wide `pc snapshot list` and age-based
+  `pc snapshot prune` (--older-than/--before, --dry-run, confirm-gated).
+- First-class guest tagging: `pc vm|ct|guest tag` (list/add/rm/set/clear,
+  digest-locked), a `pc tag` cluster group (list/add/rm/clear/rename/
+  export/import), and a `--tag` filter on guest listings.
+- Reads work on PVE and PDM; tag writes are PVE-only.
+
+-------------------------------------------------------------------
+Sun Jun 21 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.11.2-1
+
+- Single-guest commands accept a guest name as well as a vmid
+  (e.g. `pc vm start web-01`).
+
+-------------------------------------------------------------------
+Sun Jun 21 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.11.1-1
+
+- Storage content upload (`pc storage content upload`) for ISOs, container
+  templates, and snippets, streamed with a computed Content-Length.
+
+-------------------------------------------------------------------
+Sun Jun 21 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.11.0-1
+
+- UX review: type-agnostic `pc guest` lifecycle verbs, trust-on-first-use
+  TLS pinning and ticket auth in `pc auth login`, `pc config test-auth`,
+  provider visibility, and broader safety/onboarding polish.
+
+-------------------------------------------------------------------
+Fri Jun 19 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.10.3-1
+
+- PDM proxy-boundary guard and documentation refresh.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.10.2-1
+
+- Release pipeline working.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.10.1-1
+
+- Partial fix for the release pipeline.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.10.0-1
+
+- Tier-2 PVE curation: SDN, firewall, and Ceph management commands.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.9.0-1
+
+- Tier-1 PVE curation: daily-driver command breadth.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.8.0-1
+
+- PDM control-plane curation organized by functional domain.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.7.0-1
+
+- Broad PDM curation: snapshot, migrate, monitoring, and remote management.
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.6.1-1
+
+- Live-hardening of the PDM surface (every PDM-supported op verified).
+
+-------------------------------------------------------------------
+Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.6.0-1
+
+- Coverage matrix, PDM lifecycle verbs, and serial console.
+
+-------------------------------------------------------------------
 Thu Jun 18 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.5.5-1
 
 - Initial OBS packaging: pc binary, man pages, shell completions.
