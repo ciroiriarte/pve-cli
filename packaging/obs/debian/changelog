@@ -1,89 +1,80 @@
 pve-cli (0.12.0-1) unstable; urgency=medium
 
-  * Snapshots and tags. Cluster-wide `pc snapshot list` and age-based
-    `pc snapshot prune` (--older-than/--before, --dry-run, confirm-gated).
-    First-class guest tagging: `pc vm|ct|guest tag` (list/add/rm/set/clear,
-    digest-locked) plus a `pc tag` cluster group (list/add/rm/clear/rename/
-    export/import) and a `--tag` filter on guest listings. Reads work on PVE
-    and PDM; tag writes are PVE-only.
+  * snapshots and tags
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 28 Jun 2026 22:22:34 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 28 Jun 2026 22:22:34 -0300
 
 pve-cli (0.11.2-1) unstable; urgency=medium
 
-  * Single-guest commands accept a guest name as well as a vmid
-    (e.g. `pc vm start web-01`).
+  * address guests by name
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 20:30:47 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 20:30:47 -0300
 
 pve-cli (0.11.1-1) unstable; urgency=medium
 
-  * Storage content upload (`pc storage content upload`) for ISOs, container
-    templates, and snippets, streamed with a computed Content-Length.
+  * storage upload
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 16:04:30 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 16:04:30 -0300
 
 pve-cli (0.11.0-1) unstable; urgency=medium
 
-  * UX review: type-agnostic `pc guest` lifecycle verbs, trust-on-first-use
-    TLS pinning and ticket auth in `pc auth login`, `pc config test-auth`,
-    provider visibility, and broader safety/onboarding polish.
+  * UX review: command clarity, safety, and onboarding
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 00:50:41 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Sun, 21 Jun 2026 00:50:41 -0300
 
 pve-cli (0.10.3-1) unstable; urgency=medium
 
-  * PDM proxy-boundary guard and documentation refresh.
+  * PDM proxy-boundary guard + docs refresh
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Fri, 19 Jun 2026 08:56:31 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Fri, 19 Jun 2026 08:56:31 -0300
 
 pve-cli (0.10.2-1) unstable; urgency=medium
 
-  * Release pipeline working.
+  * release pipeline working
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:50:15 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:50:15 -0300
 
 pve-cli (0.10.1-1) unstable; urgency=medium
 
-  * Partial fix for the release pipeline.
+  * fix the release pipeline (partial)
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:46:08 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:46:08 -0300
 
 pve-cli (0.10.0-1) unstable; urgency=medium
 
-  * Tier-2 PVE curation: SDN, firewall, and Ceph management commands.
+  * Tier-2 PVE curation (SDN, firewall, Ceph management)
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:31:26 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:31:26 -0300
 
 pve-cli (0.9.0-1) unstable; urgency=medium
 
-  * Tier-1 PVE curation: daily-driver command breadth.
+  * Tier-1 PVE curation (daily-driver breadth)
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:21:24 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 22:21:24 -0300
 
 pve-cli (0.8.0-1) unstable; urgency=medium
 
-  * PDM control-plane curation organized by functional domain.
+  * PDM control-plane curation by functional domain
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 21:30:18 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 21:30:18 -0300
 
 pve-cli (0.7.0-1) unstable; urgency=medium
 
-  * Broad PDM curation: snapshot, migrate, monitoring, and remote management.
+  * broad PDM curation (snapshot, migrate, monitoring, remote mgmt)
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 16:39:42 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 16:39:42 -0300
 
 pve-cli (0.6.1-1) unstable; urgency=medium
 
-  * Live-hardening of the PDM surface (every PDM-supported op verified).
+  * live-hardening of the PDM surface (every PDM-supported op verified)
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 16:17:21 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 16:17:21 -0300
 
 pve-cli (0.6.0-1) unstable; urgency=medium
 
-  * Coverage matrix, PDM lifecycle verbs, and serial console.
+  * coverage matrix, PDM lifecycle verbs, serial console
 
- -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 14:44:24 +0000
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 18 Jun 2026 14:44:24 -0300
 
 pve-cli (0.5.0-1) unstable; urgency=medium
 

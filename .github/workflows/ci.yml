@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need tags for the changelog drift check
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
@@ -24,3 +26,7 @@ jobs:
         run: go test -mod=vendor ./...
       - name: build
         run: go build -mod=vendor ./...
+      - name: changelog drift
+        run: |
+          go run -mod=vendor ./cmd/genchangelog
+          git diff --exit-status packaging/obs/debian/changelog packaging/obs/pve-cli.changes

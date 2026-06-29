@@ -11,7 +11,7 @@ LDFLAGS   := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: all build test vet fmt fmtcheck check tidy clean run docs coverage
+.PHONY: all build test vet fmt fmtcheck check tidy clean run docs coverage changelog
 
 all: build
 
@@ -26,6 +26,11 @@ docs:
 # Regenerate the API coverage matrix (docs/coverage.md) from the schemas.
 coverage:
 	$(GO) run ./cmd/coverage docs/coverage.md
+
+# Regenerate the OBS packaging changelogs from CHANGELOG.md + git tags. CI
+# fails on drift, so a release that bumps CHANGELOG.md must regenerate these.
+changelog:
+	$(GO) run ./cmd/genchangelog
 
 build:
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD)
