@@ -6,6 +6,34 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.12.0] — snapshots and tags
+
+Two new cluster-wide management groups, reviewed by a multi-model pass
+(Codex + Antigravity) and live-verified on both backends — PVE (9.1 node)
+and PDM (live fleet, 4 remotes).
+
+- **Added**: `pc snapshot` — cluster-wide snapshot management on top of the
+  per-guest verbs. `pc snapshot list` aggregates every guest's snapshots in one
+  view (vmid/guest/kind/node/snapshot/age); `pc snapshot prune --older-than 30d`
+  (or `--before <date>`) bulk-deletes stale snapshots, scoped by
+  `--node`/`--vmid`/`--remote`. Previews matches first, `--dry-run` to preview
+  only, confirm-gated with `-y/--yes` (cron-friendly).
+- **Added**: `pc <vm|ct|guest> tag` — first-class guest tagging
+  (`list`/`add`/`rm`/`set`/`clear`); `add`/`rm` are read-modify-write so a single
+  tag changes without clobbering the rest. Writes carry the config `digest`
+  (optimistic locking).
+- **Added**: `--tag` filter on every guest `list` (comma-separated or repeatable,
+  matches any) plus a `tags` column shown only when guests are tagged.
+- **Added**: `pc tag` cluster group — `list` (distinct tags + counts,
+  `--show-guests`), bulk `add`/`rm`/`clear` (require a `--all`/`--vmid`/`--node`/
+  `--has-tag` selector), `rename <old> <new>`, and `export`/`import` for JSON
+  backup-restore. `import` verifies the live name/kind against the backup and
+  skips recycled vmids unless `--force`. Bulk/import preview, `--dry-run`, and
+  confirm-gate like snapshot prune.
+- **Added**: shell completion of existing tag names on tag flags/arguments.
+- **Behavior**: tag/snapshot **reads** work on PVE and PDM; tag **writes** are
+  PVE-only (PDM has no config-write API) and refuse fast with a clear message.
+
 ## [0.11.2] — address guests by name
 - **Added**: single-guest commands accept a guest **name** as well as a vmid
   (`pc vm start web-01`, `pc guest console db-02`). A non-numeric argument is
