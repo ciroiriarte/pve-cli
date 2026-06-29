@@ -7,6 +7,7 @@ package pdm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -76,15 +77,32 @@ type resourceEntry struct {
 }
 
 type pdmResource struct {
-	Type   string  `json:"type"` // qemu, lxc, node, storage, ...
-	VMID   int     `json:"vmid"`
-	Name   string  `json:"name"`
-	Node   string  `json:"node"`
-	Status string  `json:"status"`
-	MaxMem int64   `json:"maxmem"`
-	MaxCPU float64 `json:"maxcpu"`
-	Uptime int64   `json:"uptime"`
-	Tags   string  `json:"tags"`
+	Type   string          `json:"type"` // qemu, lxc, node, storage, ...
+	VMID   int             `json:"vmid"`
+	Name   string          `json:"name"`
+	Node   string          `json:"node"`
+	Status string          `json:"status"`
+	MaxMem int64           `json:"maxmem"`
+	MaxCPU float64         `json:"maxcpu"`
+	Uptime int64           `json:"uptime"`
+	Tags   json.RawMessage `json:"tags"` // PDM emits an array; PVE emits a string
+}
+
+// tagsString normalizes PDM's tags (a JSON array of strings) — or, defensively,
+// a PVE-style ';'-separated string — into the ';'-joined form domain.Guest uses.
+func tagsString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return strings.Join(arr, ";")
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
 }
 
 func (p *PDM) resources(ctx context.Context) ([]resourceEntry, error) {
@@ -132,7 +150,7 @@ func (p *PDM) ListGuests(ctx context.Context, f provider.GuestFilter) ([]domain.
 			}
 			out = append(out, domain.Guest{
 				VMID: r.VMID, Name: r.Name, Kind: kind, Node: r.Node,
-				Status: r.Status, MaxMem: r.MaxMem, MaxCPU: r.MaxCPU, Uptime: r.Uptime, Tags: r.Tags, Remote: e.Remote,
+				Status: r.Status, MaxMem: r.MaxMem, MaxCPU: r.MaxCPU, Uptime: r.Uptime, Tags: tagsString(r.Tags), Remote: e.Remote,
 			})
 		}
 	}

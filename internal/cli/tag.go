@@ -157,14 +157,26 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 	cmd := &cobra.Command{Use: "tag", Short: fmt.Sprintf("Manage %s tags", spec.label)}
 	var node, remote string
 
-	// resolve returns the provider, guest, current tags, and config digest.
-	resolve := func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, []string, string, error) {
+	// resolveGuestOnly resolves the provider + guest without reading config. Tags
+	// come from the cluster-resource view (populated on PVE and PDM alike), so a
+	// read needs no per-guest config call — which also keeps `list` working on PDM
+	// where the proxied config endpoint isn't reliably reachable.
+	resolveGuestOnly := func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, error) {
 		p, err := a.Provider()
+		if err != nil {
+			return nil, domain.Guest{}, err
+		}
+		g, err := resolveGuest(cmd.Context(), p, spec, idArg, node, remote)
+		return p, g, err
+	}
+	// prepWrite resolves the guest and, gating PDM out first (fail fast instead of
+	// attempting a config read PDM can't serve), reads the live tags + digest.
+	prepWrite := func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, []string, string, error) {
+		p, g, err := resolveGuestOnly(cmd, idArg)
 		if err != nil {
 			return nil, domain.Guest{}, nil, "", err
 		}
-		g, err := resolveGuest(cmd.Context(), p, spec, idArg, node, remote)
-		if err != nil {
+		if err := ensureProvisionable(p, "tag"); err != nil {
 			return nil, domain.Guest{}, nil, "", err
 		}
 		cur, digest, err := guestTagsAndDigest(cmd.Context(), p, g)
@@ -178,11 +190,11 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 	list := &cobra.Command{
 		Use: "list <vmid>", Short: "List a guest's tags", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, tags, _, err := resolve(cmd, args[0])
+			_, g, err := resolveGuestOnly(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			return a.render(tagListTable(tags))
+			return a.render(tagListTable(normalizeTags(splitTags(g.Tags))))
 		},
 	}
 	add := &cobra.Command{
@@ -194,7 +206,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 			return completeTagNames(a)(cmd, args, tc)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, g, cur, digest, err := resolve(cmd, args[0])
+			p, g, cur, digest, err := prepWrite(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -210,7 +222,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 			return completeTagNames(a)(cmd, args, tc)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, g, cur, digest, err := resolve(cmd, args[0])
+			p, g, cur, digest, err := prepWrite(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -220,7 +232,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 	set := &cobra.Command{
 		Use: "set <vmid> [tag]...", Short: "Replace a guest's tags (use `clear` to remove all)", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, g, _, digest, err := resolve(cmd, args[0])
+			p, g, _, digest, err := prepWrite(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -230,7 +242,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 	clear := &cobra.Command{
 		Use: "clear <vmid>", Short: "Remove all tags from a guest", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, g, _, digest, err := resolve(cmd, args[0])
+			p, g, _, digest, err := prepWrite(cmd, args[0])
 			if err != nil {
 				return err
 			}
