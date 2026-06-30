@@ -296,6 +296,8 @@ func newTagCmd(a *app) *cobra.Command {
 		newTagRenameCmd(a),
 		newTagExportCmd(a),
 		newTagImportCmd(a),
+		newTagColorCmd(a),
+		newTagStyleCmd(a),
 	)
 	return cmd
 }

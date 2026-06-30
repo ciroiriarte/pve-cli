@@ -1,3 +1,9 @@
+pve-cli (0.13.0-1) unstable; urgency=medium
+
+  * tag colors
+
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Tue, 30 Jun 2026 00:00:00 +0000
+
 pve-cli (0.12.0-1) unstable; urgency=medium
 
   * snapshots and tags

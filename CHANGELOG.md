@@ -6,6 +6,19 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-30 — tag colors
+
+- **Added**: `pc tag color` and `pc tag style` — manage the datacenter
+  **`tag-style`** option so tag chips render with deterministic colors instead of
+  Proxmox's auto-derived (name-hashed) ones. `tag color set <tag> <bg> [text]`
+  (6-hex, `#` optional), `color list`, `color rm`, `color clear`; `style show`
+  and `style set --shape|--ordering|--case-sensitive` for chip shape/ordering,
+  plus `style clear` to drop the whole option. All edits are read-modify-write on
+  the single property string so colors and shape survive each other; writes are
+  confirm-gated (`-y/--yes`) and PVE-only (the `tag-style` GET returns a parsed
+  object while the PUT takes a property string — both forms handled on read).
+  (#25)
+
 ## [0.12.0] — snapshots and tags
 
 Two new cluster-wide management groups, reviewed by a multi-model pass
