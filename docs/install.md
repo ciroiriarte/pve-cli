@@ -25,12 +25,12 @@ is **`pc`**.
 > [prebuilt static binary / `.deb` / `.rpm`](#github-releases-static-binary--deb--rpm)
 > from GitHub Releases, or build [from source](#from-source).
 
-In every command below, replace the **repo name** segment
-(`openSUSE_Leap_15.6`, `Debian_13`, …) with the row matching your system from
-the table above. The base URL is always
-`https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/<repo>/`.
+Choose the section for your distribution and copy/paste it as-is. There are no
+placeholders to edit in the package-manager commands.
 
-## openSUSE (Leap / Slowroll / Tumbleweed) — zypper
+## openSUSE — zypper
+
+### Leap 15.6
 
 ```bash
 sudo zypper addrepo \
@@ -39,10 +39,45 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install pve-cli
 ```
 
-Slowroll → `openSUSE_Slowroll`; Tumbleweed → `openSUSE_Tumbleweed`;
-Leap 16.0 → `openSUSE_Leap_16.0`.
+### Leap 16.0
+
+```bash
+sudo zypper addrepo \
+  https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Leap_16.0/home:ciriarte:pve-cli.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install pve-cli
+```
+
+### Slowroll
+
+```bash
+sudo zypper addrepo \
+  https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Slowroll/home:ciriarte:pve-cli.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install pve-cli
+```
+
+### Tumbleweed
+
+```bash
+sudo zypper addrepo \
+  https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Tumbleweed/home:ciriarte:pve-cli.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install pve-cli
+```
 
 ## Rocky Linux / RHEL-compatible — dnf
+
+### Rocky Linux 9
+
+```bash
+sudo dnf install -y dnf-plugins-core   # provides 'config-manager'
+sudo dnf config-manager --add-repo \
+  https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Rocky_9/home:ciriarte:pve-cli.repo
+sudo dnf install -y pve-cli
+```
+
+### Rocky Linux 10
 
 ```bash
 sudo dnf install -y dnf-plugins-core   # provides 'config-manager'
@@ -51,12 +86,12 @@ sudo dnf config-manager --add-repo \
 sudo dnf install -y pve-cli
 ```
 
-Rocky 9 → `Rocky_9`.
-
 ## Debian / Ubuntu — apt
 
 `apt` needs the repository's signing key stored separately and referenced with
-`signed-by`:
+`signed-by`.
+
+### Debian 13 (Trixie)
 
 ```bash
 # 1. signing key
@@ -71,7 +106,68 @@ echo 'deb [signed-by=/usr/share/keyrings/pve-cli.gpg] https://download.opensuse.
 sudo apt update && sudo apt install pve-cli
 ```
 
-Ubuntu 24.04 → replace both `Debian_13` paths with `xUbuntu_24.04`.
+### Ubuntu 24.04 LTS
+
+```bash
+# 1. signing key
+curl -fsSL https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/xUbuntu_24.04/Release.key \
+  | gpg --dearmor | sudo tee /usr/share/keyrings/pve-cli.gpg > /dev/null
+
+# 2. apt source (note the trailing " /")
+echo 'deb [signed-by=/usr/share/keyrings/pve-cli.gpg] https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/xUbuntu_24.04/ /' \
+  | sudo tee /etc/apt/sources.list.d/pve-cli.list
+
+# 3. install
+sudo apt update && sudo apt install pve-cli
+```
+
+### Variable-based alternative
+
+If you prefer variables, set `OBS_REPO` once from the table above, then run the
+block for your package manager.
+
+#### zypper / dnf repo file
+
+```bash
+# Examples: openSUSE_Leap_15.6, openSUSE_Tumbleweed, Rocky_9, Rocky_10
+OBS_REPO=openSUSE_Tumbleweed
+BASE_URL="https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/${OBS_REPO}"
+```
+
+For openSUSE:
+
+```bash
+sudo zypper addrepo "${BASE_URL}/home:ciriarte:pve-cli.repo"
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install pve-cli
+```
+
+For Rocky Linux:
+
+```bash
+sudo dnf install -y dnf-plugins-core   # provides 'config-manager'
+sudo dnf config-manager --add-repo "${BASE_URL}/home:ciriarte:pve-cli.repo"
+sudo dnf install -y pve-cli
+```
+
+#### apt source
+
+```bash
+# Examples: Debian_13, xUbuntu_24.04
+OBS_REPO=Debian_13
+BASE_URL="https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/${OBS_REPO}"
+
+curl -fsSL "${BASE_URL}/Release.key" \
+  | gpg --dearmor | sudo tee /usr/share/keyrings/pve-cli.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/pve-cli.gpg] ${BASE_URL}/ /" \
+  | sudo tee /etc/apt/sources.list.d/pve-cli.list
+
+sudo apt update && sudo apt install pve-cli
+```
+
+The fully expanded distro-specific blocks above are recommended for most users
+because they avoid editing commands by hand.
 
 ## Verify
 
