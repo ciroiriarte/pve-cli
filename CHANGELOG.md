@@ -6,6 +6,11 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-28 — version flag
+
+- **Added**: `pc --version` prints the build version on request, matching the
+  existing build metadata used by the `pc version` command.
+
 ## [0.13.0] - 2026-06-30 — tag colors
 
 - **Added**: `pc tag color` and `pc tag style` — manage the datacenter

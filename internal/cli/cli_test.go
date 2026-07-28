@@ -59,6 +59,17 @@ func withCreds(srv *httptest.Server, args ...string) []string {
 	}, args...)
 }
 
+func TestRootVersionFlagPrintsVersion(t *testing.T) {
+	out, err := runCLI(t, "--version")
+	if err != nil {
+		t.Fatalf("pc --version: %v", err)
+	}
+	want := "pc dev (commit none, built unknown)\n"
+	if out != want {
+		t.Fatalf("pc --version output = %q, want %q", out, want)
+	}
+}
+
 func TestRawVersionExecutes(t *testing.T) {
 	srv := fakeServer(t)
 	defer srv.Close()

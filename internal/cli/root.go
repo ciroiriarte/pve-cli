@@ -180,6 +180,7 @@ func NewRootCmd() *cobra.Command {
 		Short: "Remote CLI for Proxmox VE clusters (and Proxmox Datacenter Manager)",
 		Long: "pc is a remote-first, OpenStack-Client-inspired CLI for managing Proxmox VE\n" +
 			"clusters entirely over their REST API.\n\n" + version.Disclaimer,
+		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Validate global flags early so bad input fails before any network I/O.
@@ -192,6 +193,7 @@ func NewRootCmd() *cobra.Command {
 			return nil
 		},
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&a.profile, "profile", "", "config profile to use")
