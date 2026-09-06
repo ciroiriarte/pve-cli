@@ -6,6 +6,8 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-06 — node network & auth realms
+
 - **Added**: `pc node network` interface management — `create`/`update`/`delete`/
   `show`, plus `apply` (reload) and `revert` (discard staged changes) — replacing
   the `pc api` escape hatch for day-0 host networking. Create/update promote the
