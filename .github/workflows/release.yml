@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+      - name: check
+        run: make GO="go -mod=vendor" check
       - name: Validate config
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -11,12 +11,12 @@ LDFLAGS   := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: all build test vet fmt fmtcheck check tidy clean run docs coverage changelog
+.PHONY: all build test vet fmt fmtcheck check tidy clean run docs coverage changelog changelogcheck
 
 all: build
 
-# Run the same gates as CI in one shot — use before committing/pushing.
-check: fmtcheck vet test build
+# Run the same gates as CI/release in one shot — use before committing/pushing.
+check: fmtcheck vet test build changelogcheck
 
 # Generate man pages, shell completions, and the markdown command reference
 # into dist/ (consumed by packaging). Regenerate in CI to catch drift.
@@ -31,6 +31,15 @@ coverage:
 # fails on drift, so a release that bumps CHANGELOG.md must regenerate these.
 changelog:
 	$(GO) run ./cmd/genchangelog
+
+# Fail if generated OBS changelogs are stale (mirrors the CI/release gate).
+changelogcheck:
+	$(GO) run ./cmd/genchangelog
+	@if [ -n "$$(git status --porcelain -- packaging/obs/debian/changelog packaging/obs/pve-cli.changes)" ]; then \
+		echo "OBS changelogs are stale — run 'make changelog' and commit"; \
+		git --no-pager diff -- packaging/obs/debian/changelog packaging/obs/pve-cli.changes; \
+		exit 1; \
+	fi
 
 build:
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD)
