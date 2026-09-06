@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ciroiriarte/pve-cli/internal/config"
@@ -408,15 +409,26 @@ func promptYesNo(prompt string) bool {
 	return s == "y" || s == "yes"
 }
 
+// promptSecret reads a secret from stdin. On an interactive terminal it prints
+// the prompt to stderr and reads with echo DISABLED (so the secret never lands
+// in the screen, scrollback, or a shared session). On a pipe/redirect (e.g.
+// `--client-key -`) it reads a single line and strips only the trailing newline
+// — intentional leading/trailing spaces in a secret are preserved.
 func promptSecret(prompt string) (string, error) {
-	if isTTY() {
+	if isInputTTY() {
 		fmt.Fprint(os.Stderr, prompt)
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr) // the suppressed Enter leaves the cursor mid-line
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	}
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}
-	return strings.TrimSpace(line), nil
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 func orElse(v, def string) string {

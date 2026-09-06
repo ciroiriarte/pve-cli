@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
+	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/spf13/cobra"
 )
 
@@ -32,14 +34,19 @@ func newNodeNetworkCmd(a *app) *cobra.Command {
 			"  pc node network apply  <node>",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.Provider()
-			if err != nil {
-				return err
-			}
-			return a.renderGet(cmd, p, "/nodes/"+args[0]+"/network", "iface", "type", "method", "address", "active")
+			return listNodeNetwork(a, cmd, args[0])
 		},
 	}
 	network.AddCommand(
+		// An explicit `list <node>` is the unambiguous way to list a node whose
+		// hostname collides with a verb (e.g. a node literally named "apply"),
+		// which cobra would otherwise route to the subcommand.
+		&cobra.Command{
+			Use: "list <node>", Short: "List a node's network interfaces", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return listNodeNetwork(a, cmd, args[0])
+			},
+		},
 		newNodeNetworkShowCmd(a),
 		newNodeNetworkCreateCmd(a),
 		newNodeNetworkUpdateCmd(a),
@@ -48,6 +55,16 @@ func newNodeNetworkCmd(a *app) *cobra.Command {
 		newNodeNetworkRevertCmd(a),
 	)
 	return network
+}
+
+// listNodeNetwork renders a node's interface list, shared by the `network`
+// parent (back-compat `pc node network <node>`) and the explicit `list` verb.
+func listNodeNetwork(a *app, cmd *cobra.Command, node string) error {
+	p, err := a.Provider()
+	if err != nil {
+		return err
+	}
+	return a.renderGet(cmd, p, "/nodes/"+node+"/network", "iface", "type", "method", "address", "active")
 }
 
 func newNodeNetworkShowCmd(a *app) *cobra.Command {
@@ -99,14 +116,22 @@ func newNodeNetworkCreateCmd(a *app) *cobra.Command {
 			if iface == "" {
 				return fmt.Errorf("interface name is required (positional <iface> or --iface)")
 			}
-			if typ == "" {
+			// --type may be supplied via --set type=… (the escape hatch for
+			// uncurated PVE types like OVSBridge), so only demand --type when the
+			// escape hatch didn't set it.
+			forcedType := setHasKey(set, "type")
+			if typ == "" && !forcedType {
 				return fmt.Errorf("--type is required (bond|bridge|vlan|eth|alias; other types via --set type=…)")
 			}
-			if !knownIfaceTypes[typ] && !setHasKey(set, "type") {
+			if typ != "" && !knownIfaceTypes[typ] && !forcedType {
 				return fmt.Errorf("unsupported --type %q; use one of bond|bridge|vlan|eth|alias, or pass --set type=%s to force it", typ, typ)
 			}
-			if err := validateIfaceFlags(cmd, typ); err != nil {
-				return err
+			// Only cross-check flag/type combos for a curated type; a forced type
+			// takes full responsibility for its own flags (PVE validates them).
+			if knownIfaceTypes[typ] {
+				if err := validateIfaceFlags(cmd, typ); err != nil {
+					return err
+				}
 			}
 			base := map[string]string{
 				"type": typ, "cidr": cidr, "gateway": gateway,
@@ -158,7 +183,7 @@ func newNodeNetworkCreateCmd(a *app) *cobra.Command {
 }
 
 func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
-	var cidr, gateway, comment, mtu, bondMode, vids, digest string
+	var cidr, gateway, comment, mtu, bondMode, vids string
 	var slaves, bridgePorts []string
 	var vlanAware, autostart bool
 	var set []string
@@ -167,7 +192,9 @@ func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
 		Short: "Edit a network interface (staged until `apply`)",
 		Long: "Edits an interface, staged until `pc node network apply <node>`. Only the\n" +
 			"flags you pass are changed; booleans (--autostart/--vlan-aware) are sent only\n" +
-			"when set, so untouched fields keep their current values.",
+			"when set, so untouched fields keep their current values. The interface's type\n" +
+			"is read automatically (PVE requires it on edit). Clear an optional field with\n" +
+			"`--set delete=<field>` (e.g. --set delete=gateway).",
 		Example: "  pc node network update pve-01 vmbr0 --mtu 9000",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -179,9 +206,22 @@ func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
 				return err
 			}
 			node, iface := args[0], args[1]
+			// PVE's network PUT requires `type` even for a partial edit, so fetch
+			// the interface's current type and pass it through (the caller edits
+			// one field like --mtu without having to restate --type).
+			ifpath := "/nodes/" + node + "/network/" + url.PathEscape(iface)
+			body, err := p.Raw(cmd.Context(), "GET", ifpath, nil)
+			if err != nil {
+				return fmt.Errorf("read interface %q on %q: %w", iface, node, err)
+			}
+			var cur map[string]any
+			if derr := protocol.DecodeData(body, &cur); derr != nil || cur["type"] == nil {
+				return fmt.Errorf("could not determine the type of interface %q on %q", iface, node)
+			}
 			base := map[string]string{
+				"type": fmt.Sprintf("%v", cur["type"]),
 				"cidr": cidr, "gateway": gateway, "comments": comment,
-				"mtu": mtu, "bond_mode": bondMode, "bridge_vids": vids, "digest": digest,
+				"mtu": mtu, "bond_mode": bondMode, "bridge_vids": vids,
 			}
 			if s := joinPorts(slaves); s != "" {
 				base["slaves"] = s
@@ -199,7 +239,7 @@ func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := rawMutate(cmd.Context(), a, p, "PUT", "/nodes/"+node+"/network/"+url.PathEscape(iface), params, "update iface "+iface, true, 0); err != nil {
+			if err := rawMutate(cmd.Context(), a, p, "PUT", ifpath, params, "update iface "+iface, true, 0); err != nil {
 				return err
 			}
 			stagedNudge(node, iface)
@@ -216,7 +256,6 @@ func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
 	cmd.Flags().StringSliceVar(&bridgePorts, "bridge-ports", nil, "bridge member ports (comma-separated or repeatable)")
 	cmd.Flags().BoolVar(&vlanAware, "vlan-aware", false, "make the bridge VLAN-aware")
 	cmd.Flags().StringVar(&vids, "vids", "", "bridge VLAN ids/ranges (e.g. 2-4094)")
-	cmd.Flags().StringVar(&digest, "digest", "", "config digest for optimistic locking (optional)")
 	cmd.Flags().StringArrayVar(&set, "set", nil, "any other field key=value (escape hatch, repeatable)")
 	return cmd
 }
@@ -265,7 +304,13 @@ func newNodeNetworkApplyCmd(a *app) *cobra.Command {
 				return err
 			}
 			if err := rawMutate(cmd.Context(), a, p, "PUT", "/nodes/"+node+"/network", nil, "apply network config on "+node, true, 0); err != nil {
-				fmt.Fprintf(stderrWriter(), "[pc] notice: the reload may have dropped this connection; if the management IP/VLAN changed, re-target your profile and re-check with `pc node network %s`\n", node)
+				// Only a transport failure (no HTTP response) plausibly means the
+				// reload cut our own connection. A 4xx/5xx or task failure came
+				// back over a live link — don't cry "connection dropped" then.
+				var apiErr *protocol.APIError
+				if errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTransport {
+					fmt.Fprintf(stderrWriter(), "[pc] notice: the reload may have dropped this connection; if the management IP/VLAN changed, re-target your profile and re-check with `pc node network %s`\n", node)
+				}
 				return err
 			}
 			return nil
@@ -298,8 +343,10 @@ func newNodeNetworkRevertCmd(a *app) *cobra.Command {
 // validateIfaceFlags rejects flags that don't apply to the chosen type, so a
 // typo is caught client-side rather than silently ignored by the API.
 func validateIfaceFlags(cmd *cobra.Command, typ string) error {
-	if cmd.Flags().Changed("slaves") && typ != "bond" {
-		return fmt.Errorf("--slaves is only valid for --type bond (for bridges use --bridge-ports)")
+	for _, f := range []string{"slaves", "bond-mode"} {
+		if cmd.Flags().Changed(f) && typ != "bond" {
+			return fmt.Errorf("--%s is only valid for --type bond (for bridges use --bridge-ports)", f)
+		}
 	}
 	for _, f := range []string{"bridge-ports", "vlan-aware", "vids"} {
 		if cmd.Flags().Changed(f) && typ != "bridge" {

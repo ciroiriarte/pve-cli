@@ -97,6 +97,38 @@ func TestAccessRealmDelete(t *testing.T) {
 	}
 }
 
+// realm update uses PUT with partial params and does NOT offer --username-claim
+// (PVE's realm PUT rejects it — it's POST-only). --digest IS valid on PUT.
+func TestAccessRealmUpdatePutAndNoUsernameClaim(t *testing.T) {
+	var got url.Values
+	var method string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/access/domains/keycloak", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.PostForm
+		method = r.Method
+		w.Write([]byte(`{"data":null}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if _, err := runCLI(t, withCreds(srv, "access", "realm", "update", "keycloak",
+		"--issuer-url", "https://idp/new", "--digest", "abc")...); err != nil {
+		t.Fatalf("access realm update: %v", err)
+	}
+	if method != "PUT" {
+		t.Errorf("expected PUT, got %s", method)
+	}
+	if got.Get("issuer-url") != "https://idp/new" || got.Get("digest") != "abc" {
+		t.Errorf("unexpected update params: %v", got)
+	}
+	// --username-claim must not exist on update (POST-only field).
+	if _, err := runCLI(t, withCreds(srv, "access", "realm", "update", "keycloak",
+		"--username-claim", "email")...); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("expected --username-claim to be unknown on realm update, got %v", err)
+	}
+}
+
 // Realm writes are PVE-only; on PDM they fail fast pointing at `pc server realm`.
 func TestAccessRealmCreateRefusedOnPDM(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

@@ -118,6 +118,11 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// GuestConfig decodes into a map that stays nil if the API's `data`
+			// is null/absent; a nil map would panic on the status write below.
+			if cfg == nil {
+				cfg = map[string]any{}
+			}
 			// Enrich with live status so `show` is a full snapshot — distinct from
 			// `config` (raw config) and `status` (runtime only). Best-effort: a
 			// status hiccup must not break showing the config. The live status is

@@ -81,14 +81,15 @@ func newAccessRealmCreateCmd(a *app) *cobra.Command {
 			return rawMutate(cmd.Context(), a, p, "POST", "/access/domains", params, "create realm "+realm, true, 0)
 		},
 	}
-	registerRealmFlags(cmd, &issuerURL, &clientID, &usernameClaim, &comment, &clientKey, &clientKeyRef, &autocreate, &deflt, &set)
+	registerRealmFlags(cmd, &issuerURL, &clientID, &comment, &clientKey, &clientKeyRef, &autocreate, &deflt, &set)
 	cmd.Flags().StringVar(&typ, "type", "", "realm type (openid|ldap|ad|…)")
+	cmd.Flags().StringVar(&usernameClaim, "username-claim", "", "OpenID username claim (e.g. preferred_username, email); create-only")
 	_ = cmd.RegisterFlagCompletionFunc("type", cobra.FixedCompletions([]string{"openid", "ldap", "ad"}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 
 func newAccessRealmUpdateCmd(a *app) *cobra.Command {
-	var issuerURL, clientID, usernameClaim, comment, digest string
+	var issuerURL, clientID, comment, digest string
 	var clientKey, clientKeyRef string
 	var autocreate, deflt bool
 	var set []string
@@ -96,8 +97,10 @@ func newAccessRealmUpdateCmd(a *app) *cobra.Command {
 		Use:   "update <realm>",
 		Short: "Update an authentication realm (PVE)",
 		Long: "Updates a realm (PUT /access/domains/<realm>). Only the flags you pass are\n" +
-			"changed. The client secret follows the same rules as create: prefer\n" +
-			"--client-key-ref, `--client-key -` (stdin), or a TTY prompt over plaintext.",
+			"changed; omitting the client-key flags leaves the stored secret untouched.\n" +
+			"To rotate it, pass --client-key-ref env:…|keyring://… or `--client-key -`\n" +
+			"(stdin) — a plaintext --client-key works but warns. Clear an optional field\n" +
+			"with `--set delete=<field>` (e.g. --set delete=comment).",
 		Example: "  pc access realm update keycloak --client-key-ref env:NEW_SECRET",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -109,9 +112,11 @@ func newAccessRealmUpdateCmd(a *app) *cobra.Command {
 				return err
 			}
 			realm := args[0]
+			// Note: PVE's realm PUT does not accept `username-claim` (POST-only),
+			// so it is not offered on update — see registerRealmFlags.
 			base := map[string]string{
 				"issuer-url": issuerURL, "client-id": clientID,
-				"username-claim": usernameClaim, "comment": comment, "digest": digest,
+				"comment": comment, "digest": digest,
 			}
 			if cmd.Flags().Changed("autocreate") {
 				base["autocreate"] = boolParam(autocreate)
@@ -134,7 +139,7 @@ func newAccessRealmUpdateCmd(a *app) *cobra.Command {
 			return rawMutate(cmd.Context(), a, p, "PUT", "/access/domains/"+url.PathEscape(realm), params, "update realm "+realm, true, 0)
 		},
 	}
-	registerRealmFlags(cmd, &issuerURL, &clientID, &usernameClaim, &comment, &clientKey, &clientKeyRef, &autocreate, &deflt, &set)
+	registerRealmFlags(cmd, &issuerURL, &clientID, &comment, &clientKey, &clientKeyRef, &autocreate, &deflt, &set)
 	cmd.Flags().StringVar(&digest, "digest", "", "config digest for optimistic locking (optional)")
 	return cmd
 }
@@ -161,14 +166,14 @@ func newAccessRealmDeleteCmd(a *app) *cobra.Command {
 	}
 }
 
-// registerRealmFlags wires the OpenID/OIDC field flags shared by create/update.
-// --type is registered separately (create requires it; update ignores it).
-func registerRealmFlags(cmd *cobra.Command, issuerURL, clientID, usernameClaim, comment, clientKey, clientKeyRef *string, autocreate, deflt *bool, set *[]string) {
+// registerRealmFlags wires the realm field flags common to create and update.
+// --type and --username-claim are registered by create only: PVE's realm PUT
+// rejects both (type is fixed at creation, username-claim is POST-only).
+func registerRealmFlags(cmd *cobra.Command, issuerURL, clientID, comment, clientKey, clientKeyRef *string, autocreate, deflt *bool, set *[]string) {
 	cmd.Flags().StringVar(issuerURL, "issuer-url", "", "OpenID issuer URL")
 	cmd.Flags().StringVar(clientID, "client-id", "", "OpenID client id")
 	cmd.Flags().StringVar(clientKey, "client-key", "", "OpenID client secret (use `-` for stdin; prefer --client-key-ref)")
 	cmd.Flags().StringVar(clientKeyRef, "client-key-ref", "", "resolve the client secret from env:NAME or keyring://service/key")
-	cmd.Flags().StringVar(usernameClaim, "username-claim", "", "OpenID username claim (e.g. preferred_username, email)")
 	cmd.Flags().StringVar(comment, "comment", "", "realm comment/description")
 	cmd.Flags().BoolVar(autocreate, "autocreate", false, "auto-create users on first login")
 	cmd.Flags().BoolVar(deflt, "default", false, "make this the default realm")
@@ -204,9 +209,11 @@ func resolveClientKey(cmd *cobra.Command, clientKey, clientKeyRef string) (strin
 		fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --client-key leaks to shell history and the process table; prefer --client-key-ref env:… / keyring://… or `--client-key -` (stdin)")
 		return clientKey, nil
 	}
-	// Nothing supplied: prompt on a TTY, else leave empty (create may be a
-	// non-openid realm; the API rejects a missing openid secret with a clear error).
-	if isTTY() {
+	// Nothing supplied: prompt on an interactive terminal, else leave empty
+	// (create may be a non-openid realm; the API rejects a missing openid secret
+	// with a clear error). Gate on stdin so `create … > file` still prompts and a
+	// piped/closed stdin never blocks.
+	if isInputTTY() {
 		return promptSecret("OpenID client key (leave empty to skip): ")
 	}
 	return "", nil

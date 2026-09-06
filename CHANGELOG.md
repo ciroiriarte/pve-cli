@@ -6,6 +6,27 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: post-0.14.0 hardening of the new `node network` and `access realm`
+  commands (multi-model review):
+  - `node network update` now sends the interface's `type` (PVE's PUT requires
+    it — a partial edit like `--mtu 9000` previously 400'd) by reading it from
+    the interface, and drops the unsupported `--digest` flag.
+  - `access realm update` no longer offers `--username-claim` (PVE's realm PUT
+    rejects it; it is create-only).
+  - `--set type=…` now actually forces an uncurated interface type on
+    `node network create` (the required-`--type` check ran first and blocked it).
+  - `--bond-mode` on a non-bond interface is rejected client-side like `--slaves`.
+  - Interactive secret prompts (`promptSecret`, used by realm client-key and
+    `auth login`) no longer echo the secret to the terminal, and no longer strip
+    intentional leading/trailing whitespace from a piped secret.
+  - Interactive prompts gate on stdin being a TTY (`isInputTTY`) instead of
+    stdout, so `pc … > file` still prompts and a piped/closed stdin can't hang.
+  - `node network apply` only prints the "connection may have dropped" advisory
+    on an actual transport error, not on a 4xx/5xx or task failure.
+  - `access realm show` path-escapes the realm name; an explicit `list <node>`
+    subcommand lists a node whose hostname collides with a verb; `show` no longer
+    panics when a guest's config API returns null.
+
 ## [0.14.0] - 2026-09-06 — node network & auth realms
 
 - **Added**: `pc node network` interface management — `create`/`update`/`delete`/

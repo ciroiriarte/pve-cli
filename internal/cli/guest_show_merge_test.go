@@ -74,3 +74,33 @@ func TestGuestShowNestsStatusNoLeak(t *testing.T) {
 		t.Errorf("expected .status.balloon (bytes) == 8589934592, got %v", st["balloon"])
 	}
 }
+
+// A null/absent config `data` decodes to a nil map — nesting the status must not
+// panic on a nil-map write. Guard for the crash risk in `show`.
+func TestGuestShowNilConfigNoPanic(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/cluster/resources", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[{"type":"qemu","vmid":100,"name":"web","node":"pve-01","status":"running"}]}`))
+	})
+	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/config", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":null}`)) // nil map, nil error
+	})
+	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/status/current", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":{"status":"running","cpu":0.5}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "vm", "show", "100", "--format", "json")...)
+	if err != nil {
+		t.Fatalf("vm show with null config: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("expected a JSON object, got %s (%v)", out, err)
+	}
+	st, ok := obj["status"].(map[string]any)
+	if !ok || st["cpu"] != 0.5 {
+		t.Errorf("expected live status nested under .status even with null config, got %v", obj)
+	}
+}

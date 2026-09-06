@@ -112,6 +112,95 @@ func TestNodeNetworkCreateRejectsSlavesOnBridge(t *testing.T) {
 	}
 }
 
+// The `--set type=…` escape hatch works without --type (for uncurated PVE
+// interface types like OVSBridge), and validateIfaceFlags is skipped for it.
+func TestNodeNetworkCreateForcedTypeViaSet(t *testing.T) {
+	var got url.Values
+	var method string
+	srv := netMutateServer(t, "/api2/json/nodes/pve-01/network", &got, &method)
+	defer srv.Close()
+
+	_, err := runCLI(t, withCreds(srv, "node", "network", "create", "pve-01", "ovs0",
+		"--set", "type=OVSBridge", "--set", "ovs_bridge=vmbr0")...)
+	if err != nil {
+		t.Fatalf("node network create --set type=: %v", err)
+	}
+	if got.Get("type") != "OVSBridge" || got.Get("iface") != "ovs0" || got.Get("ovs_bridge") != "vmbr0" {
+		t.Errorf("forced-type escape hatch didn't round-trip: %v", got)
+	}
+}
+
+// --bond-mode on a non-bond type is rejected client-side (matches --slaves).
+func TestNodeNetworkCreateRejectsBondModeOnBridge(t *testing.T) {
+	srv := netMutateServer(t, "/api2/json/nodes/pve-01/network", &url.Values{}, new(string))
+	defer srv.Close()
+
+	_, err := runCLI(t, withCreds(srv, "node", "network", "create", "pve-01", "vmbr0",
+		"--type", "bridge", "--bond-mode", "802.3ad")...)
+	if err == nil || !strings.Contains(err.Error(), "--bond-mode is only valid for --type bond") {
+		t.Fatalf("expected a bond-mode/type validation error, got %v", err)
+	}
+}
+
+// A node whose hostname collides with a verb is still listable via `list`.
+func TestNodeNetworkExplicitList(t *testing.T) {
+	mux := http.NewServeMux()
+	var hit string
+	mux.HandleFunc("/api2/json/nodes/apply/network", func(w http.ResponseWriter, r *http.Request) {
+		hit = r.URL.Path
+		w.Write([]byte(`{"data":[{"iface":"vmbr0","type":"bridge"}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// `pc node network list apply` — the node is literally named "apply".
+	if _, err := runCLI(t, withCreds(srv, "node", "network", "list", "apply")...); err != nil {
+		t.Fatalf("node network list apply: %v", err)
+	}
+	if hit != "/api2/json/nodes/apply/network" {
+		t.Errorf("list did not reach the node's network path, got %q", hit)
+	}
+}
+
+// update must send `type` (PVE PUT requires it) — fetched from the iface — and
+// must NOT offer a --digest flag (the PVE network PUT schema has no digest).
+func TestNodeNetworkUpdateSendsType(t *testing.T) {
+	var got url.Values
+	var putMethod string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/nodes/pve-01/network/vmbr0", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			w.Write([]byte(`{"data":{"iface":"vmbr0","type":"bridge","method":"static"}}`))
+			return
+		}
+		_ = r.ParseForm()
+		got = r.PostForm
+		putMethod = r.Method
+		w.Write([]byte(`{"data":null}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := runCLI(t, withCreds(srv, "node", "network", "update", "pve-01", "vmbr0", "--mtu", "9000")...)
+	if err != nil {
+		t.Fatalf("node network update: %v", err)
+	}
+	if putMethod != "PUT" {
+		t.Errorf("expected PUT, got %s", putMethod)
+	}
+	if got.Get("type") != "bridge" {
+		t.Errorf("update must send the interface's type (bridge), got %v", got)
+	}
+	if got.Get("mtu") != "9000" {
+		t.Errorf("expected mtu=9000, got %v", got)
+	}
+	// --digest is not a valid PVE network-PUT field, so the flag must not exist.
+	if _, derr := runCLI(t, withCreds(srv, "node", "network", "update", "pve-01", "vmbr0", "--digest", "x")...); derr == nil ||
+		!strings.Contains(derr.Error(), "unknown flag") {
+		t.Errorf("expected --digest to be an unknown flag on node network update, got %v", derr)
+	}
+}
+
 // apply is confirm-gated: refused non-interactively without --yes, PUT with it.
 func TestNodeNetworkApplyConfirmGate(t *testing.T) {
 	var got url.Values

@@ -32,3 +32,15 @@ func isTTY() bool {
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
 }
+
+// isInputTTY reports whether STDIN is an interactive terminal. Prompts must gate
+// on this (not isTTY, which is stdout) so `pc … > file` — stdout redirected,
+// stdin still a terminal — still prompts, and a piped/closed stdin never makes
+// the tool block waiting for input it can't get.
+func isInputTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
