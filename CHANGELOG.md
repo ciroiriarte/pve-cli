@@ -6,6 +6,8 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-06 — node network & realm fixes
+
 - **Fixed**: post-0.14.0 hardening of the new `node network` and `access realm`
   commands (multi-model review):
   - `node network update` now sends the interface's `type` (PVE's PUT requires
