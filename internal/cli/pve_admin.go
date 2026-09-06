@@ -162,16 +162,7 @@ func newNodeOpsCmds(a *app) []*cobra.Command {
 		anyGet(a, "updates <node>", "Available package updates", 1, func(a []string) string { return "/nodes/" + a[0] + "/apt/update" }, "Package", "OldVersion", "Version"),
 	)
 
-	network := &cobra.Command{
-		Use: "network <node>", Short: "List a node's network interfaces", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := a.Provider()
-			if err != nil {
-				return err
-			}
-			return a.renderGet(cmd, p, "/nodes/"+args[0]+"/network", "iface", "type", "method", "address", "active")
-		},
-	}
+	network := newNodeNetworkCmd(a)
 	subscription := &cobra.Command{
 		Use: "subscription <node>", Short: "Show a node's subscription status", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

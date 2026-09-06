@@ -155,3 +155,11 @@ captured as GitHub issues **#1–#16**. #1–#3 are implemented; the rest
 (guest lifecycle verbs, TOFU fingerprint pinning, ticket-auth login, provider
 visibility, escape-hatch consolidation, …) are the queued UX work. Check open
 issues before reworking the command surface.
+
+Later first-class-command requests that retired `pc api` escape-hatch usage:
+**#26** — `pc node network create/update/delete/apply/revert` (host ifupdown
+interfaces; PVE-only, staged-until-`apply`, comma-list `--slaves`/`--bridge-ports`
+mapped to PVE's space-separated form) and `pc access realm create/update/delete/
+show` (OIDC realms; client secret via `--client-key-ref env:/keyring://`, stdin,
+or TTY prompt — never required on argv). `node network` is the host-interface
+layer beneath the cluster-wide `pc sdn` overlay; they don't overlap.

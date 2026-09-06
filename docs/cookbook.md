@@ -103,14 +103,20 @@ pc pool list ; pc pool create web ; pc pool update web --vms 100,101
 pc ha status ; pc ha resource list ; pc ha resource add vm:100 --group dc1 --state started
 ```
 
-## Networking: firewall & SDN
+## Networking: host interfaces, firewall & SDN
 
 ```bash
+# node interfaces (host ifupdown) — changes STAGE until `apply` (may drop your session)
+pc node network pve-01                                 # list interfaces
+pc node network create pve-01 bond0  --type bond   --bond-mode active-backup --slaves eno1,eno2
+pc node network create pve-01 vmbr0  --type bridge --bridge-ports bond0 --vlan-aware --vids 2-4094 --cidr 192.0.2.10/24 --gateway 192.0.2.1
+pc node network create pve-01 vmbr0.10 --type vlan --cidr 10.0.0.10/24 --comment storage
+pc node network apply  pve-01                          # reload (ifupdown2); revert = discard staged
 # firewall — scope with --node / --vmid (default: cluster)
 pc firewall rules ; pc firewall rules --node pve-01 ; pc firewall rules --vmid 100
 pc firewall rule add --node pve-01 --set type=in --set action=ACCEPT --set proto=tcp --set dport=22
 pc firewall options --vmid 100 ; pc firewall macros
-# SDN (PVE /cluster/sdn) — remember to apply
+# SDN (PVE /cluster/sdn) — the overlay on top of the VLAN-aware bridge above; remember to apply
 pc sdn zone list ; pc sdn vnet list ; pc sdn subnet list vnet0
 pc sdn zone create dmz --type vlan --bridge vmbr0
 pc sdn vnet create v100 --zone dmz --tag 100
@@ -133,7 +139,15 @@ pc ceph service restart --node pve-01 --service mon.pve-01
 pc access user list ; pc access user create svc@pve --set comment=automation
 pc access token create svc@pve cli   # prints the secret ONCE
 pc access acl set --path /vms/100 --roles PVEVMAdmin --ids svc@pve
-pc access role list ; pc access realm list
+pc access role list ; pc access realm list ; pc access realm show keycloak
+# OIDC realm — keep the client secret off argv via --client-key-ref (env or keyring)
+pc access realm create keycloak --type openid \
+  --issuer-url https://auth.example.com/realms/infra \
+  --client-id pve-cluster --client-key-ref env:KEYCLOAK_SECRET \
+  --username-claim preferred_username --autocreate
+op read op://vault/oidc/secret | pc access realm create google --type openid \
+  --issuer-url https://accounts.google.com --client-id 123.apps.googleusercontent.com \
+  --client-key - --username-claim email --autocreate     # secret piped via stdin
 ```
 
 ## PDM (fleet across clusters)

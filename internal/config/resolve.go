@@ -147,27 +147,35 @@ func (s *Settings) Validate() error {
 	return nil
 }
 
+// ResolveSecretRef dereferences a secret reference of the form
+// keyring://service/key or env:NAME into its plaintext value. It is the shared
+// mechanism behind the ticket-auth secret_ref and CLI flags such as
+// `access realm --client-key-ref`, so both understand the same schemes.
+func ResolveSecretRef(ref string) (string, error) {
+	switch {
+	case strings.HasPrefix(ref, "keyring://"):
+		rest := strings.TrimPrefix(ref, "keyring://")
+		service, key, ok := strings.Cut(rest, "/")
+		if !ok {
+			return "", fmt.Errorf("invalid keyring ref %q: want keyring://service/key", ref)
+		}
+		v, err := keyring.Get(service, key)
+		if err != nil {
+			return "", fmt.Errorf("read secret from keyring (%s): %w", ref, err)
+		}
+		return v, nil
+	case strings.HasPrefix(ref, "env:"):
+		return os.Getenv(strings.TrimPrefix(ref, "env:")), nil
+	default:
+		return "", fmt.Errorf("unsupported secret ref scheme: %q (want keyring://service/key or env:NAME)", ref)
+	}
+}
+
 // resolveSecret dereferences a secret_ref (keyring://service/key or env:NAME),
 // or returns the inline secret. Inline plaintext secrets emit a warning.
 func resolveSecret(a AuthConfig) (string, error) {
 	if a.SecretRef != "" {
-		switch {
-		case strings.HasPrefix(a.SecretRef, "keyring://"):
-			rest := strings.TrimPrefix(a.SecretRef, "keyring://")
-			service, key, ok := strings.Cut(rest, "/")
-			if !ok {
-				return "", fmt.Errorf("invalid keyring ref %q: want keyring://service/key", a.SecretRef)
-			}
-			v, err := keyring.Get(service, key)
-			if err != nil {
-				return "", fmt.Errorf("read secret from keyring (%s): %w", a.SecretRef, err)
-			}
-			return v, nil
-		case strings.HasPrefix(a.SecretRef, "env:"):
-			return os.Getenv(strings.TrimPrefix(a.SecretRef, "env:")), nil
-		default:
-			return "", fmt.Errorf("unsupported secret_ref scheme: %q", a.SecretRef)
-		}
+		return ResolveSecretRef(a.SecretRef)
 	}
 	if a.Secret != "" {
 		fmt.Fprintln(os.Stderr, "[pc] warning: plaintext secret in config; prefer secret_ref: keyring://… or an env var")

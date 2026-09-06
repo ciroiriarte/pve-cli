@@ -40,6 +40,20 @@ func confirm(a *app, prompt string) error {
 	}
 }
 
+// ensurePVE refuses a PVE-only config write when the active backend is PDM,
+// naming the current provider so the pve/pdm split isn't invisible (design
+// decision #9). `op` is the human verb, e.g. "node network create".
+func ensurePVE(p interface{ Name() string }, op, alt string) error {
+	if p.Name() == "pdm" {
+		msg := fmt.Sprintf("%s is only available on PVE (current provider: pdm); set provider: pve", op)
+		if alt != "" {
+			msg += ", " + alt
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
 // confirmWrite gates a non-GET escape-hatch call (`pc raw` / `pc api`) so a
 // buried `--method DELETE` or an `api POST` can't mutate cluster state without a
 // prompt. Read methods pass through untouched; --yes/-y skips the prompt.

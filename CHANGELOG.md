@@ -6,6 +6,24 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: `pc node network` interface management — `create`/`update`/`delete`/
+  `show`, plus `apply` (reload) and `revert` (discard staged changes) — replacing
+  the `pc api` escape hatch for day-0 host networking. Create/update promote the
+  common fields as first-class flags (`--type`, `--cidr`, `--gateway`,
+  `--bond-mode`, `--slaves`, `--bridge-ports`, `--vlan-aware`, `--vids`,
+  `--autostart`, `--mtu`, `--comment`) and keep `--set` as the escape hatch;
+  `--slaves`/`--bridge-ports` accept a comma-separated or repeated list and are
+  sent in PVE's space-separated form. Changes stage into
+  `/etc/network/interfaces.new` (a TTY nudge points at `apply`); `apply`/`revert`/
+  `delete` are confirm-gated and `apply` warns it may drop the active session.
+  Writes are PVE-only. (#26)
+- **Added**: `pc access realm create` (alias `add`) / `update` / `delete` / `show`
+  for PVE authentication realms, with OIDC fields promoted as flags
+  (`--type`, `--issuer-url`, `--client-id`, `--username-claim`, `--autocreate`,
+  `--default`). The client secret can be resolved off-argv via
+  `--client-key-ref env:NAME|keyring://service/key`, read from stdin with
+  `--client-key -`, or prompted on a TTY; a plaintext `--client-key` warns. Writes
+  are PVE-only (on PDM, use `pc server realm`). (#26)
 - **Fixed**: `pc <vm|ct|guest> show` no longer flattens `/status/current` into
   the config namespace, where the runtime `cpu` utilization float leaked into (or
   silently shadowed) the config `cpu` model string — same for `balloon`
