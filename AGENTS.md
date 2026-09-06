@@ -54,10 +54,17 @@ for `json`/`yaml`; `Rows`/`Columns` drive `table`/`value`/`csv`.
   new destructive commands.
 
 ### 3. show / config / status have distinct roles
-For guests: `show` = a full snapshot (config **merged with** live status — best
-effort, config keys win); `config` = the raw config only (and `--set` to modify);
-`status` = runtime fields only. Keep these roles distinct when touching them, and
-keep `show`'s status enrichment best-effort so a status hiccup never breaks it.
+For guests: `show` = a full snapshot (raw config at the top level **plus** the
+live `/status/current` object nested under a `status` key); `config` = the raw
+config only (and `--set` to modify); `status` = runtime fields only. Keep these
+roles distinct when touching them, and keep `show`'s status enrichment
+best-effort so a status hiccup never breaks it. The status is **nested, not
+flattened**: `/config` and `/status/current` share several key names with
+different meanings (config `cpu` is the CPU model string, status `cpu` is a
+utilization float; config `balloon` is MiB, status `balloon` is bytes), so
+flattening let one endpoint silently leak into or shadow the other (issue #27).
+Nesting keeps `.cpu` unambiguously the config model and `.status.cpu` the
+utilization — don't reintroduce a flat merge.
 
 ### 4. TLS: trust-on-first-use pinning, never silent insecure
 `pc auth login` probes the server cert (`transport.ProbeServerCert`). A

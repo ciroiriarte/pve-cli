@@ -6,6 +6,13 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: `pc <vm|ct|guest> show` no longer flattens `/status/current` into
+  the config namespace, where the runtime `cpu` utilization float leaked into (or
+  silently shadowed) the config `cpu` model string — same for `balloon`
+  (config MiB vs status bytes). Live status now nests under a dedicated `status`
+  key, so `.cpu` is unambiguously the config model and `.status.cpu` the
+  utilization. This changes the `show` `json`/`yaml` shape. (#27)
+
 ## [0.13.1] - 2026-07-28 — version flag
 
 - **Added**: `pc --version` prints the build version on request, matching the

@@ -97,9 +97,12 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <vmid>",
 		Short: fmt.Sprintf("Show a %s: config plus live status", spec.label),
-		Long: fmt.Sprintf("Shows a complete snapshot of the %s — its configuration merged with live\n"+
-			"runtime status (status, uptime, cpu/mem). Use `config` for the raw config\n"+
-			"(and `--set` to modify it), or `status` for runtime fields only.", spec.label),
+		Long: fmt.Sprintf("Shows a complete snapshot of the %s — its raw configuration plus the live\n"+
+			"runtime status nested under a `status` key (status, uptime, cpu/mem). Config\n"+
+			"keys stay at the top level; keeping runtime fields in their own object means\n"+
+			"the two API responses can never clash (e.g. config `cpu` is the CPU model,\n"+
+			"`status.cpu` is utilization). Use `config` for the raw config (and `--set` to\n"+
+			"modify it), or `status` for runtime fields only.", spec.label),
 		Example: fmt.Sprintf("  pc %s show 100", spec.noun),
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -117,8 +120,12 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			}
 			// Enrich with live status so `show` is a full snapshot — distinct from
 			// `config` (raw config) and `status` (runtime only). Best-effort: a
-			// status hiccup must not break showing the config. Config keys win on
-			// conflict (they're the authoritative definition).
+			// status hiccup must not break showing the config. The live status is
+			// nested under a `status` key rather than flattened in, so the two API
+			// responses can never clash: /config and /status/current share several
+			// key names with different meanings (config `cpu` is the CPU model, a
+			// string; status `cpu` is utilization, a float), and flattening let one
+			// silently leak into or shadow the other (issue #27).
 			if b, berr := guestBase(p, g); berr == nil {
 				statusPath := b + "/status/current"
 				if p.Name() == "pdm" {
@@ -126,12 +133,8 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 				}
 				if body, serr := p.Raw(cmd.Context(), "GET", statusPath, nil); serr == nil {
 					var st map[string]any
-					if protocol.DecodeData(body, &st) == nil {
-						for k, v := range st {
-							if _, ok := cfg[k]; !ok {
-								cfg[k] = v
-							}
-						}
+					if protocol.DecodeData(body, &st) == nil && len(st) > 0 {
+						cfg["status"] = st
 					}
 				}
 			}
