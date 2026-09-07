@@ -1,4 +1,9 @@
 -------------------------------------------------------------------
+Sun Sep 6 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.14.2-1
+
+- review hardening
+
+-------------------------------------------------------------------
 Sun Sep 6 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.14.1-1
 
 - node network & realm fixes

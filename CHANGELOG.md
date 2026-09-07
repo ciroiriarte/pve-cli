@@ -6,6 +6,25 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-09-06 — review hardening
+
+- **Fixed**: repo-wide bug-hunt hardening (multi-model review), verified live:
+  - `pc <vm|ct> unlink` is now confirm-gated (it detaches disks, and `--force`
+    deletes the disk image — data loss); it was the one destructive verb without
+    a gate.
+  - **The client refuses to send credentials over plaintext `http://`** to a
+    non-loopback host — tokens and ticket passwords would otherwise travel in the
+    clear. Loopback http stays allowed for SSH tunnels and tests. Covers both
+    token and ticket auth.
+  - Secrets kept off argv: `pc <vm|ct> agent set-password` gains
+    `--password-ref env:…|keyring://…` / `--password -` (stdin) / TTY prompt, and
+    `pc remote add|update` gains `--token-ref` / `--token -` — a plaintext
+    `--password`/`--token` now warns.
+  - Removed pre-`url.PathEscape` on realm/interface/snapshot API paths that could
+    double-encode (`%2F`→`%252F`); standardized on the transport's encode-once
+    convention.
+  - `ParseUPID` rejects structurally-empty UPIDs (empty node/type).
+
 ## [0.14.1] - 2026-09-06 — node network & realm fixes
 
 - **Fixed**: post-0.14.0 hardening of the new `node network` and `access realm`
