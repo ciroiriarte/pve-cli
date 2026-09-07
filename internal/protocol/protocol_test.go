@@ -29,6 +29,11 @@ func TestParseUPIDRejectsGarbage(t *testing.T) {
 	if _, err := ParseUPID("UPID:too:few"); err == nil {
 		t.Fatal("expected error for malformed UPID")
 	}
+	// Structurally-empty UPID (right field count, empty routing fields) must be
+	// rejected — otherwise polling would hit an empty node/type.
+	if _, err := ParseUPID("UPID:::::::"); err == nil {
+		t.Fatal("expected error for a UPID with empty node/type fields")
+	}
 }
 
 func TestDecodeErrorTranslatesLock(t *testing.T) {

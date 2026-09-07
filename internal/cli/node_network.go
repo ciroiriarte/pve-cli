@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
@@ -76,7 +75,7 @@ func newNodeNetworkShowCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.renderGet(cmd, p, "/nodes/"+args[0]+"/network/"+url.PathEscape(args[1]))
+			return a.renderGet(cmd, p, "/nodes/"+args[0]+"/network/"+args[1])
 		},
 	}
 }
@@ -209,7 +208,7 @@ func newNodeNetworkUpdateCmd(a *app) *cobra.Command {
 			// PVE's network PUT requires `type` even for a partial edit, so fetch
 			// the interface's current type and pass it through (the caller edits
 			// one field like --mtu without having to restate --type).
-			ifpath := "/nodes/" + node + "/network/" + url.PathEscape(iface)
+			ifpath := "/nodes/" + node + "/network/" + iface
 			body, err := p.Raw(cmd.Context(), "GET", ifpath, nil)
 			if err != nil {
 				return fmt.Errorf("read interface %q on %q: %w", iface, node, err)
@@ -277,7 +276,7 @@ func newNodeNetworkDeleteCmd(a *app) *cobra.Command {
 			if err := confirm(a, fmt.Sprintf("delete interface %q on node %q? (staged until apply)", iface, node)); err != nil {
 				return err
 			}
-			if err := rawMutate(cmd.Context(), a, p, "DELETE", "/nodes/"+node+"/network/"+url.PathEscape(iface), nil, "delete iface "+iface, true, 0); err != nil {
+			if err := rawMutate(cmd.Context(), a, p, "DELETE", "/nodes/"+node+"/network/"+iface, nil, "delete iface "+iface, true, 0); err != nil {
 				return err
 			}
 			stagedNudge(node, iface)

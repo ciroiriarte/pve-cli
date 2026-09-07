@@ -2,9 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"net/url"
 
-	"github.com/ciroiriarte/pve-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -136,7 +134,7 @@ func newAccessRealmUpdateCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rawMutate(cmd.Context(), a, p, "PUT", "/access/domains/"+url.PathEscape(realm), params, "update realm "+realm, true, 0)
+			return rawMutate(cmd.Context(), a, p, "PUT", "/access/domains/"+realm, params, "update realm "+realm, true, 0)
 		},
 	}
 	registerRealmFlags(cmd, &issuerURL, &clientID, &comment, &clientKey, &clientKeyRef, &autocreate, &deflt, &set)
@@ -161,7 +159,7 @@ func newAccessRealmDeleteCmd(a *app) *cobra.Command {
 			if err := confirm(a, fmt.Sprintf("delete authentication realm %q?", realm)); err != nil {
 				return err
 			}
-			return rawMutate(cmd.Context(), a, p, "DELETE", "/access/domains/"+url.PathEscape(realm), nil, "delete realm "+realm, true, 0)
+			return rawMutate(cmd.Context(), a, p, "DELETE", "/access/domains/"+realm, nil, "delete realm "+realm, true, 0)
 		},
 	}
 }
@@ -182,39 +180,9 @@ func registerRealmFlags(cmd *cobra.Command, issuerURL, clientID, comment, client
 }
 
 // resolveClientKey turns the --client-key / --client-key-ref inputs into the
-// plaintext secret, keeping it off argv where possible:
-//   - --client-key-ref env:NAME | keyring://service/key  → dereferenced
-//   - --client-key -                                      → read from stdin
-//   - --client-key <value>                                → used as-is, with a warning
-//   - neither, on a TTY                                   → prompted without echo
-func resolveClientKey(cmd *cobra.Command, clientKey, clientKeyRef string) (string, error) {
-	if clientKeyRef != "" {
-		v, err := config.ResolveSecretRef(clientKeyRef)
-		if err != nil {
-			return "", err
-		}
-		if v == "" {
-			return "", fmt.Errorf("--client-key-ref %q resolved to an empty secret", clientKeyRef)
-		}
-		return v, nil
-	}
-	if clientKey == "-" {
-		s, err := promptSecret("")
-		if err != nil {
-			return "", fmt.Errorf("read client key from stdin: %w", err)
-		}
-		return s, nil
-	}
-	if clientKey != "" {
-		fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --client-key leaks to shell history and the process table; prefer --client-key-ref env:… / keyring://… or `--client-key -` (stdin)")
-		return clientKey, nil
-	}
-	// Nothing supplied: prompt on an interactive terminal, else leave empty
-	// (create may be a non-openid realm; the API rejects a missing openid secret
-	// with a clear error). Gate on stdin so `create … > file` still prompts and a
-	// piped/closed stdin never blocks.
-	if isInputTTY() {
-		return promptSecret("OpenID client key (leave empty to skip): ")
-	}
-	return "", nil
+// OIDC client secret via the shared off-argv resolver. Empty is allowed here (a
+// non-openid realm has no client key; the API rejects a missing openid secret
+// with a clear error).
+func resolveClientKey(_ *cobra.Command, clientKey, clientKeyRef string) (string, error) {
+	return resolveSecretInput(clientKey, clientKeyRef, "--client-key", "OpenID client key (leave empty to skip): ")
 }

@@ -57,6 +57,11 @@ func ParseUPID(upid string) (TaskHandle, error) {
 	if len(parts) < 8 {
 		return TaskHandle{}, fmt.Errorf("malformed UPID: %q", upid)
 	}
+	// Guard against structurally-empty UPIDs (e.g. "UPID:::::::"): the routing
+	// fields must actually be present, or polling would hit an empty node/type.
+	if parts[1] == "" || parts[5] == "" {
+		return TaskHandle{}, fmt.Errorf("malformed UPID (empty node or type): %q", upid)
+	}
 	h := TaskHandle{
 		Backend: "pve",
 		Node:    parts[1],

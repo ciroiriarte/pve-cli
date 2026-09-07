@@ -96,6 +96,7 @@ func newRemoteCmd(a *app) *cobra.Command {
 func newRemoteAddCmd(a *app) *cobra.Command {
 	var typ, authID, token, createToken, webURL string
 	var nodes []string
+	var tokenRef string
 	cmd := &cobra.Command{
 		Use:   "add <id>",
 		Short: "Register a new cluster (remote) with PDM",
@@ -107,10 +108,17 @@ func newRemoteAddCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if typ == "" || authID == "" || token == "" || len(nodes) == 0 {
-				return fmt.Errorf("--type, --auth-id, --token and at least one --node are required")
+			if typ == "" || authID == "" || len(nodes) == 0 {
+				return fmt.Errorf("--type, --auth-id and at least one --node are required")
 			}
-			params := url.Values{"id": {args[0]}, "type": {typ}, "authid": {authID}, "token": {token}}
+			tok, err := resolveSecretInput(token, tokenRef, "--token", fmt.Sprintf("API token secret/password for %s: ", authID))
+			if err != nil {
+				return err
+			}
+			if tok == "" {
+				return fmt.Errorf("a token is required (--token, --token-ref, `--token -`, or an interactive prompt)")
+			}
+			params := url.Values{"id": {args[0]}, "type": {typ}, "authid": {authID}, "token": {tok}}
 			params["nodes"] = nodes
 			if createToken != "" {
 				params.Set("create-token", createToken)
@@ -124,7 +132,9 @@ func newRemoteAddCmd(a *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&typ, "type", "pve", "remote type: pve|pbs")
 	cmd.Flags().StringVar(&authID, "auth-id", "", "API token id or user on the remote (e.g. root@pam!pdm)")
-	cmd.Flags().StringVar(&token, "token", "", "API token secret / password")
+	cmd.Flags().StringVar(&token, "token", "", "API token secret / password (use `-` for stdin; prefer --token-ref)")
+	cmd.Flags().StringVar(&tokenRef, "token-ref", "", "resolve the token from env:NAME or keyring://service/key")
+	cmd.MarkFlagsMutuallyExclusive("token", "token-ref")
 	cmd.Flags().StringArrayVar(&nodes, "node", nil, "remote node 'host:port,fingerprint=..' (repeatable)")
 	cmd.Flags().StringVar(&createToken, "create-token", "", "create-token name (optional)")
 	cmd.Flags().StringVar(&webURL, "web-url", "", "web UI URL (optional)")
@@ -132,7 +142,7 @@ func newRemoteAddCmd(a *app) *cobra.Command {
 }
 
 func newRemoteUpdateCmd(a *app) *cobra.Command {
-	var authID, token, webURL string
+	var authID, token, tokenRef, webURL string
 	var nodes, del []string
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -147,8 +157,14 @@ func newRemoteUpdateCmd(a *app) *cobra.Command {
 			if authID != "" {
 				params.Set("authid", authID)
 			}
-			if token != "" {
-				params.Set("token", token)
+			if token != "" || tokenRef != "" {
+				tok, err := resolveSecretInput(token, tokenRef, "--token", "New API token secret/password: ")
+				if err != nil {
+					return err
+				}
+				if tok != "" {
+					params.Set("token", tok)
+				}
 			}
 			if webURL != "" {
 				params.Set("web-url", webURL)
@@ -167,7 +183,9 @@ func newRemoteUpdateCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&authID, "auth-id", "", "API token id or user")
-	cmd.Flags().StringVar(&token, "token", "", "API token secret / password")
+	cmd.Flags().StringVar(&token, "token", "", "API token secret / password (use `-` for stdin; prefer --token-ref)")
+	cmd.Flags().StringVar(&tokenRef, "token-ref", "", "resolve the token from env:NAME or keyring://service/key")
+	cmd.MarkFlagsMutuallyExclusive("token", "token-ref")
 	cmd.Flags().StringArrayVar(&nodes, "node", nil, "replace node list (repeatable)")
 	cmd.Flags().StringArrayVar(&del, "delete", nil, "config key to unset (repeatable)")
 	cmd.Flags().StringVar(&webURL, "web-url", "", "web UI URL")

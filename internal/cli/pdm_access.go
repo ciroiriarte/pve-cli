@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"net/url"
 
 	"github.com/spf13/cobra"
 )
@@ -139,7 +138,7 @@ func newAccessRealmCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "realm", Aliases: []string{"domain"}, Short: "Authentication realms"}
 	cmd.AddCommand(
 		anyGet(a, "list", "List authentication realms", 0, func([]string) string { return "/access/domains" }, "realm", "type", "comment"),
-		anyGet(a, "show <realm>", "Show a realm's config", 1, func(a []string) string { return "/access/domains/" + url.PathEscape(a[0]) }),
+		anyGet(a, "show <realm>", "Show a realm's config", 1, func(a []string) string { return "/access/domains/" + a[0] }),
 		newAccessRealmCreateCmd(a),
 		newAccessRealmUpdateCmd(a),
 		newAccessRealmDeleteCmd(a),

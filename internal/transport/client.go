@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -75,6 +76,9 @@ func New(opt Options) (*Client, error) {
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return nil, fmt.Errorf("transport: BaseURL must be an absolute https URL, got %q", opt.BaseURL)
+	}
+	if err := EnsureSecureURL(u); err != nil {
+		return nil, err
 	}
 	timeout := opt.Timeout
 	if timeout == 0 {
@@ -249,6 +253,29 @@ func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status
 		fmt.Fprintf(stderr, "[pc] -> %d (%d bytes)\n", resp.StatusCode, len(b))
 	}
 	return b, resp.StatusCode, nil
+}
+
+// EnsureSecureURL rejects sending credentials over plaintext http to a
+// non-loopback host — tokens and ticket passwords would travel in the clear.
+// Loopback http stays allowed for local SSH tunnels and the test suite. Shared
+// by the API client and the ticket-login path so neither can leak in cleartext.
+func EnsureSecureURL(u *url.URL) error {
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("transport: refusing to send credentials over %q to %q — use https (loopback http is allowed for tunnels/tests)", u.Scheme, u.Hostname())
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is a loopback address or "localhost",
+// where plaintext http carries no network-exposure risk (tunnels, tests).
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // isIdempotent reports whether method may be safely retried.

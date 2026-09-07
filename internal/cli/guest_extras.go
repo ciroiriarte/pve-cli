@@ -138,6 +138,13 @@ func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 				if ulDisks == "" {
 					return fmt.Errorf("--disks is required (comma-separated, e.g. unused0,scsi1)")
 				}
+				msg := fmt.Sprintf("detach disks %s from %s %s?", ulDisks, spec.label, args[0])
+				if ulForce {
+					msg = fmt.Sprintf("detach AND DELETE the images for disks %s on %s %s? (data loss)", ulDisks, spec.label, args[0])
+				}
+				if err := confirm(a, msg); err != nil {
+					return err
+				}
 				params := map[string][]string{"idlist": {ulDisks}}
 				if ulForce {
 					params["force"] = []string{"1"}
@@ -291,23 +298,36 @@ func newAgentExecCmd(a *app, base guestBaseFn, scope func(*cobra.Command)) *cobr
 }
 
 func newAgentSetPasswordCmd(a *app, base guestBaseFn, scope func(*cobra.Command)) *cobra.Command {
-	var user, password string
+	var user, password, passwordRef string
 	cmd := &cobra.Command{
 		Use: "set-password <vmid>", Short: "Set a guest user's password via the agent", Args: cobra.ExactArgs(1),
+		Long: "Sets a guest OS user's password via the QEMU agent. Keep the password off\n" +
+			"argv (it leaks to shell history and the process table): prefer\n" +
+			"--password-ref env:NAME|keyring://service/key, `--password -` (stdin), or an\n" +
+			"interactive prompt (omit both on a TTY).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, _, b, err := base(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			if user == "" || password == "" {
-				return fmt.Errorf("--user and --password are required")
+			if user == "" {
+				return fmt.Errorf("--user is required")
+			}
+			pw, err := resolveSecretInput(password, passwordRef, "--password", fmt.Sprintf("New password for %s: ", user))
+			if err != nil {
+				return err
+			}
+			if pw == "" {
+				return fmt.Errorf("a password is required (--password, --password-ref, `--password -`, or an interactive prompt)")
 			}
 			return rawMutate(cmd.Context(), a, p, "POST", b+"/agent/set-user-password",
-				map[string][]string{"username": {user}, "password": {password}}, "set guest password", true, 0)
+				map[string][]string{"username": {user}, "password": {pw}}, "set guest password", true, 0)
 		},
 	}
 	scope(cmd)
 	cmd.Flags().StringVar(&user, "user", "", "guest username")
-	cmd.Flags().StringVar(&password, "password", "", "new password")
+	cmd.Flags().StringVar(&password, "password", "", "new password (use `-` for stdin; prefer --password-ref)")
+	cmd.Flags().StringVar(&passwordRef, "password-ref", "", "resolve the password from env:NAME or keyring://service/key")
+	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
 	return cmd
 }

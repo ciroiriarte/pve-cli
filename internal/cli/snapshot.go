@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,7 +138,7 @@ func newSnapshotPruneCmd(a *app) *cobra.Command {
 					continue
 				}
 				label := fmt.Sprintf("delete snapshot %s of %s %d", r.Snapshot, r.Kind, r.VMID)
-				if err := rawMutate(cmd.Context(), a, p, "DELETE", base+"/snapshot/"+url.PathEscape(r.Snapshot), nil, label, true, 0); err != nil {
+				if err := rawMutate(cmd.Context(), a, p, "DELETE", base+"/snapshot/"+r.Snapshot, nil, label, true, 0); err != nil {
 					fmt.Fprintf(stderrWriter(), "%s: %v\n", label, err)
 					failed++
 				}
