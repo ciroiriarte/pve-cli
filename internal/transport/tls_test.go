@@ -107,3 +107,28 @@ func TestIsIdempotent(t *testing.T) {
 		t.Error("idempotency classification wrong")
 	}
 }
+
+// APP-03: the fingerprint-pinning tls.Config must disable session resumption so
+// the VerifyPeerCertificate pin check runs on every handshake (Go skips that
+// callback on resumed sessions).
+func TestPinningDisablesSessionResumption(t *testing.T) {
+	cfg, err := TLSConfig{Fingerprint: "sha256:" + fp32()}.build()
+	if err != nil {
+		t.Fatalf("build pinned config: %v", err)
+	}
+	if !cfg.InsecureSkipVerify || cfg.VerifyPeerCertificate == nil {
+		t.Fatal("expected pinning to set InsecureSkipVerify + VerifyPeerCertificate")
+	}
+	if !cfg.SessionTicketsDisabled {
+		t.Error("pinned config must set SessionTicketsDisabled to force the pin check on every handshake")
+	}
+}
+
+// fp32 returns a valid 32-byte (64-hex) colon-form fingerprint.
+func fp32() string {
+	parts := make([]string, 32)
+	for i := range parts {
+		parts[i] = "ab"
+	}
+	return strings.Join(parts, ":")
+}

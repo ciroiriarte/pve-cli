@@ -70,7 +70,8 @@ func SetValue(path, dotted, value string) error {
 	}
 	cur[keys[len(keys)-1]] = coerceScalar(value)
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// 0700: this directory holds the credential file (see config.Save).
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	b, err := yaml.Marshal(m)

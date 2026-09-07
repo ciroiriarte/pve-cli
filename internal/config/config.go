@@ -95,9 +95,11 @@ func Load(path string) (*File, error) {
 	return &f, nil
 }
 
-// Save writes the config file to path, creating parent directories.
+// Save writes the config file to path, creating parent directories. The
+// directory is created 0700 because it holds the credential file (config.yaml,
+// which may contain an inline plaintext secret); the file itself is 0600.
 func Save(path string, f *File) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	b, err := yaml.Marshal(f)

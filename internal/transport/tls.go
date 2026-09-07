@@ -61,7 +61,11 @@ func (c TLSConfig) build() (*tls.Config, error) {
 			return nil, err
 		}
 		// Pinning: do our own verification against the pinned fingerprint.
+		// Disable session resumption so VerifyPeerCertificate runs on every
+		// handshake — Go skips that callback on resumed sessions, which would
+		// otherwise let a resumed connection bypass the pin check.
 		out.InsecureSkipVerify = true
+		out.SessionTicketsDisabled = true
 		out.VerifyPeerCertificate = pinVerifier(want)
 		return out, nil
 	}
