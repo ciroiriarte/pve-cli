@@ -6,6 +6,20 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-09-06 — security assessment fixes
+
+- **Security**: fixes from a static security assessment (govulncheck + gosec +
+  manual review):
+  - Build the release/CI binaries with a supported Go toolchain (**1.26.6**,
+    was the out-of-support 1.22) so shipped binaries no longer carry unpatched
+    standard-library CVEs; a `govulncheck` gate was added to CI to catch future
+    toolchain/dependency drift.
+  - The config directory is now created `0700` (it holds the `0600` credential
+    file), instead of `0755`.
+  - The TLS fingerprint-pinning path disables session resumption so the pin
+    verifier runs on every handshake (defense-in-depth).
+  - Confirmed clean: no secrets in the tree or across git history.
+
 ## [0.14.2] - 2026-09-06 — review hardening
 
 - **Fixed**: repo-wide bug-hunt hardening (multi-model review), verified live:
