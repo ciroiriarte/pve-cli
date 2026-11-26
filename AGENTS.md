@@ -74,6 +74,11 @@ Non-interactive runs never auto-pin (they print the fingerprint to re-run with
 `--fingerprint`). `InsecureSkipVerify` is used **only** to fetch a cert for
 display/pinning, never to carry credentials — keep it that way. Fingerprint
 format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha256`.
+`--insecure` is an explicit opt-in that warns once on stderr whenever
+credentials cross an unverified connection; `--insecure=false` overrides a
+profile/env `insecure: true`. A configured pin always wins over insecure. The
+API and ticket-login clients refuse redirects (`CheckRedirect`) — PVE/PDM never
+redirect, and following one could downgrade to http or replay the password.
 
 ### 5. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
@@ -97,7 +102,9 @@ PVE node-scoped mgmt command, so it can't nest) and `resources top-entities` /
 ### 7. Onboarding nudges go to stderr, TTY-gated
 Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to
 **stderr** and are gated on `isTTY()` so scripted/CI output stays clean. Never
-emit advisory text on stdout for machine-consumed commands.
+emit advisory text on stdout for machine-consumed commands. Security warnings
+(plaintext secrets on argv or in config, insecure TLS) also go to stderr but are
+**not** TTY-gated — scripts are exactly where they matter.
 
 ### 8. Guest commands route by resolved kind, not the command's spec
 `pc guest <verb>` is type-agnostic: `resolveGuest` looks the vmid up in

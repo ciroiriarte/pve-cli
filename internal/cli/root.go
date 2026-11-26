@@ -26,6 +26,7 @@ type app struct {
 	provider    string
 	tokenID     string
 	secret      string
+	secretRef   string
 	format      string
 	columns     []string
 	noHeaders   bool
@@ -34,6 +35,7 @@ type app struct {
 	fingerprint string
 	debug       bool
 	assumeYes   bool
+	insecureSet func() bool // --insecure given explicitly (so =false overrides profile/env)
 
 	settings *config.Settings
 	prov     provider.Provider
@@ -78,10 +80,11 @@ func (a *app) overrides() config.Overrides {
 		Provider:    a.provider,
 		TokenID:     a.tokenID,
 		Secret:      a.secret,
+		SecretRef:   a.secretRef,
 		Output:      a.format,
 		Fingerprint: a.fingerprint,
 	}
-	if a.insecure {
+	if a.insecure || (a.insecureSet != nil && a.insecureSet()) {
 		ov.Insecure = &a.insecure
 	}
 	return ov
@@ -189,11 +192,22 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Validate global flags early so bad input fails before any network I/O.
+		// NOTE: cobra runs only the nearest PersistentPreRun(E) (hooks aren't
+		// chained by default), so a subcommand defining its own would shadow
+		// this one — silently dropping the --format check and the plaintext
+		// --token-secret warning. Call this hook from it, or don't define one.
 		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 			if a.format != "" {
 				if _, err := output.ParseFormat(a.format); err != nil {
 					return err
 				}
+			}
+			// Runs once per invocation for every command, so provider-free
+			// paths (e.g. `config test-auth --offline`) warn too. Same wording
+			// as resolveSecretInput's warning; the global flag has no `-`
+			// (stdin) form, so point at the ref flag / env var instead.
+			if a.secret != "" {
+				fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --token-secret leaks to shell history and the process table; prefer --token-secret-ref (env:…/keyring://…) or PVE_CLI_TOKEN_SECRET")
 			}
 			return nil
 		},
@@ -206,12 +220,15 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&a.server, "server", "", "Proxmox API base URL (e.g. https://host:8006)")
 	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm (overrides profile)")
 	pf.StringVar(&a.tokenID, "token-id", "", "API token id (user@realm!name)")
-	pf.StringVar(&a.secret, "token-secret", "", "API token secret")
+	pf.StringVar(&a.secret, "token-secret", "", "API token secret (plaintext on argv — prefer --token-secret-ref or PVE_CLI_TOKEN_SECRET)")
+	pf.StringVar(&a.secretRef, "token-secret-ref", "", "resolve the API token secret from env:NAME or keyring://service/key")
+	root.MarkFlagsMutuallyExclusive("token-secret", "token-secret-ref")
 	pf.StringVarP(&a.format, "format", "o", "", "output format: table|json|yaml|csv|value")
 	pf.StringArrayVarP(&a.columns, "column", "c", nil, "select/order output columns (repeatable)")
 	pf.BoolVar(&a.noHeaders, "no-headers", false, "omit table/csv headers")
 	pf.StringVar(&a.sortBy, "sort", "", "sort by column (NAME[:asc|desc])")
 	pf.BoolVar(&a.insecure, "insecure", false, "skip TLS verification (footgun)")
+	a.insecureSet = func() bool { return pf.Changed("insecure") }
 	pf.StringVar(&a.fingerprint, "tls-fingerprint", "", "pin the server cert SHA-256 fingerprint")
 	pf.BoolVar(&a.debug, "debug", false, "log request/response metadata to stderr")
 	pf.BoolVarP(&a.assumeYes, "yes", "y", false, "assume yes for destructive confirmations")

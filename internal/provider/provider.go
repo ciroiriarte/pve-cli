@@ -84,6 +84,10 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		if err != nil {
 			return nil, err
 		}
+		if s.Provider == "pdm" {
+			// PDM uses a colon between token id and secret (like PBS).
+			t.Prefix, t.Sep = "PDMAPIToken", ":"
+		}
 		ap = t
 	case "ticket":
 		hc, err := transport.NewHTTPClient(tlsCfg, 0)
