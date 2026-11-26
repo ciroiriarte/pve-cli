@@ -63,12 +63,12 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install pve-cli
 ```
 
-> Debian 12 and Ubuntu 22.04 are not packaged (their stock Go < 1.22); build
+> Debian 12 and Ubuntu 22.04 are not packaged (their stock Go < 1.26); build
 > [from source](#from-source) there.
 
 ### From source
 
-Requires Go ≥ 1.22.
+Requires Go ≥ 1.26.
 
 ```bash
 make build      # produces ./pc   (or: go build -o pc ./cmd/pc)

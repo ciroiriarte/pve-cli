@@ -6,11 +6,18 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
-- **Docs**: `packaging/obs/README.md` records why the `go 1.22.0` floor and the
-  `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which Go
-  floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,
-  19 module-level, none reaching `pc`), the OBS steps to raise the floor, and the
-  re-check rule (#46).
+- **Changed**: building pve-cli now requires **Go 1.26** (`go.mod` declares
+  `go 1.26.0`, up from 1.22). OBS packages build with Go 1.26 or later on every
+  target: Debian 13 and Ubuntu 24.04 use `golang-1.26-go` (from
+  `Debian:13/backports` and `Ubuntu:24.04/universe-update`), Leap 15.6 uses
+  `devel:languages:go`. Prebuilt binaries and packages are unaffected at
+  runtime (#46).
+- **Security**: `golang.org/x/net` bumped from v0.35.0 to v0.63.0 (with
+  `golang.org/x/sys` v0.50.0 and `golang.org/x/term` v0.48.0). This clears
+  every advisory govulncheck reported against them, none of which reached
+  `pc`: GO-2025-3503, GO-2025-3595, GO-2026-4440, GO-2026-4441, GO-2026-4918,
+  GO-2026-5024 (x/sys), GO-2026-5025 to 5030, GO-2026-5942, GO-2026-6603,
+  6610, 6611, 6612, 6617, GO-2026-6860 and GO-2026-6866 (#46).
 - **Security**: GitHub Actions in `ci.yml` and `release.yml` (`actions/checkout`,
   `actions/setup-go`, `goreleaser/goreleaser-action`) are pinned to full commit
   SHAs instead of mutable tags, and Dependabot (`github-actions`, weekly) keeps

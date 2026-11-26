@@ -5,7 +5,7 @@ Thanks for helping! This is an unofficial Proxmox VE/PDM client (see
 
 ## Build, test, lint
 
-Requires Go ≥ 1.22.
+Requires Go ≥ 1.26.
 
 ```bash
 make build    # ./pc

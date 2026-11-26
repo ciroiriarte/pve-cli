@@ -26,12 +26,21 @@ and install the binary, `pc*.1` man pages, and bash/zsh/fish completions.
 | openSUSE Slowroll | `openSUSE_Slowroll` | `openSUSE:Slowroll` | `.rpm` |
 | openSUSE Tumbleweed | `openSUSE_Tumbleweed` | `openSUSE:Factory` | `.rpm` |
 
-All build for x86_64 + aarch64 (Slowroll x86_64 only). The Leap repos layer
-`devel:languages:go` first so a recent Go toolchain is available.
+All build for x86_64 + aarch64 (Slowroll x86_64 only). The build needs Go
+≥ 1.26 (`go.mod` declares `go 1.26.0`), so three repos layer an extra path in
+front of the base distro (see [Go floor](#go-floor-go-1260)):
+
+| Repository | Extra path(s) | Go used |
+|---|---|---|
+| `Debian_13` | `Debian:13/backports` | `golang-1.26-go` |
+| `xUbuntu_24.04` | `Ubuntu:24.04/universe-update`, `Ubuntu:24.04/update` | `golang-1.26-go` |
+| `openSUSE_Leap_15.6` | `devel:languages:go/SLE_15_SP6` | `go1.2x` via `go >= 1.26` |
+| `openSUSE_Leap_16.0` | `devel:languages:go/16.0` | `go1.2x` via `go >= 1.26` |
 
 **Excluded:** Debian 12 and Ubuntu 22.04 — stock Go is older than the required
-1.22 and there is no Go side-repo for deb. (Rocky uses `golang` from base;
-openSUSE uses `devel:languages:go`.)
+1.26 and the repos are not enabled. (`Ubuntu:22.04/universe-update` does carry
+`golang-1.26-go`, so Ubuntu 22.04 could be added with the same layering; not
+done or tested.)
 
 End-user install commands per distro: see [`../../docs/install.md`](../../docs/install.md).
 
@@ -66,93 +75,65 @@ Then run `pc --help`.
 
 - **License**: Apache-2.0 (`LICENSE` + `NOTICE` at the repo root); the spec ships
   `%license LICENSE` and `debian/copyright` references `/usr/share/common-licenses/Apache-2.0`.
-- The Debian `golang-go (>= 2:1.22~)` build-dep requires the distro to ship Go
-  ≥ 1.22 (true for the targeted releases). For older bases, switch to the OBS
-  `go1.x` images.
+- The Debian build-dep is `golang-1.26-go | golang-go (>= 2:1.26~)`, and
+  `debian/rules` puts `/usr/lib/go-1.26/bin` first on `PATH` (where the stock
+  `golang-go` is already ≥ 1.26 that dir is absent and `/usr/bin/go` is used).
+  When raising the floor again, bump both together.
 - Bump `_service` `revision` and `debian/changelog` on each release.
 
-## Go floor (`go 1.22.0`) and the golang.org/x/net pin
+## Go floor (`go 1.26.0`)
 
-`go.mod` stays at `go 1.22.0` and `golang.org/x/net` at v0.35.0 (#46). This is
-a deliberate hold, not a hard limit: every target can reach a newer Go, but only
-after OBS project-meta changes (below).
+`go.mod` declares `go 1.26.0` with no `toolchain` line, so the offline OBS
+build never tries to download a toolchain; the distro Go must be ≥ 1.26.
+The floor was raised from 1.22 in #46 so `golang.org/x/net` could move from
+v0.35.0 (the last release compatible with Go 1.22) to the latest (v0.63.0,
+which needs Go 1.26). That cleared every x/net advisory govulncheck reported
+(1 package-level, 18 module-level; plus x/sys GO-2026-5024 via x/sys v0.50.0):
 
-### What each target resolves today vs. what is reachable
-
-Checked 2026-11 with `osc buildinfo` and by listing the repos' published packages.
-
-| Target | Resolved today (current repo paths) | Reachable by adding repo paths |
+| Advisory | Fixed in | Needs Go |
 |---|---|---|
-| Debian 13 | golang-go 1.24.4 (`Debian:13/standard`) | `Debian:13/backports`: `golang-1.25-go`, `golang-1.26-go`, `golang-1.27-go` (x86_64 and aarch64) |
-| Ubuntu 24.04 | golang-go 1.22.2 (`Ubuntu:24.04/standard`) | `Ubuntu:24.04/universe-update`: `golang-1.25-go` 1.25.14 and `golang-1.26-go` 1.26.8 (x86_64 and aarch64); 1.23/1.24 also appear there |
-| Leap 15.6 | go1.22.2 (`openSUSE:Leap:15.6/standard`; the other path entry is `deleted`) | `devel:languages:go/SLE_15_SP6`: `go1.23` to `go1.27` (x86_64 and aarch64) |
-| Leap 16.0, Tumbleweed, Slowroll, Rocky 9/10 | Go 1.27 | already there |
+| GO-2025-3503 (`x/net/proxy`) | v0.36.0 | 1.23 |
+| GO-2025-3595 | v0.38.0 | 1.23 |
+| GO-2026-4440, GO-2026-4441 | v0.45.0 | 1.24 |
+| GO-2026-4918 | v0.53.0 | 1.25 |
+| GO-2026-5025, 5027, 5028, 5029, 5030 | v0.55.0 | 1.25 |
+| GO-2026-5942 | v0.56.0 | 1.25 |
+| GO-2026-5026 | v0.57.0 | 1.25 |
+| GO-2026-6603, 6610, 6611, 6612, 6617 | v0.60.0 | 1.26 |
+| GO-2026-6860, GO-2026-6866 | v0.62.0 | 1.26 |
 
-The highest floor every target can reach with those paths added is **Go 1.26**
-(limited by Ubuntu 24.04; Debian 13 and Leap 15.6 reach 1.27).
+### Go per target
 
-### x/net: what a higher floor fixes
+Checked 2026-11 with OBS builds of the branch (build logs) and repo listings.
+Without the extra paths above, Debian 13 resolves golang-go 1.24.4, Ubuntu
+24.04 golang-go 1.22.2 and Leap 15.6 go1.22.2, all too old.
 
-`go` directive required by x/net: v0.35 needs 1.18, v0.36-v0.43 need 1.23,
-v0.44-v0.50 need 1.24, v0.51-v0.58 need 1.25, v0.59-v0.63 need 1.26.
+| Target | Go source | Highest Go reachable |
+|---|---|---|
+| Debian 13 | `Debian:13/backports` `golang-1.26-go` | 1.27 (`golang-1.27-go`) |
+| Ubuntu 24.04 | `Ubuntu:24.04/universe-update` `golang-1.26-go` 1.26.8 | 1.26 |
+| Leap 15.6 | `devel:languages:go/SLE_15_SP6` | 1.27 |
+| Leap 16.0, Tumbleweed, Slowroll, Rocky 9/10 | base / existing paths | 1.27 |
 
-Scope: x/net advisories govulncheck reports for this module (CI toolchain: `go run
-golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...` on Go 1.26.11, 2026-11). Result:
-0 affecting `pc`, 1 package-level (imported, not called) and 19 module-level
-(required only), of which 18 are x/net (the other is x/sys GO-2026-5024).
-Only GO-2025-3503 is package-level; the rest are module-level. Classification
-depends on the Go toolchain used for the scan.
+Ubuntu 24.04 caps the floor at **1.26**. Raising it to 1.27 needs a
+`golang-1.27-go` there first.
 
-| Advisory | Level | Fixed in | Needs Go |
-|---|---|---|---|
-| GO-2025-3503 (`x/net/proxy`) | package | v0.36.0 | 1.23 |
-| GO-2025-3595 | module | v0.38.0 | 1.23 |
-| GO-2026-4440, GO-2026-4441 | module | v0.45.0 | 1.24 |
-| GO-2026-4918 | module | v0.53.0 | 1.25 |
-| GO-2026-5025, 5027, 5028, 5029, 5030 | module | v0.55.0 | 1.25 |
-| GO-2026-5942 | module | v0.56.0 | 1.25 |
-| GO-2026-5026 | module | v0.57.0 | 1.25 |
-| GO-2026-6603, 6610, 6611, 6612, 6617 | module | v0.60.0 | 1.26 |
-| GO-2026-6860, GO-2026-6866 | module | v0.62.0 | 1.26 |
+### Raising the floor again
 
-Fix versions and Go floors were checked against https://vuln.go.dev and the x/net
-`go.mod` files. A higher floor fixes some advisories, not all: 1.23 reaches
-v0.43, 1.24 reaches v0.50, 1.25 reaches v0.58, and only 1.26 clears every row.
-
-### Path to raising the floor (maintainer decision; edits the OBS project)
-
-1. Pick the floor. 1.26 clears all the advisories above; 1.25 is the smaller step.
-2. Edit the project meta (`osc meta prj -e home:ciriarte:pve-cli`):
-   - `xUbuntu_24.04`: add `<path project="Ubuntu:24.04" repository="universe-update"/>`.
-   - `Debian_13`: add `<path project="Debian:13" repository="backports"/>`.
-   - `openSUSE_Leap_15.6`: replace the `deleted` path with
-     `<path project="devel:languages:go" repository="SLE_15_SP6"/>`.
-3. Packaging:
-   - `debian/control` and `pve-cli.dsc`: `Build-Depends: ..., golang-1.26-go`
-     (replace `golang-go (>= 2:1.22~)`); in `debian/rules` add
-     `export PATH := /usr/lib/go-1.26/bin:$(PATH)`.
-   - `pve-cli.spec`: on SUSE `BuildRequires: go1.26` (replace `go >= 1.22`);
-     the Rocky branch keeps `golang >= 1.26`.
-4. `go.mod`: raise the `go` directive, bump `golang.org/x/net` to the newest
-   version compatible with the floor, `go mod vendor`, run govulncheck, and
-   build with `GOTOOLCHAIN=go1.26.x`.
-5. Verify with `osc buildinfo <repo> <arch> <spec|dsc>` for every repository in
-   the matrix before committing to OBS.
-
-Not yet tested: the Debian and Leap path additions and the Build-Depends/PATH
-changes were checked only by listing the repos' packages, not built.
+1. Confirm every target ships the new Go (`osc buildinfo <repo> <arch>
+   <spec|dsc>`; for deb, list `golang-1.NN-go` in the extra paths).
+2. `pve-cli.spec`: `go >= 1.NN` (SUSE) and `golang >= 1.NN` (Rocky).
+3. `debian/control` and `pve-cli.dsc`: `golang-1.NN-go | golang-go (>= 2:1.NN~)`;
+   `debian/rules`: `/usr/lib/go-1.NN/bin` on `PATH`.
+4. `go.mod`: raise the `go` directive (no `toolchain` line), bump deps,
+   `go mod vendor`, build with `GOTOOLCHAIN=go1.NN.0`, run govulncheck.
+5. Test on an OBS branch (`osc branch home:ciriarte:pve-cli pve-cli`, point
+   `_service` `revision` at the git branch) until all repos build, before the
+   release that ships it.
 
 ### Re-check
 
 Re-run the `osc buildinfo` checks above on each minor release (as part of the
-release step) and revisit the floor if the results change.
-
-Proxy reachability is separate. GO-2025-3503 becomes reachable if code calls
-the x/net symbols `proxy.Dial`, `proxy.FromEnvironment`,
-`proxy.FromEnvironmentUsing`, `PerHost.*`, httpproxy `config.useProxy` or
-`domainMatch.match` (non-exhaustive; see
-https://pkg.go.dev/vuln/GO-2025-3503).
-gorilla/websocket uses `proxy.FromURL`, which is not among them, and
-`http.ProxyFromEnvironment` is the stdlib half of that advisory, fixed by the
-toolchain. CI runs govulncheck on pull requests and on pushes to `main` and `v*` tags, and
-fails on reachable findings.
+release step) and revisit the floor if the results change. CI runs govulncheck
+on pull requests and on pushes to `main` and `v*` tags, and fails on reachable
+findings.
