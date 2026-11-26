@@ -54,6 +54,9 @@ func (a *app) Provider() (provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.AuthType == "ticket" {
+		s.OTPPrompt = otpPrompter(s.User)
+	}
 	a.settings = s
 	if a.format == "" {
 		a.format = s.Output

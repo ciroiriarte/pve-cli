@@ -31,6 +31,12 @@ type Settings struct {
 	RateBurst    int
 	ProfileName  string
 	ContextName  string
+	// OTP is a two-factor (TOTP) code for ticket auth, from PVE_CLI_OTP.
+	OTP string
+	// OTPPrompt, when non-nil, interactively asks for a two-factor code if
+	// the server answers a ticket login with a TFA challenge. Not read from
+	// config: the CLI injects it when stdin is a terminal.
+	OTPPrompt func() (string, error)
 }
 
 // Overrides carries explicit flag values (highest precedence). Empty string /
@@ -134,6 +140,7 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	s.User = firstNonEmpty(os.Getenv("PVE_CLI_USER"), s.User)
 	s.TLSFinger = firstNonEmpty(os.Getenv("PVE_CLI_TLS_FINGERPRINT"), s.TLSFinger)
 	s.Output = firstNonEmpty(os.Getenv("PVE_CLI_OUTPUT"), s.Output)
+	s.OTP = os.Getenv("PVE_CLI_OTP")
 	if v := os.Getenv("PVE_CLI_INSECURE"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			s.TLSInsecure = b

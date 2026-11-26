@@ -22,6 +22,25 @@ surface may change between minor releases.
   macOS), trusting only 0600 files you own in a 0700 directory you own.
   Tag-name completion now uses the same bounded, cached path. See *Shell
   completion* in `docs/install.md` (#23).
+- **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login
+  --user` takes `--otp <code>`, `--otp-ref env:NAME|keyring://…`, or
+  `PVE_CLI_OTP`, and prompts for the code on a terminal when the server answers
+  with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
+  given or on a terminal, `auth login` now verifies the ticket login, so a wrong
+  password or code fails (exit 2) without saving the profile. The TFA-confirmed
+  ticket is cached in the OS keyring and renewed once it is an hour old (by
+  later commands, and in memory by a long-running one), so commands don't need
+  a code until it lapses (~2h idle); then they prompt on a terminal, use
+  `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.
+  A server error during renewal keeps the still-valid ticket. A cached ticket
+  the server rejects on first use is dropped and the command logs in again once
+  (not for 401s from the auth endpoints themselves, e.g. `pc raw` on
+  `/access/ticket`). `pc config test-auth` reports the cached-ticket state.
+  `auth login` now refuses a non-loopback `http://` server before sending
+  anything, and warns when a recovery key is passed on argv. A rejected ticket
+  login is now an auth error (exit 2) and is not retried; a 5xx during login is
+  retried for read (GET) requests only, like other transient errors. Its
+  message no longer includes server-provided text.
 - **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
   create <id> --keep N [--label L]` takes a pc-managed snapshot named
   `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`) with the ownership
