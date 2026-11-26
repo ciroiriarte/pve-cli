@@ -1,4 +1,9 @@
 -------------------------------------------------------------------
+Thu Nov 26 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.16.0-1
+
+- PBS provider, TOTP, node evacuate & cluster check
+
+-------------------------------------------------------------------
 Wed Nov 25 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.15.0-1
 
 - PDM token auth, json contract & hardening
