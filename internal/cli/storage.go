@@ -279,6 +279,10 @@ func newStorageUploadCmd(a *app) *cobra.Command {
 			if checksum != "" && checksumAlgo == "" {
 				return fmt.Errorf("--checksum-algorithm is required with --checksum (md5|sha1|sha256|sha512)")
 			}
+			if checksumAlgo != "" && checksum == "" {
+				// Otherwise the algorithm is silently dropped and nothing is verified.
+				return fmt.Errorf("--checksum is required with --checksum-algorithm")
+			}
 
 			f, err := os.Open(srcPath)
 			if err != nil {

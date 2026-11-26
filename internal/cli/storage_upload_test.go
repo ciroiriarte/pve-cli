@@ -120,6 +120,20 @@ func TestStorageUploadChecksumFieldOrder(t *testing.T) {
 	}
 }
 
+// --checksum-algorithm alone must not be silently dropped (no request made).
+func TestStorageUploadAlgorithmWithoutChecksum(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("no request should be made when --checksum is missing")
+	}))
+	defer srv.Close()
+	iso := filepath.Join(t.TempDir(), "test.iso")
+	_ = os.WriteFile(iso, []byte("x"), 0o644)
+	_, err := runCLI(t, withCreds(srv, "storage", "content", "upload", "local", iso, "--node", "pve-01", "--checksum-algorithm", "sha256")...)
+	if err == nil || !strings.Contains(err.Error(), "--checksum is required") {
+		t.Fatalf("expected --checksum required error, got %v", err)
+	}
+}
+
 // Unknown extension without --content is a clear up-front error (no request made).
 func TestStorageUploadRequiresContentTypeForUnknownExt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
