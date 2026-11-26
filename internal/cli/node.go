@@ -59,7 +59,11 @@ func newNodeShowCmd(a *app) *cobra.Command {
 			}
 			for _, n := range nodes {
 				if n.Name == args[0] {
-					return a.render(nodesTable([]domain.Node{n}))
+					// Singular read: json/yaml emit the object, not a
+					// one-element array (AGENTS.md §1, #35).
+					t := nodesTable([]domain.Node{n})
+					t.Raw = n
+					return a.render(t)
 				}
 			}
 			return fmt.Errorf("node %q not found", args[0])

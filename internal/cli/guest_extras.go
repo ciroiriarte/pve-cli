@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -101,7 +103,7 @@ func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 		move := &cobra.Command{
 			Use: "move-disk <vmid>", Short: "Move a VM disk to another storage", Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				p, _, b, err := base(cmd, args[0])
+				p, g, b, err := base(cmd, args[0])
 				if err != nil {
 					return err
 				}
@@ -113,6 +115,10 @@ func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 					params["format"] = []string{mdFormat}
 				}
 				if mdDelete {
+					if err := confirm(a, fmt.Sprintf("move disk %s of %s %d (%s) on %s to %s and DELETE the source volume?",
+						mdDisk, spec.label, g.VMID, g.Name, g.Node, mdStorage)); err != nil {
+						return err
+					}
 					params["delete"] = []string{"1"}
 				}
 				return rawMutate(cmd.Context(), a, p, "POST", b+"/move_disk", params,
@@ -187,6 +193,10 @@ func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 				}
 				params := map[string][]string{"volume": {mvVolume}, "storage": {mvStorage}}
 				if mvDelete {
+					if err := confirm(a, fmt.Sprintf("move volume %s of ct %d (%s) on %s to %s and DELETE the source volume?",
+						mvVolume, g.VMID, g.Name, g.Node, mvStorage)); err != nil {
+						return err
+					}
 					params["delete"] = []string{"1"}
 				}
 				return rawMutate(cmd.Context(), a, p, "POST", b+"/move_volume", params,
@@ -218,7 +228,7 @@ func newGuestCloudInitCmd(a *app, spec guestSpec, base guestBaseFn, scope func(*
 			case regenerate:
 				return rawMutate(cmd.Context(), a, p, "PUT", b+"/cloudinit", nil, fmt.Sprintf("regenerate cloud-init for VM %d", g.VMID), true, 0)
 			case dumpType != "":
-				return a.renderGet(cmd, p, b+"/cloudinit/dump?type="+dumpType)
+				return a.renderGetQuery(cmd, p, b+"/cloudinit/dump", url.Values{"type": {dumpType}})
 			default:
 				return a.renderGet(cmd, p, b+"/cloudinit", "key", "old", "new")
 			}
@@ -247,15 +257,21 @@ func newGuestAgentCmd(a *app, spec guestSpec, base guestBaseFn, scope func(*cobr
 		scope(c)
 		return c
 	}
-	post := func(use, short, suffix string) *cobra.Command {
+	// post issues an agent command; disruptive ones (gated) confirm first.
+	post := func(use, short, suffix string, gated bool) *cobra.Command {
 		c := &cobra.Command{
 			Use: use, Short: short, Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				p, _, b, err := base(cmd, args[0])
+				p, g, b, err := base(cmd, args[0])
 				if err != nil {
 					return err
 				}
-				return rawMutate(cmd.Context(), a, p, "POST", b+"/agent/"+suffix, nil, suffix, true, 0)
+				if gated {
+					if err := confirm(a, fmt.Sprintf("%s %s %d (%s) on %s via the guest agent?", suffix, spec.label, g.VMID, g.Name, g.Node)); err != nil {
+						return err
+					}
+				}
+				return agentPost(cmd, a, p, b+"/agent/"+suffix, nil, suffix)
 			},
 		}
 		scope(c)
@@ -266,9 +282,9 @@ func newGuestAgentCmd(a *app, spec guestSpec, base guestBaseFn, scope func(*cobr
 		read("osinfo <vmid>", "Guest OS info", "get-osinfo"),
 		read("users <vmid>", "Logged-in guest users", "get-users", "user", "login-time"),
 		read("info <vmid>", "Guest agent info", "info"),
-		post("ping <vmid>", "Ping the guest agent", "ping"),
-		post("fstrim <vmid>", "Trim guest filesystems", "fstrim"),
-		post("shutdown <vmid>", "Shut down via the guest agent", "shutdown"),
+		post("ping <vmid>", "Ping the guest agent", "ping", false),
+		post("fstrim <vmid>", "Trim guest filesystems", "fstrim", false),
+		post("shutdown <vmid>", "Shut down via the guest agent", "shutdown", true),
 		newAgentExecCmd(a, base, scope),
 		newAgentSetPasswordCmd(a, base, scope),
 	)
@@ -320,8 +336,8 @@ func newAgentSetPasswordCmd(a *app, base guestBaseFn, scope func(*cobra.Command)
 			if pw == "" {
 				return fmt.Errorf("a password is required (--password, --password-ref, `--password -`, or an interactive prompt)")
 			}
-			return rawMutate(cmd.Context(), a, p, "POST", b+"/agent/set-user-password",
-				map[string][]string{"username": {user}, "password": {pw}}, "set guest password", true, 0)
+			return agentPost(cmd, a, p, b+"/agent/set-user-password",
+				map[string][]string{"username": {user}, "password": {pw}}, "set guest password")
 		},
 	}
 	scope(cmd)
@@ -330,4 +346,62 @@ func newAgentSetPasswordCmd(a *app, base guestBaseFn, scope func(*cobra.Command)
 	cmd.Flags().StringVar(&passwordRef, "password-ref", "", "resolve the password from env:NAME or keyring://service/key")
 	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
 	return cmd
+}
+
+// agentPost issues a guest-agent POST. PVE wraps agent replies as
+// {"result": ...}: the wrapper is unwrapped, an empty/null result (ping,
+// shutdown, set-user-password) prints nothing, and anything else is rendered —
+// the native value for json/yaml, and fstrim's per-path report as a table.
+func agentPost(cmd *cobra.Command, a *app, p provider.Provider, path string, params url.Values, label string) error {
+	body, err := p.Raw(cmd.Context(), "POST", path, params)
+	if err != nil {
+		return err
+	}
+	data, err := mutationData(body, label)
+	if err != nil {
+		return err
+	}
+	if m, ok := data.(map[string]any); ok {
+		if r, has := m["result"]; has {
+			data = r
+		}
+	}
+	switch v := data.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		if len(v) == 0 {
+			return nil
+		}
+		if paths, ok := v["paths"].([]any); ok && len(v) == 1 {
+			rows := make([]map[string]any, 0, len(paths))
+			for _, e := range paths {
+				row, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				// Human view: byte counts as sizes (json/yaml keep raw numbers).
+				disp := make(map[string]any, len(row))
+				for k, val := range row {
+					if n, isNum := val.(float64); isNum && (k == "trimmed" || k == "minimum") {
+						val = humanBytes(int64(n))
+					}
+					disp[k] = val
+				}
+				rows = append(rows, disp)
+			}
+			t := mapsTable(rows, "path", "trimmed", "minimum")
+			t.Raw = v
+			return a.render(t)
+		}
+	case []any:
+		if len(v) == 0 {
+			return nil
+		}
+	}
+	wrapped, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		return err
+	}
+	return a.renderBody(wrapped)
 }

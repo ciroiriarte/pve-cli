@@ -24,7 +24,7 @@ func oneVMServer(t *testing.T, capture map[string]*url.Values) *httptest.Server 
 		_ = r.ParseForm()
 		v := r.PostForm
 		capture["setpw"] = &v
-		w.Write([]byte(`{"data":null}`))
+		w.Write([]byte(`{"data":{"result":{}}}`)) // real PVE agent reply shape
 	})
 	return httptest.NewServer(mux)
 }

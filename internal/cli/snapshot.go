@@ -20,16 +20,16 @@ import (
 // the native JSON object emitted by the cluster-wide snapshot commands — keep it
 // a flat typed object (decision #1) so callers can `jq '.[].age_seconds'`.
 type snapshotRow struct {
-	VMID        int    `json:"vmid"`
-	Guest       string `json:"guest,omitempty"` // guest name
-	Kind        string `json:"kind"`            // vm | ct
-	Node        string `json:"node,omitempty"`
-	Remote      string `json:"remote,omitempty"` // PDM only
-	Snapshot    string `json:"snapshot"`         // snapshot name
-	Snaptime    int64  `json:"snaptime,omitempty"`
-	AgeSeconds  int64  `json:"age_seconds,omitempty"`
-	Parent      string `json:"parent,omitempty"`
-	Description string `json:"description,omitempty"`
+	VMID        int    `json:"vmid" yaml:"vmid"`
+	Guest       string `json:"guest,omitempty" yaml:"guest,omitempty"` // guest name
+	Kind        string `json:"kind" yaml:"kind"`                       // vm | ct
+	Node        string `json:"node,omitempty" yaml:"node,omitempty"`
+	Remote      string `json:"remote,omitempty" yaml:"remote,omitempty"` // PDM only
+	Snapshot    string `json:"snapshot" yaml:"snapshot"`                 // snapshot name
+	Snaptime    int64  `json:"snaptime,omitempty" yaml:"snaptime,omitempty"`
+	AgeSeconds  int64  `json:"age_seconds,omitempty" yaml:"age_seconds,omitempty"`
+	Parent      string `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 // newSnapshotCmd is the cluster-wide snapshot group: an inventory of every

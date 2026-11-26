@@ -205,7 +205,7 @@ func newStorageCmd(a *app) *cobra.Command {
 			}
 			path := fmt.Sprintf("/nodes/%s/storage/%s/prunebackups", pruneNode, args[0])
 			if !pruneApply {
-				return a.renderGet(cmd, p, path+"?"+q.Encode(), "volid", "type", "vmid", "mark")
+				return a.renderGetQuery(cmd, p, path, q, "volid", "type", "vmid", "mark")
 			}
 			if err := confirm(a, fmt.Sprintf("apply pruning on %s/%s (deletes old backups)?", pruneNode, args[0])); err != nil {
 				return err
@@ -331,19 +331,14 @@ func newStorageUploadCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The upload runs as a task; reuse the shared wait/print UX.
-			var upid string
-			if err := protocol.DecodeData(body, &upid); err != nil || upid == "" {
+			// The upload runs as a task; reuse rawMutate's strict response
+			// handling and the shared wait/print UX (#32).
+			label := fmt.Sprintf("upload %s -> %s", name, storage)
+			if data, err := mutationData(body, label); err == nil && (data == nil || data == "") {
 				fmt.Fprintf(stderrWriter(), "uploaded %s to %s\n", name, storage)
 				return nil
 			}
-			h, err := parseTaskArg(upid)
-			if err != nil {
-				return nil
-			}
-			label := fmt.Sprintf("upload %s -> %s", name, storage)
-			h.Display = label
-			return finishTask(cmd.Context(), a, p, h, wait && !noWait, timeout, label)
+			return handleMutationResponse(cmd.Context(), a, p, body, label, wait && !noWait, timeout)
 		},
 	}
 	cmd.Flags().StringVar(&node, "node", "", "node to upload through (optional; defaults to an online node)")

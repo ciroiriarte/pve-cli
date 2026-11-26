@@ -17,15 +17,15 @@ type TaskHandle struct {
 
 // TaskStatus is the polled state of a task.
 type TaskStatus struct {
-	UPID       string `json:"upid"`
-	Node       string `json:"node"`
-	Type       string `json:"type"`
-	ID         string `json:"id"`
-	User       string `json:"user"`
-	Status     string `json:"status"`     // "running" | "stopped"
-	ExitStatus string `json:"exitstatus"` // "OK" or an error string when stopped
-	StartTime  int64  `json:"starttime"`
-	PID        int    `json:"pid"`
+	UPID       string `json:"upid" yaml:"upid"`
+	Node       string `json:"node" yaml:"node"`
+	Type       string `json:"type" yaml:"type"`
+	ID         string `json:"id" yaml:"id"`
+	User       string `json:"user" yaml:"user"`
+	Status     string `json:"status" yaml:"status"`         // "running" | "stopped"
+	ExitStatus string `json:"exitstatus" yaml:"exitstatus"` // "OK" or an error string when stopped
+	StartTime  int64  `json:"starttime" yaml:"starttime"`
+	PID        int    `json:"pid" yaml:"pid"`
 }
 
 // LogLine is one line of a task's log output.

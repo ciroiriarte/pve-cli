@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -46,25 +47,65 @@ func resolveGuestBase(cmd *cobra.Command, a *app, spec guestSpec, idArg, node, r
 }
 
 // rawMutate issues a mutating API call via provider.Raw and, when the response
-// is a UPID, drives the shared task-wait UX. Non-task mutations (e.g. config
-// updates that return null) simply succeed.
+// is a UPID, drives the shared task-wait UX. Only an explicit `data: null` (or
+// `data: ""`) means synchronous success. A malformed envelope, one without a
+// `data` member, or a task id that fails to parse is an error (#32); any other
+// payload (e.g. the object returned by token create) is rendered rather than
+// dropped (#31).
 func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path string, params url.Values, label string, wait bool, timeout int) error {
 	body, err := p.Raw(ctx, method, path, params)
 	if err != nil {
 		return err
 	}
-	var upid string
-	if err := protocol.DecodeData(body, &upid); err != nil || upid == "" {
+	return handleMutationResponse(ctx, a, p, body, label, wait, timeout)
+}
+
+// handleMutationResponse applies rawMutate's strict response handling to an
+// already-fetched mutation body (shared with `storage upload`).
+func handleMutationResponse(ctx context.Context, a *app, p provider.Provider, body []byte, label string, wait bool, timeout int) error {
+	data, err := mutationData(body, label)
+	if err != nil {
+		return err
+	}
+	upid, isString := data.(string)
+	switch {
+	case data == nil || (isString && upid == ""):
 		return nil // synchronous mutation, nothing to wait on
+	case !isString:
+		return a.renderBody(body)
 	}
 	// parseTaskArg handles both a bare PVE "UPID:..." and the PDM-proxied
 	// "pve:<remote>!UPID:..." form (carrying the remote needed to poll it).
 	h, err := parseTaskArg(upid)
 	if err != nil {
-		return nil // response was not a task id
+		if strings.Contains(upid, "UPID:") {
+			return fmt.Errorf("%s: malformed task id in response: %w", label, err)
+		}
+		// A plain, non-task string result: show it rather than drop it.
+		return a.renderBody(body)
 	}
 	h.Display = label
 	return finishTask(ctx, a, p, h, wait, timeout, label)
+}
+
+// mutationData decodes a mutation response envelope's `data`. PVE and PDM
+// always wrap success in {"data":...} (null for synchronous calls), so an
+// empty body, invalid JSON, or an envelope without a `data` member (e.g. `{}`
+// or `{"message":"upstream failure"}`) is an unexpected response, not success.
+func mutationData(body []byte, label string) (any, error) {
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("%s: unexpected response: %w", label, err)
+	}
+	raw, ok := env["data"]
+	if !ok {
+		return nil, fmt.Errorf("%s: unexpected response (no data): %s", label, strings.TrimSpace(string(body)))
+	}
+	var data any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, fmt.Errorf("%s: unexpected response: %w", label, err)
+	}
+	return data, nil
 }
 
 // kindEndpoint maps a guest kind to its API path segment ("qemu" | "lxc").

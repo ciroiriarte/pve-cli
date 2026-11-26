@@ -6,6 +6,35 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a
+  JSON/YAML **object** instead of a one-element array, matching the documented
+  contract for singular reads (#35). Scripts using `jq '.[0]…'` must drop the
+  `.[0]`. Also, yaml keys now match the json keys for every typed object
+  (nodes, remotes, guests, storages, snapshots, tags, tag style, tasks),
+  including in `list` output. Renamed yaml keys: Node `name`→`node`, Storage
+  `name`→`storage`, Remote `web`→`web-url`, snapshot `ageseconds`→
+  `age_seconds`, tag style `casesensitive`→`case_sensitive` and
+  `colormap`→`color_map`. Zero-valued fields are now omitted in yaml, matching
+  json's `omitempty`.
+- **Fixed**: `pc <vm> cloudinit --dump` and the `pc storage prune-backups`
+  preview sent their query string inside the request path (escaped to `%3F`),
+  so they hit a non-existent endpoint; the query is now sent as real query
+  parameters (#29).
+- **Fixed**: `pc access token create` now prints the created token, including
+  the one-time secret `value` (native object for `-o json/yaml`); it was
+  silently dropped, leaving an unusable token (#31).
+- **Fixed**: mutations no longer report success on a malformed response. Only
+  an explicit `data: null`/`""` means synchronous success; an empty body, an
+  envelope without `data`, or an unparsable task id (bare, or PDM-prefixed
+  `pve:<remote>!UPID:…` including an empty remote or unknown prefix) is an
+  error, and any other payload is rendered instead of discarded (#32). The
+  same handling now applies to `storage content upload`. Commands that now
+  print output include `vm agent …` (the agent's `result` is unwrapped; empty results print
+  nothing, `fstrim` shows a per-path table), `subscription key add`, and
+  `access token create`.
+- **Fixed**: `pc vm agent shutdown`, `move-disk --delete`, `ct move-volume
+  --delete` and `access acl set --delete` are now confirm-gated (`-y/--yes` to
+  skip), with prompts that name the target (#36).
 - **Fixed**: PDM wrong-remote guard hardening (#37):
   - Single-guest resolution no longer trusts an incomplete inventory. If any
     remote's `/resources/list` entry reports an error, an unscoped lookup (by
