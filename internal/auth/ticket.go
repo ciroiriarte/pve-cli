@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,18 +16,49 @@ import (
 )
 
 const (
-	// ticketLifetime is how long a ticket is used before a new one is
-	// obtained. Proxmox tickets are valid for 2h; refresh a little early.
+	// ticketLifetime is how long a ticket is used at most. Proxmox tickets
+	// are valid for 2h; stop a little early.
 	ticketLifetime = 110 * time.Minute
-	// ticketRenewAfter is the age after which a cached ticket is renewed
-	// (POST /access/ticket with the ticket as the password) instead of reused
-	// as-is. Renewal keeps the TFA-confirmed state, so it never re-prompts.
+	// ticketRenewAfter is the age after which a ticket (in memory or
+	// persisted) is renewed — POST /access/ticket with the ticket as the
+	// password — instead of reused as-is. Renewal keeps the TFA-confirmed
+	// state, so it never re-prompts.
 	ticketRenewAfter = 60 * time.Minute
 )
 
+// Invalidator is implemented by auth providers that can tell a 401 was caused
+// by a stale persisted credential. Invalidate drops it and reports whether a
+// retry with fresh credentials makes sense.
+type Invalidator interface {
+	Invalidate() bool
+}
+
+// EnsureSecureURL rejects sending credentials over plaintext http to a
+// non-loopback host — tokens, ticket passwords and TFA codes would travel in
+// the clear. Loopback http stays allowed for local SSH tunnels and tests.
+func EnsureSecureURL(u *url.URL) error {
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("transport: refusing to send credentials over %q to %q — use https (loopback http is allowed for tunnels/tests)", u.Scheme, u.Hostname())
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is a loopback address or "localhost",
+// where plaintext http carries no network-exposure risk (tunnels, tests).
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // TicketProvider authenticates with a username/password by obtaining a Proxmox
-// ticket (cookie) and CSRF token. The ticket is cached and refreshed before it
-// expires (Proxmox tickets are valid ~2h).
+// ticket (cookie) and CSRF token. The ticket is kept in memory, renewed once
+// it is an hour old, and replaced before it expires (Proxmox tickets are valid
+// ~2h).
 //
 // For a user with two-factor authentication, the first /access/ticket call
 // returns a TFA challenge (a "PVE:!tfa!…" / "PDM:!tfa!…" ticket; PVE also sets
@@ -51,18 +83,32 @@ type TicketProvider struct {
 	// Cache, when set, persists TFA-confirmed tickets across processes.
 	Cache TicketCache
 
-	mu      sync.Mutex
-	cookies []*http.Cookie // auth cookie(s) from Set-Cookie (PVE or PDM)
-	csrf    string
-	expiry  time.Time
-	tfa     bool // the last login answered a TFA challenge
+	now func() time.Time // clock; nil means time.Now (tests override it)
+
+	mu        sync.Mutex
+	cookies   []*http.Cookie // auth cookie(s) from Set-Cookie (PVE or PDM)
+	csrf      string
+	ticket    string    // raw ticket string, the password for renewal
+	issued    time.Time // when the current ticket was obtained
+	fromCache bool      // current ticket was adopted from Cache, unverified
+	tfaChain  bool      // current ticket descends from a TFA login: persist renewals
+	tfa       bool      // the last password login answered a TFA challenge
 }
 
 // NewTicket builds a TicketProvider. client must be configured with the same
-// TLS policy as the main transport.
+// TLS policy as the main transport. baseURL must be https (or loopback http):
+// the password and any TFA code are never sent in cleartext.
 func NewTicket(baseURL, user, password string, client *http.Client) (*TicketProvider, error) {
 	if user == "" || password == "" {
 		return nil, fmt.Errorf("ticket auth requires a user and password")
+	}
+	base := strings.TrimRight(baseURL, "/")
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("ticket auth: server must be an absolute https URL, got %q", baseURL)
+	}
+	if err := EnsureSecureURL(u); err != nil {
+		return nil, err
 	}
 	if client == nil {
 		// Not http.DefaultClient: it follows redirects, and a 307/308 would
@@ -75,7 +121,7 @@ func NewTicket(baseURL, user, password string, client *http.Client) (*TicketProv
 		}
 	}
 	return &TicketProvider{
-		baseURL:  strings.TrimRight(baseURL, "/"),
+		baseURL:  base,
 		user:     user,
 		password: password,
 		client:   client,
@@ -84,7 +130,7 @@ func NewTicket(baseURL, user, password string, client *http.Client) (*TicketProv
 
 // Apply attaches the auth cookie, plus the CSRF token on write requests.
 func (t *TicketProvider) Apply(req *http.Request, write bool) error {
-	if err := t.ensure(req.Context()); err != nil {
+	if err := t.login(req.Context(), true); err != nil {
 		return err
 	}
 	t.mu.Lock()
@@ -104,13 +150,37 @@ func (t *TicketProvider) Apply(req *http.Request, write bool) error {
 // TFA).
 func (t *TicketProvider) Refresh(ctx context.Context) error {
 	t.mu.Lock()
-	t.expiry = time.Time{}
+	t.clear()
 	t.mu.Unlock()
 	return t.login(ctx, false)
 }
 
+// Invalidate handles a 401: if the ticket in use was adopted from the
+// persisted cache without being verified, it is stale (e.g. the server's auth
+// key changed). Drop it from memory and the cache so the next request logs in
+// afresh, and report true so the caller retries once.
+func (t *TicketProvider) Invalidate() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.fromCache {
+		return false
+	}
+	t.clear()
+	if t.Cache != nil {
+		t.Cache.Delete()
+	}
+	return true
+}
+
 // Kind returns the mechanism name.
 func (t *TicketProvider) Kind() string { return "ticket" }
+
+// TFA reports whether the last password login answered a TFA challenge.
+func (t *TicketProvider) TFA() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.tfa
+}
 
 // ticketResult is one decoded /access/ticket response.
 type ticketResult struct {
@@ -120,37 +190,48 @@ type ticketResult struct {
 	challenge bool // a TFA challenge, not a usable ticket
 }
 
-// ensure logs in if there is no valid cached ticket.
-func (t *TicketProvider) ensure(ctx context.Context) error {
-	return t.login(ctx, true)
+func (t *TicketProvider) clock() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
+	return time.Now()
 }
 
-// login obtains a ticket unless a valid in-memory one exists. With useCache,
-// a persisted ticket is tried before the password.
+// login makes sure a usable ticket is held: the in-memory one while fresh
+// (renewed once it is ticketRenewAfter old), else — with useCache — the
+// persisted one, else a password login (answering a TFA challenge).
 func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.cookies) > 0 && time.Now().Before(t.expiry) {
-		return nil
+	now := t.clock()
+
+	if len(t.cookies) > 0 {
+		age := now.Sub(t.issued)
+		if age >= 0 && age < ticketRenewAfter {
+			return nil
+		}
+		if age >= 0 && age < ticketLifetime && t.renew(ctx, t.ticket) == nil {
+			return nil
+		}
+		t.clear()
 	}
 
 	// A persisted TFA-confirmed ticket: reuse it while fresh, renew it once
-	// older (renewal never triggers TFA). Any failure falls through to a
-	// password login.
+	// older. Any failure falls through to a password login.
 	if useCache && t.Cache != nil {
 		if c, ok := t.Cache.Load(); ok && c.User == t.user && c.Ticket != "" {
-			age := time.Since(c.Issued)
+			age := now.Sub(c.Issued)
 			switch {
 			case age >= 0 && age < ticketRenewAfter:
-				t.adopt(c.cookieList(), c.CSRF, c.Issued)
+				t.set(c.cookieList(), c.CSRF, c.Ticket, c.Issued)
+				t.fromCache, t.tfaChain = true, true
 				return nil
 			case age >= 0 && age < ticketLifetime:
-				res, err := t.post(ctx, url.Values{"username": {t.user}, "password": {c.Ticket}})
-				if err == nil && !res.challenge {
-					t.adopt(res.cookies, res.csrf, time.Now())
-					t.save(res)
+				t.tfaChain = true
+				if t.renew(ctx, c.Ticket) == nil {
 					return nil
 				}
+				t.tfaChain = false
 			}
 		}
 	}
@@ -159,6 +240,7 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 	if err != nil {
 		return err
 	}
+	t.tfa = false
 	if res.challenge {
 		code, err := t.otpCode()
 		if err != nil {
@@ -178,18 +260,41 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 		if res.challenge {
 			return authError(fmt.Sprintf("two-factor authentication for %s was not completed by the server", t.user))
 		}
-		t.save(res)
 		t.tfa = true
 	}
-	t.adopt(res.cookies, res.csrf, time.Now())
+	t.set(res.cookies, res.csrf, res.ticket, t.clock())
+	t.tfaChain = t.tfa
+	switch {
+	case t.tfa:
+		t.save()
+	case t.Cache != nil:
+		// A plain password login supersedes any persisted TFA ticket for
+		// this user (e.g. TFA was removed): don't let a stale one win later.
+		if _, ok := t.Cache.Load(); ok {
+			t.Cache.Delete()
+		}
+	}
 	return nil
 }
 
-// TFA reports whether the last password login answered a TFA challenge.
-func (t *TicketProvider) TFA() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.tfa
+// renew trades a still-valid ticket for a fresh one (no TFA involved) and,
+// for a TFA-derived ticket, persists the result. Caller holds t.mu.
+func (t *TicketProvider) renew(ctx context.Context, ticket string) error {
+	if ticket == "" {
+		return fmt.Errorf("no ticket to renew")
+	}
+	res, err := t.post(ctx, url.Values{"username": {t.user}, "password": {ticket}})
+	if err != nil {
+		return err
+	}
+	if res.challenge {
+		return fmt.Errorf("renewal answered with a TFA challenge")
+	}
+	t.set(res.cookies, res.csrf, res.ticket, t.clock())
+	if t.tfaChain {
+		t.save()
+	}
+	return nil
 }
 
 // otpCode returns the second-factor response: the preset OTP, else an
@@ -219,25 +324,33 @@ func tfaResponse(code string) string {
 	return "totp:" + code
 }
 
-func (t *TicketProvider) adopt(cookies []*http.Cookie, csrf string, issued time.Time) {
-	t.cookies = cookies
-	t.csrf = csrf
-	t.expiry = issued.Add(ticketLifetime)
+// set installs a ticket as the current one. Caller holds t.mu.
+func (t *TicketProvider) set(cookies []*http.Cookie, csrf, ticket string, issued time.Time) {
+	t.cookies, t.csrf, t.ticket, t.issued = cookies, csrf, ticket, issued
+	t.fromCache = false
 }
 
-func (t *TicketProvider) save(res ticketResult) {
-	if t.Cache == nil {
+// clear drops the current ticket. Caller holds t.mu.
+func (t *TicketProvider) clear() {
+	t.cookies, t.csrf, t.ticket, t.issued = nil, "", "", time.Time{}
+	t.fromCache, t.tfaChain = false, false
+}
+
+// save persists the current ticket. Caller holds t.mu.
+func (t *TicketProvider) save() {
+	if t.Cache == nil || t.ticket == "" {
 		return
 	}
-	c := CachedTicket{User: t.user, Ticket: res.ticket, CSRF: res.csrf, Issued: time.Now()}
-	for _, ck := range res.cookies {
+	c := CachedTicket{User: t.user, Ticket: t.ticket, CSRF: t.csrf, Issued: t.issued}
+	for _, ck := range t.cookies {
 		c.Cookies = append(c.Cookies, CachedCookie{Name: ck.Name, Value: ck.Value})
 	}
 	t.Cache.Save(c)
 }
 
-// post issues one POST /access/ticket. Errors never include the form values
-// (password, ticket, or TFA code) or the response body.
+// post issues one POST /access/ticket. Errors carry nothing the server sent
+// back (message, per-field errors, body) and never the form values (password,
+// ticket, or TFA code): a server reflecting a submitted value can't leak it.
 func (t *TicketProvider) post(ctx context.Context, form url.Values) (ticketResult, error) {
 	var res ticketResult
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -253,14 +366,12 @@ func (t *TicketProvider) post(ctx context.Context, form url.Values) (ticketResul
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		ae := protocol.DecodeError(resp.StatusCode, body)
-		ae.RawBody = ""
-		if ae.Kind == protocol.KindAuth {
-			ae.Message = fmt.Sprintf("ticket login failed for %s: authentication failure (check the user and password)", t.user)
-		} else {
-			ae.Message = "ticket login failed: " + ae.Message
+		kind := protocol.DecodeError(resp.StatusCode, nil).Kind
+		msg := fmt.Sprintf("ticket login failed for %s: HTTP %d %s", t.user, resp.StatusCode, http.StatusText(resp.StatusCode))
+		if kind == protocol.KindAuth {
+			msg = fmt.Sprintf("ticket login failed for %s: authentication failure (check the user and password)", t.user)
 		}
-		return res, ae
+		return res, &protocol.APIError{Kind: kind, StatusCode: resp.StatusCode, Message: msg}
 	}
 	var env struct {
 		Data struct {
@@ -283,7 +394,10 @@ func (t *TicketProvider) post(ctx context.Context, form url.Values) (ticketResul
 	if res.ticket == "" {
 		for _, c := range res.cookies {
 			if strings.Contains(strings.ToLower(c.Name), "authcookie") {
-				if v, err := url.QueryUnescape(c.Value); err == nil {
+				// PathUnescape, not QueryUnescape: it decodes %XX (PVE
+				// percent-encodes its cookie) but keeps '+', which is a
+				// literal character in base64 ticket signatures.
+				if v, err := url.PathUnescape(c.Value); err == nil {
 					res.ticket = v
 				} else {
 					res.ticket = c.Value

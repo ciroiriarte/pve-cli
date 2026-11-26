@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -143,7 +142,22 @@ func (c *Client) DoRaw(ctx context.Context, req *Request) ([]byte, error) {
 	return c.doRaw(ctx, req)
 }
 
+// doRaw runs the request; on a 401 caused by a stale persisted ticket (the
+// auth provider says so via Invalidate), it re-authenticates and replays the
+// request once. A request rejected at authentication had no effect, so the
+// replay is safe; streamed bodies are excluded because they can't be re-read.
 func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
+	body, err := c.doAttempts(ctx, req)
+	var ae *protocol.APIError
+	if err != nil && req.Body == nil && errors.As(err, &ae) && ae.StatusCode == http.StatusUnauthorized {
+		if inv, ok := c.auth.(auth.Invalidator); ok && inv.Invalidate() {
+			return c.doAttempts(ctx, req)
+		}
+	}
+	return body, err
+}
+
+func (c *Client) doAttempts(ctx context.Context, req *Request) ([]byte, error) {
 	idempotent := isIdempotent(req.Method)
 	attempts := 1
 	if idempotent {
@@ -168,12 +182,17 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 
 		body, status, transErr := c.attempt(ctx, req)
 		if transErr != nil {
-			// A decoded auth failure (e.g. a rejected ticket login or a TFA
-			// code that is required but missing) is deterministic: retrying
-			// would re-send the password, or re-prompt for a code, for nothing.
+			// A decoded ticket-login failure: a rejected login or a missing
+			// TFA code is deterministic, and retrying would re-send the
+			// password or re-prompt for a code for nothing. Only a server
+			// error (5xx) from /access/ticket is retried.
 			var ae *protocol.APIError
 			if errors.As(transErr, &ae) {
-				return nil, ae
+				if ae.Kind != protocol.KindServer {
+					return nil, ae
+				}
+				lastErr = ae
+				continue
 			}
 			lastErr = &protocol.APIError{Kind: protocol.KindTransport, Message: transErr.Error()}
 			if errors.Is(transErr, ErrRedirectRefused) {
@@ -268,25 +287,11 @@ func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status
 
 // EnsureSecureURL rejects sending credentials over plaintext http to a
 // non-loopback host — tokens and ticket passwords would travel in the clear.
-// Loopback http stays allowed for local SSH tunnels and the test suite. Shared
-// by the API client and the ticket-login path so neither can leak in cleartext.
+// Loopback http stays allowed for local SSH tunnels and the test suite. The
+// check lives in auth (which transport imports) so the ticket-login client,
+// built outside transport.New, enforces the same rule.
 func EnsureSecureURL(u *url.URL) error {
-	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
-		return fmt.Errorf("transport: refusing to send credentials over %q to %q — use https (loopback http is allowed for tunnels/tests)", u.Scheme, u.Hostname())
-	}
-	return nil
-}
-
-// isLoopbackHost reports whether host is a loopback address or "localhost",
-// where plaintext http carries no network-exposure risk (tunnels, tests).
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+	return auth.EnsureSecureURL(u)
 }
 
 // isIdempotent reports whether method may be safely retried.

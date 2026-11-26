@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -322,6 +323,16 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			if (tokenID == "") == (user == "") {
 				return fmt.Errorf("provide exactly one of --token-id (token auth) or --user (ticket auth)")
 			}
+			// Refuse a cleartext (non-loopback http) server up front: ticket
+			// login would send the password and TFA code over it, and runtime
+			// refuses it for every auth type anyway.
+			su, perr := url.Parse(strings.TrimRight(server, "/"))
+			if perr != nil || su.Scheme == "" || su.Host == "" {
+				return fmt.Errorf("invalid server URL %q: want https://host:port", server)
+			}
+			if err := transport.EnsureSecureURL(su); err != nil {
+				return err
+			}
 			if profile == "" {
 				profile = "default"
 			}
@@ -443,6 +454,12 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 // can't be reached only warns, like the certificate probe. Non-interactive
 // logins without a code stay offline, as before.
 func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
+	// A TOTP code expires in seconds, so argv is acceptable for it; a typed
+	// response such as recovery:<key> stays valid until used, so warn (§7:
+	// security warnings go to stderr and are not TTY-gated).
+	if otp != "" && strings.Contains(otp, ":") && !strings.HasPrefix(strings.ToLower(otp), "totp:") {
+		fmt.Fprintln(stderrWriter(), "[pc] warning: a plaintext --otp recovery key leaks to shell history and the process table; prefer --otp-ref env:NAME, PVE_CLI_OTP, or the terminal prompt")
+	}
 	if otpRef != "" {
 		v, err := config.ResolveSecretRef(otpRef)
 		if err != nil {

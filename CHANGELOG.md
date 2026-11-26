@@ -12,12 +12,16 @@ surface may change between minor releases.
   with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
   given or on a terminal, `auth login` now verifies the ticket login, so a wrong
   password or code fails (exit 2) without saving the profile. The TFA-confirmed
-  ticket is cached in the OS keyring and renewed while in use, so later commands
-  don't need a code until it lapses (~2h idle); then they prompt on a terminal,
-  use `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run
-  `pc auth login --otp`. `pc config test-auth` reports the cached-ticket state.
-  A failed ticket login is now an auth error (exit 2) and is no longer retried
-  as a transport error.
+  ticket is cached in the OS keyring and renewed once it is an hour old (by
+  later commands, and in memory by a long-running one), so commands don't need
+  a code until it lapses (~2h idle); then they prompt on a terminal, use
+  `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.
+  A cached ticket the server rejects is dropped and the command logs in again
+  once. `pc config test-auth` reports the cached-ticket state. `auth login` now
+  refuses a non-loopback `http://` server before sending anything, and warns
+  when a recovery key is passed on argv. A rejected ticket login is now an auth
+  error (exit 2) and is not retried (a 5xx still is); its message no longer
+  includes server-provided text.
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 

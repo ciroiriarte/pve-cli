@@ -15,6 +15,7 @@ import (
 type TicketCache interface {
 	Load() (CachedTicket, bool)
 	Save(CachedTicket)
+	Delete()
 }
 
 // CachedTicket is a persisted ticket. Ticket is the raw ticket string (used as
@@ -78,4 +79,9 @@ func (k *KeyringTicketCache) Save(c CachedTicket) {
 		return
 	}
 	_ = keyring.Set(k.Service, k.Key, string(b))
+}
+
+// Delete removes the cached ticket; errors (e.g. no entry) are ignored.
+func (k *KeyringTicketCache) Delete() {
+	_ = keyring.Delete(k.Service, k.Key)
 }

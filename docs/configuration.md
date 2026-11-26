@@ -111,7 +111,11 @@ The password alone can't produce a ticket for a TFA user, so the TFA-confirmed
 ticket is cached in the OS keyring (entry `ticket:<user>@<server>` under the
 `pve-cli` service) and reused by later commands. A ticket older than 1 h is
 renewed by passing it as the password, which keeps the TFA state and does not
-ask for a code. Proxmox tickets expire after 2 h, so after ~2 h without any
+ask for a code; a long-running command renews its in-memory ticket the same
+way and updates the cache. If the server rejects a cached ticket (e.g. its
+auth key changed), the entry is dropped and the command logs in again once.
+`auth login` refuses a non-loopback `http://` server, and warns when a
+recovery key is given on the command line. Proxmox tickets expire after 2 h, so after ~2 h without any
 command the next one needs a new code: it prompts on a terminal, takes
 `PVE_CLI_OTP` if set, and otherwise fails (exit 2) with a hint to re-run
 `pc auth login --otp`. Without an OS keyring, nothing is cached and every
