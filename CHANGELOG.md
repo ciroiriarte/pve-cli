@@ -16,7 +16,9 @@ surface may change between minor releases.
   live-migrated (with `--with-local-disks` when they have attached local disks)
   and running containers use restart migration (`--restart-timeout`).
   Migrations run one at a time, or up to 8 at once with `--parallel`, and each
-  task is polled. Destinations are limited to the nodes the qemu/LXC migrate
+  task is polled. If a wait hits `--wait-timeout`, no further migration starts
+  (the timed-out one may still be running), and the rest are reported as
+  `not-attempted`. Destinations are limited to the nodes the qemu/LXC migrate
   preconditions allow (storage, mappings, HA affinity), the nodes where a
   container's storages are enabled, and a running replicated VM's replication
   targets. Guests that can't move are skipped and reported: HA-managed guests,

@@ -126,6 +126,63 @@ func TestNodeEvacuateSyncPostFailure(t *testing.T) {
 	}
 }
 
+func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		ctGuest(150, "running"), ctGuest(151, "running"), ctGuest(152, "running"), ctGuest(153, "running"),
+	})
+	// 150: active config has a local bind mount; a pending delete removes it
+	// from the pending view, which must not make the CT movable.
+	f.ctConfCurrent[150] = `{"rootfs":"local-lvm:vm-150-disk-0","mp0":"/srv/a,mp=/a"}`
+	f.ctConf[150] = `{"rootfs":"local-lvm:vm-150-disk-0","delete":"mp0"}`
+	// 151: a pending bind mount (not yet active) also blocks.
+	f.ctConfCurrent[151] = `{"rootfs":"local-lvm:vm-151-disk-0"}`
+	f.ctConf[151] = `{"rootfs":"local-lvm:vm-151-disk-0","mp1":"/srv/b,mp=/b"}`
+	// 152: shared=yes with volume= after other options is a shared bind mount.
+	f.ctConf[152] = `{"rootfs":"local-lvm:vm-152-disk-0","mp0":"mp=/n,volume=/mnt/nfs,shared=yes"}`
+	// 153: a storage the token can't see in /storage doesn't restrict.
+	f.ctConf[153] = `{"rootfs":"hidden:vm-153-disk-0"}`
+	srv := f.start()
+	defer srv.Close()
+
+	out, _ := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+	plan := evacPlan(t, out)
+	for id, w := range map[int]string{150: "mount points: mp0", 151: "mount points: mp1"} {
+		if it := plan[id]; it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
+			t.Errorf("vmid %d: want skip with %q, got %v", id, w, it)
+		}
+	}
+	if plan[152]["skip"] != false {
+		t.Errorf("a shared=yes bind mount must not block: %v", plan[152])
+	}
+	if plan[153]["skip"] != false {
+		t.Errorf("an invisible storage must not restrict: %v", plan[153])
+	}
+}
+
+func TestNodeEvacuateWaitTimeoutStopsDispatch(t *testing.T) {
+	f := newEvacFixture(defaultEvacGuests())
+	f.hang[100] = true // the first (largest) migration never finishes
+	srv := f.start()
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "1", "--wait-timeout", "1", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) == ExitOK {
+		t.Fatalf("a timed-out migration must exit non-zero, got %v", err)
+	}
+	if fmt.Sprint(f.order) != "[100]" {
+		t.Fatalf("no migration may start after a wait timeout (it could exceed --parallel), got POSTs %v", f.order)
+	}
+	plan := evacPlan(t, out)
+	if plan[100]["result"] != "unknown" || plan[100]["upid"] == nil {
+		t.Errorf("100 should be unknown with its upid: %v", plan[100])
+	}
+	for _, id := range []int{101, 102} {
+		if plan[id]["result"] != "not-attempted" {
+			t.Errorf("vmid %d should be not-attempted: %v", id, plan[id])
+		}
+	}
+}
+
 func TestNodeEvacuateForcePrompt(t *testing.T) {
 	f := newEvacFixture(defaultEvacGuests())
 	srv := f.start()

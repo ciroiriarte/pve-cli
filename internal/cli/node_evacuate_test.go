@@ -23,11 +23,15 @@ type evacFixture struct {
 	ctConf  map[int]string   // vmid → CT config JSON override
 	repl    string           // /cluster/replication entries (JSON, comma-separated)
 	postErr map[int]bool     // vmid → migrate POST fails synchronously
-	fail    map[int]bool     // vmid → migration task ends with an error
-	nodes   []map[string]any // override nodes (nil = default 3-node cluster)
-	mu      sync.Mutex
-	posts   map[int]map[string]string // vmid → POST form
-	order   []int                     // POST order
+	hang    map[int]bool     // vmid → migration task never finishes
+	// vmid → CT config with ?current=1 (active config; ctConf is the
+	// pending-applied view). Unset = same as ctConf.
+	ctConfCurrent map[int]string
+	fail          map[int]bool     // vmid → migration task ends with an error
+	nodes         []map[string]any // override nodes (nil = default 3-node cluster)
+	mu            sync.Mutex
+	posts         map[int]map[string]string // vmid → POST form
+	order         []int                     // POST order
 }
 
 func defaultEvacGuests() []map[string]any {
@@ -43,6 +47,7 @@ func defaultEvacGuests() []map[string]any {
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
 	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
+		hang: map[int]bool{}, ctConfCurrent: map[int]string{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
@@ -80,6 +85,10 @@ func (f *evacFixture) start() *httptest.Server {
 		if len(parts) == 3 && parts[0] == "tasks" && parts[2] == "status" {
 			fields := strings.Split(parts[1], ":")
 			vmid, _ := strconv.Atoi(fields[6])
+			if f.hang[vmid] {
+				w.Write([]byte(`{"data":{"status":"running"}}`))
+				return
+			}
 			if f.fail[vmid] {
 				w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"migration aborted"}}`))
 				return
@@ -90,6 +99,10 @@ func (f *evacFixture) start() *httptest.Server {
 		// lxc/<vmid>/config
 		if len(parts) == 3 && parts[0] == "lxc" && parts[2] == "config" {
 			vmid, _ := strconv.Atoi(parts[1])
+			if c, ok := f.ctConfCurrent[vmid]; ok && r.URL.Query().Get("current") == "1" {
+				fmt.Fprintf(w, `{"data":%s}`, c)
+				return
+			}
 			if c, ok := f.ctConf[vmid]; ok {
 				fmt.Fprintf(w, `{"data":%s}`, c)
 				return

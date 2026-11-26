@@ -43,7 +43,7 @@ type evacItem struct {
 	MaxMem int64            `json:"maxmem" yaml:"maxmem"`
 	Skip   bool             `json:"skip" yaml:"skip"`
 	Reason string           `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Result string           `json:"result,omitempty" yaml:"result,omitempty"` // migrated | failed | skipped (real run only)
+	Result string           `json:"result,omitempty" yaml:"result,omitempty"` // migrated | failed | unknown | not-attempted | skipped (real run only)
 	Error  string           `json:"error,omitempty" yaml:"error,omitempty"`
 	UPID   string           `json:"upid,omitempty" yaml:"upid,omitempty"`
 
@@ -76,7 +76,7 @@ type evacTarget struct {
 	mem    int64   // projected used memory (bytes)
 	maxMem int64   // physical memory (bytes)
 	vcpus  float64 // projected vCPUs allocated to running guests
-	cores  float64 // physical cores
+	cores  float64 // logical CPUs (maxcpu)
 }
 
 type evacOpts struct {
@@ -538,32 +538,37 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 		return nil
 	}
 
-	body, err = p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/lxc/%d/config", it.From, it.VMID), nil)
-	if err != nil {
-		it.Skip, it.Reason = true, "reading config failed: "+err.Error()
-		return nil
-	}
-	var conf map[string]any
-	if err := protocol.DecodeData(body, &conf); err != nil {
-		it.Skip, it.Reason = true, "reading config failed: "+err.Error()
-		return nil
-	}
+	// LXC/Migrate.pm walks the active config and then the pending volumes,
+	// so check both: the active config (current=1) and the default view with
+	// pending changes applied. A mount point in either blocks; a pending
+	// deletion doesn't hide an active one.
 	var local, storages []string
-	for _, k := range sortedMapKeys(conf) {
-		if k != "rootfs" && !ctMountKey.MatchString(k) {
-			continue
+	for _, query := range []url.Values{{"current": {"1"}}, nil} {
+		body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/lxc/%d/config", it.From, it.VMID), query)
+		if err != nil {
+			it.Skip, it.Reason = true, "reading config failed: "+err.Error()
+			return nil
 		}
-		val, _ := conf[k].(string)
-		fields := strings.Split(val, ",")
-		vol := strings.TrimPrefix(fields[0], "volume=")
-		if strings.HasPrefix(vol, "/") {
-			if !hasString(fields[1:], "shared=1") {
-				local = append(local, k)
+		var conf map[string]any
+		if err := protocol.DecodeData(body, &conf); err != nil {
+			it.Skip, it.Reason = true, "reading config failed: "+err.Error()
+			return nil
+		}
+		for _, k := range sortedMapKeys(conf) {
+			if k != "rootfs" && !ctMountKey.MatchString(k) {
+				continue
 			}
-			continue
-		}
-		if i := strings.Index(vol, ":"); i > 0 && !hasString(storages, vol[:i]) {
-			storages = append(storages, vol[:i])
+			val, _ := conf[k].(string)
+			vol, shared := parseCTMount(val)
+			if strings.HasPrefix(vol, "/") {
+				if !shared && !hasString(local, k) {
+					local = append(local, k)
+				}
+				continue
+			}
+			if i := strings.Index(vol, ":"); i > 0 && !hasString(storages, vol[:i]) {
+				storages = append(storages, vol[:i])
+			}
 		}
 	}
 	if len(local) > 0 {
@@ -579,8 +584,10 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 	for _, n := range nodes {
 		missing := ""
 		for _, s := range storages {
+			// A storage absent from /storage is one this token can't see
+			// (no Datastore.Audit): leave that decision to PVE.
 			sc, known := cfg[s]
-			if !known || sc.Disable == 1 || (sc.Nodes != "" && !hasString(strings.Split(sc.Nodes, ","), n)) {
+			if known && (sc.Disable == 1 || (sc.Nodes != "" && !hasString(strings.Split(sc.Nodes, ","), n))) {
 				missing = s
 				break
 			}
@@ -593,6 +600,27 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 	}
 	it.restrict(ok, reasons)
 	return nil
+}
+
+// parseCTMount splits a CT mount point value ("<volume>,mp=/x,shared=1" or
+// "mp=/x,volume=<volume>", options in any order) into its volume and whether
+// it is marked shared.
+func parseCTMount(val string) (vol string, shared bool) {
+	for i, f := range strings.Split(val, ",") {
+		k, v, hasEq := strings.Cut(f, "=")
+		switch {
+		case !hasEq && i == 0:
+			vol = f
+		case k == "volume":
+			vol = v
+		case k == "shared":
+			switch strings.ToLower(v) {
+			case "1", "yes", "on", "true":
+				shared = true
+			}
+		}
+	}
+	return vol, shared
 }
 
 // ctMountKey matches the container config keys that LXC/Migrate.pm walks
@@ -708,18 +736,34 @@ func (c *evacCache) storage(ctx context.Context, p provider.Provider) (map[strin
 
 // runEvacuation migrates the planned items, at most `parallel` at a time, each
 // task-polled to completion. Results are recorded on the items.
+//
+// A wait that ends without a final task status (--wait-timeout, or the
+// context cancelled) leaves that migration running in PVE while its slot
+// frees up here, so dispatching more would exceed --parallel. After one, no
+// new migration starts: the rest are marked not-attempted.
 func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, parallel, timeout, restartTimeout int) {
 	var mu sync.Mutex
+	halted := false
 	logf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprintf(stderrWriter(), format, args...)
+	}
+	isHalted := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return halted
 	}
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	for _, it := range items {
 		it := it
 		sem <- struct{}{}
+		if isHalted() {
+			<-sem
+			it.Result, it.Error = "not-attempted", "not attempted: an earlier migration's state is unknown (wait timed out)"
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -730,6 +774,13 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 			it.UPID = upid
 			if err != nil {
 				it.Result, it.Error = "failed", err.Error()
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					it.Result = "unknown"
+					it.Error = "gave up waiting; the migration may still be running in PVE (check `pc task show` with the upid): " + err.Error()
+					mu.Lock()
+					halted = true
+					mu.Unlock()
+				}
 				logf("✘ %s: %v\n", label, err)
 				return
 			}
@@ -776,7 +827,7 @@ func evacOutcome(src string, items []*evacItem) error {
 	failed, skipped := 0, 0
 	for _, it := range items {
 		switch {
-		case it.Result == "failed":
+		case it.Result == "failed" || it.Result == "unknown" || it.Result == "not-attempted":
 			failed++
 		case it.Skip && !it.expected:
 			skipped++
@@ -784,7 +835,7 @@ func evacOutcome(src string, items []*evacItem) error {
 	}
 	if failed > 0 {
 		return &protocol.APIError{Kind: protocol.KindTaskFailed,
-			Message: fmt.Sprintf("evacuate %s: %d migration(s) failed, %d guest(s) skipped", src, failed, skipped)}
+			Message: fmt.Sprintf("evacuate %s: %d migration(s) failed or not completed, %d guest(s) skipped", src, failed, skipped)}
 	}
 	if skipped > 0 {
 		return &protocol.APIError{Kind: protocol.KindPrecondition,
