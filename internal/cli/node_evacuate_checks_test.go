@@ -128,6 +128,48 @@ func TestNodeEvacuateSyncPostFailure(t *testing.T) {
 	}
 }
 
+// A migrate POST with no usable answer (dropped connection, gateway error,
+// a success body without a task id) may have started the migration: report
+// it unknown and start nothing else. A PVE refusal stays "failed" (see
+// TestNodeEvacuateSyncPostFailure).
+func TestNodeEvacuateUnknownPostHalts(t *testing.T) {
+	for name, odd := range map[string]string{
+		"connection dropped": "drop",
+		"gateway error":      "502",
+		"not json":           "<html>ok</html>",
+		"no task id":         `{"data":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEvacFixture(defaultEvacGuests())
+			f.postOdd[100] = odd
+			srv := f.start()
+			defer srv.Close()
+			out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "1", "-o", "json")...)
+			if err == nil || ExitCodeFor(err) != ExitTaskFailed {
+				t.Fatalf("want exit %d, got %v", ExitTaskFailed, err)
+			}
+			// Under the lock: a dropped connection gives the race detector no
+			// happens-before edge between the handler and this read.
+			f.mu.Lock()
+			order := fmt.Sprint(f.order)
+			f.mu.Unlock()
+			if order != "[100]" {
+				t.Fatalf("dispatch must halt, got POSTs %v", order)
+			}
+			plan := evacPlan(t, out)
+			if plan[100]["result"] != "unknown" || plan[100]["upid"] != nil ||
+				!strings.Contains(fmt.Sprint(plan[100]["error"]), "pc task list --node pve-01") {
+				t.Errorf("100 should be unknown with a task-list hint: %v", plan[100])
+			}
+			for _, id := range []int{101, 102} {
+				if plan[id]["result"] != "not-attempted" {
+					t.Errorf("vmid %d should be not-attempted: %v", id, plan[id])
+				}
+			}
+		})
+	}
+}
+
 func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
 	f := newEvacFixture([]map[string]any{
 		ctGuest(150, "running"), ctGuest(151, "running"), ctGuest(152, "running"), ctGuest(153, "running"),

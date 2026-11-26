@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -99,9 +100,12 @@ func newNodeEvacuateCmd(a *app) *cobra.Command {
 		Long: "Migrates the guests on <node> to the other online cluster nodes, for\n" +
 			"maintenance windows. Running guests are moved by default; --all also moves\n" +
 			"stopped ones. Destinations are planned greedily, largest guest first, onto the\n" +
-			"node with the most memory headroom, never exceeding --max-mem-pct of a node's\n" +
-			"RAM (and --vcpu-ratio allocated vCPUs per logical CPU, when set). --target forces a\n" +
-			"single destination (still capacity-checked unless --force).\n\n" +
+			"node with the most memory headroom. A running guest is never placed past\n" +
+			"--max-mem-pct of a node's RAM (or --vcpu-ratio allocated vCPUs per logical CPU,\n" +
+			"when set). Stopped guests (--all) use no RAM until started, so they are placed\n" +
+			"after the running ones without a capacity check: check the destination before\n" +
+			"starting them. --target forces a single destination (running guests still\n" +
+			"capacity-checked unless --force).\n\n" +
 			"Running VMs are live-migrated; running containers use restart migration.\n" +
 			"Guests that can't move are skipped and reported: HA-managed guests (let HA\n" +
 			"move them, e.g. `ha-manager crm-command node-maintenance enable <node>`),\n" +
@@ -196,7 +200,7 @@ func newNodeEvacuateCmd(a *app) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&o.all, "all", false, "also migrate stopped guests (default: running only)")
 	cmd.Flags().StringVar(&o.target, "target", "", "force a single destination node")
-	cmd.Flags().BoolVar(&o.force, "force", false, "skip the capacity check (memory/vCPU limits)")
+	cmd.Flags().BoolVar(&o.force, "force", false, "skip the capacity check for running guests (memory/vCPU limits)")
 	cmd.Flags().BoolVar(&o.online, "online", true, "live-migrate running VMs (--online=false skips them)")
 	cmd.Flags().BoolVar(&o.withLocalDisks, "with-local-disks", false, "migrate VMs with disks on local storage (copies them)")
 	cmd.Flags().Float64Var(&o.maxMemPct, "max-mem-pct", 90, "max projected memory use of a destination, in % of its RAM")
@@ -949,7 +953,7 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 				evacBeforePost(it.VMID)
 			}
 			label := fmt.Sprintf("migrate %s %d (%s) %s -> %s [%s]", kindLabel(it.Kind), it.VMID, it.Name, it.From, it.To, it.Mode)
-			upid, posted, err := migrateOne(ctx, p, it, &gate, timeout, restartTimeout, label)
+			upid, posted, startUnknown, err := migrateOne(ctx, p, it, &gate, timeout, restartTimeout, label)
 			if !posted {
 				// A worker admitted before the halt never POSTs after it.
 				it.Result, it.Error = "not-attempted", notAttempted
@@ -964,8 +968,15 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 				// settles it, and task.Wait reports a non-OK terminal status
 				// as KindTaskFailed. Any other wait error (timeout, poll
 				// failure, auth expiry) leaves the migration possibly running.
+				// Before a task id exists, startUnknown marks a POST whose
+				// outcome is unknown (no answer, or an unreadable success).
 				var apiErr *protocol.APIError
-				if upid != "" && !(errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTaskFailed) {
+				switch {
+				case startUnknown:
+					it.Result = "unknown"
+					it.Error = fmt.Sprintf("no usable answer to the migrate request; the migration may have started in PVE (check `pc task list --node %s`): %v", it.From, err)
+					gate.halt()
+				case upid != "" && !(errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTaskFailed):
 					it.Result = "unknown"
 					it.Error = "no final task status; the migration may still be running in PVE (check `pc task show " + upid + "`): " + err.Error()
 					gate.halt()
@@ -1021,7 +1032,28 @@ var (
 	evacHalted     func()
 )
 
-func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, gate *evacGate, timeout, restartTimeout int, label string) (string, bool, error) {
+// migratePostRejected reports whether a migrate POST error is PVE's own
+// refusal (an HTTP error answer), so no task was started. Anything else may
+// follow a request PVE already acted on: a transport error (POSTs are never
+// retried, and the connection can drop after the request was sent), a
+// cancelled request, or a gateway status (502/504, pveproxy's 595/596).
+func migratePostRejected(err error) bool {
+	var apiErr *protocol.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode == 0 {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusBadGateway, http.StatusGatewayTimeout, 595, 596:
+		return false
+	}
+	return true
+}
+
+// migrateOne POSTs one migration and waits for its task. It returns the task
+// id (once known), whether the POST ran (false: halted before it), whether the
+// POST's outcome is unknown (startUnknown: the migration may have started but
+// no task id was obtained), and the error.
+func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, gate *evacGate, timeout, restartTimeout int, label string) (upid string, posted, startUnknown bool, err error) {
 	params := url.Values{"target": {it.To}}
 	switch it.Mode {
 	case "online":
@@ -1040,22 +1072,24 @@ func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, gate *ev
 	path := fmt.Sprintf("/nodes/%s/%s/%d/migrate", it.From, kindEndpoint(it.Kind), it.VMID)
 	body, posted, err := gate.post(func() ([]byte, error) { return p.Raw(ctx, "POST", path, params) })
 	if !posted {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if err != nil {
-		return "", true, err
+		return "", true, !migratePostRejected(err), err
 	}
+	// A success answer means PVE accepted the request; if its task id can't
+	// be read, the migration may be running untracked.
 	data, err := mutationData(body, label)
 	if err != nil {
-		return "", true, err
+		return "", true, true, err
 	}
-	upid, _ := data.(string)
-	h, err := parseTaskArg(upid)
+	s, _ := data.(string)
+	h, err := parseTaskArg(s)
 	if err != nil {
-		return "", true, fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
+		return "", true, true, fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
 	}
 	_, err = task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{Timeout: secs(timeout), Out: stderrWriter(), Label: label})
-	return upid, true, err
+	return s, true, false, err
 }
 
 // evacOutcome maps the plan/results to the exit code: failed migrations exit 5

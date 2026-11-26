@@ -6,6 +6,21 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: `pc node evacuate` now stops starting migrations when a migrate
+  request gets no usable answer: the connection drops after the request was
+  sent, a gateway answers 502/504 (or pveproxy 595/596), or PVE answers success
+  without a readable task id. PVE may already be migrating that guest, so it is
+  reported `unknown` (with a `pc task list --node <node>` hint) and the guests
+  not yet started are reported `not-attempted`, as for a migration whose task
+  status can't be read. Before, it was reported `failed` and the remaining
+  migrations still started. An error answer from PVE itself (the migration was
+  refused) is still `failed` and the run continues.
+- **Fixed (docs)**: the `pc node evacuate` help and the 0.16.0 entry said the
+  plan never exceeds `--max-mem-pct`/`--vcpu-ratio` and that `--target` is
+  always capacity-checked. Those limits apply to running guests only; stopped
+  guests moved with `--all` use no RAM until started and are placed without a
+  capacity check. The help now says so.
+
 ## [0.16.0] - 2026-11-26 — PBS provider, TOTP, node evacuate & cluster check
 
 - **Changed**: building pve-cli now requires **Go 1.26** (`go.mod` declares
