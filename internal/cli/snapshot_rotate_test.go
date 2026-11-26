@@ -126,7 +126,11 @@ type rotServer struct {
 	taskFail   bool   // tasks end with a non-OK exit status
 	failDelete string // DELETE of this snapshot returns HTTP 500
 	taskStuck  bool   // tasks never finish
-	params     map[string]string
+	// statusFlaky: task-status polls answer 503 this many times, then every
+	// further poll stalls until the client gives up.
+	statusFlaky int
+	statusCalls int
+	params      map[string]string
 }
 
 func (s *rotServer) mutations() []string {
@@ -142,7 +146,23 @@ func (s *rotServer) start(t *testing.T) *httptest.Server {
 		w.Write([]byte(`{"data":[{"type":"lxc","vmid":9320,"name":"pcsnap","node":"pve-01","status":"stopped"},
 			{"type":"qemu","vmid":100,"name":"web","node":"pve-01","status":"stopped"}]}`))
 	})
-	mux.HandleFunc("/api2/json/nodes/pve-01/tasks/", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api2/json/nodes/pve-01/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		if s.statusFlaky > 0 {
+			s.mu.Lock()
+			s.statusCalls++
+			n := s.statusCalls
+			s.mu.Unlock()
+			if n <= s.statusFlaky {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"data":null}`))
+				return
+			}
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
+			return
+		}
 		if s.taskStuck {
 			w.Write([]byte(`{"data":{"status":"running"}}`))
 			return
@@ -587,6 +607,28 @@ func TestSnapshotRotateDeleteTimeoutStops(t *testing.T) {
 	r := decodeRotate(t, out)
 	if !reflect.DeepEqual(r.Failed, []string{"pc-auto-20260101-000000"}) ||
 		!reflect.DeepEqual(r.NotAttempted, []string{"pc-auto-20260102-000000", "pc-auto-20260103-000000"}) {
+		t.Fatalf("summary: %+v", r)
+	}
+}
+
+// Codex #53: when task-status retries are exhausted and the final retry
+// stalls past --wait-timeout, the transport returns a flattened APIError that
+// doesn't wrap context.DeadlineExceeded. The timeout must still be detected,
+// so only the first DELETE is sent and the rest are not attempted.
+func TestSnapshotRotateDeleteTimeoutViaStalledRetry(t *testing.T) {
+	// 3 retryable failures (the default 3 retries) put the 4th, final attempt
+	// at most ~2.1s in; it then stalls past the 3s deadline.
+	s := &rotServer{snaps: seedSnaps(), statusFlaky: 3}
+	srv := s.start(t)
+	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create", "--yes", "--wait-timeout", "3", "-o", "json")...)
+	if err == nil || !strings.Contains(err.Error(), "2 not attempted") {
+		t.Fatalf("expected a timeout error with not-attempted count, got %v", err)
+	}
+	if m := s.mutations(); !reflect.DeepEqual(m, []string{"DELETE pc-auto-20260101-000000"}) {
+		t.Fatalf("mutations = %v; want only the first delete", m)
+	}
+	r := decodeRotate(t, out)
+	if !reflect.DeepEqual(r.NotAttempted, []string{"pc-auto-20260102-000000", "pc-auto-20260103-000000"}) {
 		t.Fatalf("summary: %+v", r)
 	}
 }

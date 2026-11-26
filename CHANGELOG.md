@@ -24,7 +24,10 @@ surface may change between minor releases.
   and `-o json` emits a summary object (`created`, `kept`, `deleted`, `failed`,
   `not_attempted`). A failed create, including a task ending with `WARNINGS`,
   prunes nothing; a delete that hits `--wait-timeout` (which does not cancel
-  the PVE task) stops the remaining deletions.
+  the PVE task) stops the remaining deletions, also when the final task-status
+  poll fails after the deadline (e.g. exhausted transport retries). Task waits
+  in general now report such a failure as a timeout (the error wraps the
+  context deadline as well as the poll error, so exit codes are unchanged).
   `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
   `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
   …` is now available (type-agnostic, like the other `guest` verbs).

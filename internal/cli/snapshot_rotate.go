@@ -377,13 +377,25 @@ func mutateAndWait(ctx context.Context, p provider.Provider, method, path string
 	if err != nil {
 		return fmt.Errorf("%s: malformed task id in response: %w", label, err)
 	}
-	_, err = task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{
-		Timeout: secs(timeout),
+	// The wait deadline is owned here (not by task.Wait) so an expired wait
+	// is always recognisable via errors.Is(err, context.DeadlineExceeded),
+	// even when the last status poll failed with an error that doesn't wrap
+	// the context error (e.g. exhausted transport retries).
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, secs(timeout))
+		defer cancel()
+	}
+	_, err = task.Wait(waitCtx, p.TaskStatus, h, task.WaitOptions{
 		Spinner: isTTY(),
 		Out:     stderrWriter(),
 		Label:   label,
 	})
 	if err != nil {
+		if cerr := waitCtx.Err(); cerr != nil && !errors.Is(err, cerr) {
+			err = fmt.Errorf("%w: %w", cerr, err)
+		}
 		return fmt.Errorf("%s: %w", label, err)
 	}
 	return nil
