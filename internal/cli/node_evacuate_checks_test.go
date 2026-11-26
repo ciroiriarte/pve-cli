@@ -303,9 +303,46 @@ func TestNodeEvacuateStalePolicyUsesLiveState(t *testing.T) {
 	if it := evacPlan(t, out)[180]; it["to"] != "pve-02" || it["mode"] != "online" {
 		t.Errorf("180 is running live and replicates to pve-02: %v", it)
 	}
-	out, _ = runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--online=false", "-o", "json")...)
+	out, _ = runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--all", "--online=false", "-o", "json")...)
 	if it := evacPlan(t, out)[181]; it["skip"] != false || it["mode"] != "offline" {
 		t.Errorf("181 is stopped live; --online=false must not skip it: %v", it)
+	}
+}
+
+// Without --all, the running-only filter applies after the precondition: a
+// stale "stopped" entry for a running guest must not be left behind.
+func TestNodeEvacuateDefaultFilterUsesLiveState(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		{"type": "qemu", "vmid": 190, "name": "stale", "node": "pve-01", "status": "stopped", "maxmem": gib},
+		ctGuest(191, "stopped"),
+		{"type": "qemu", "vmid": 192, "name": "really-off", "node": "pve-01", "status": "stopped", "maxmem": gib},
+	})
+	f.liveRunning[190] = 1
+	f.liveRunning[191] = 1
+	srv := f.start()
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	plan := evacPlan(t, out)
+	if plan[190]["mode"] != "online" || plan[190]["skip"] != false {
+		t.Errorf("190 is live running and must be planned: %v", plan[190])
+	}
+	if plan[191]["mode"] != "restart" || plan[191]["skip"] != false {
+		t.Errorf("191 is live running and must be planned: %v", plan[191])
+	}
+	if _, ok := plan[192]; ok {
+		t.Errorf("192 is really stopped and stays out of the default plan: %v", plan[192])
+	}
+
+	out, err = runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--online=false", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) != ExitValidation {
+		t.Fatalf("a running VM skipped by --online=false must exit %d, got %v", ExitValidation, err)
+	}
+	if it := evacPlan(t, out)[190]; it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), "--online=false") {
+		t.Errorf("190 must be skipped with the --online=false reason: %v", it)
 	}
 }
 

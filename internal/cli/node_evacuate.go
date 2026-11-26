@@ -254,7 +254,9 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 		if t, ok := targets[r.Node]; ok && r.Status == "running" {
 			t.vcpus += r.MaxCPU
 		}
-		if r.Node != src || (!o.all && r.Status != "running") {
+		// Every guest on src is enumerated; without --all the running-only
+		// filter runs after the preconditions refresh the live state.
+		if r.Node != src {
 			continue
 		}
 		items = append(items, &evacItem{
@@ -355,6 +357,19 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 				it.restrict(tgts, reasons)
 			}
 		}
+	}
+
+	// Running-only filter (default), applied after the preconditions have
+	// refreshed each guest's live state: a stale "stopped" entry for a
+	// running guest must not be left behind.
+	if !o.all {
+		kept := items[:0]
+		for _, it := range items {
+			if it.Status == "running" {
+				kept = append(kept, it)
+			}
+		}
+		items = kept
 	}
 
 	// Greedy placement: running guests first (they need the capacity now),
@@ -862,6 +877,7 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 			if !posted {
 				// A worker admitted before the halt never POSTs after it.
 				it.Result, it.Error = "not-attempted", notAttempted
+				logf("- %s: not attempted (an earlier migration ended without a final task status)\n", label)
 				return
 			}
 			logf("→ %s\n", label)
@@ -922,7 +938,8 @@ func (g *evacGate) post(fn func() ([]byte, error)) (body []byte, ran bool, err e
 	return body, true, err
 }
 
-// Test seams for deterministic concurrency tests (nil in production).
+// Test seams for deterministic concurrency tests (nil in production). They
+// are package globals: tests that set them must not use t.Parallel().
 var (
 	evacBeforePost func(vmid int)
 	evacHalted     func()
