@@ -134,7 +134,8 @@ func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
 	// from the pending view, which must not make the CT movable.
 	f.ctConfCurrent[150] = `{"rootfs":"local-lvm:vm-150-disk-0","mp0":"/srv/a,mp=/a"}`
 	f.ctConf[150] = `{"rootfs":"local-lvm:vm-150-disk-0","delete":"mp0"}`
-	// 151: a pending bind mount (not yet active) also blocks.
+	// 151: a pending-only bind mount is ignored by PVE (prepare walks the
+	// active config; the pending walk skips non-volume mounts).
 	f.ctConfCurrent[151] = `{"rootfs":"local-lvm:vm-151-disk-0"}`
 	f.ctConf[151] = `{"rootfs":"local-lvm:vm-151-disk-0","mp1":"/srv/b,mp=/b"}`
 	// 152: shared=yes with volume= after other options is a shared bind mount.
@@ -146,10 +147,13 @@ func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
 
 	out, _ := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
 	plan := evacPlan(t, out)
-	for id, w := range map[int]string{150: "mount points: mp0", 151: "mount points: mp1"} {
+	for id, w := range map[int]string{150: "mount points: mp0"} {
 		if it := plan[id]; it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
 			t.Errorf("vmid %d: want skip with %q, got %v", id, w, it)
 		}
+	}
+	if plan[151]["skip"] != false {
+		t.Errorf("a pending-only bind mount must not block: %v", plan[151])
 	}
 	if plan[152]["skip"] != false {
 		t.Errorf("a shared=yes bind mount must not block: %v", plan[152])
@@ -180,6 +184,103 @@ func TestNodeEvacuateWaitTimeoutStopsDispatch(t *testing.T) {
 		if plan[id]["result"] != "not-attempted" {
 			t.Errorf("vmid %d should be not-attempted: %v", id, plan[id])
 		}
+	}
+}
+
+// A non-terminal wait failure after the task started (a status-poll error, a
+// timeout surfacing as a transport error) leaves the migration's outcome
+// unknown: report it so and start nothing else.
+func TestNodeEvacuateNonTerminalWaitHalts(t *testing.T) {
+	for name, set := range map[string]func(*evacFixture){
+		"poll error":     func(f *evacFixture) { f.pollErr[100] = true },
+		"slow poll":      func(f *evacFixture) { f.slow[100] = true },
+		"never finishes": func(f *evacFixture) { f.hang[100] = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEvacFixture(defaultEvacGuests())
+			set(f)
+			srv := f.start()
+			defer srv.Close()
+			out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "1", "--wait-timeout", "1", "-o", "json")...)
+			if err == nil || ExitCodeFor(err) != ExitTaskFailed {
+				t.Fatalf("want exit %d, got %v", ExitTaskFailed, err)
+			}
+			if fmt.Sprint(f.order) != "[100]" {
+				t.Fatalf("dispatch must halt, got POSTs %v", f.order)
+			}
+			plan := evacPlan(t, out)
+			if plan[100]["result"] != "unknown" || !strings.Contains(fmt.Sprint(plan[100]["error"]), "pc task show UPID:") {
+				t.Errorf("100 should be unknown with a task hint: %v", plan[100])
+			}
+			for _, id := range []int{101, 102} {
+				if plan[id]["result"] != "not-attempted" {
+					t.Errorf("vmid %d should be not-attempted: %v", id, plan[id])
+				}
+			}
+		})
+	}
+}
+
+func TestNodeEvacuateStorageContentAndPendingVolumes(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		ctGuest(160, "running"), ctGuest(161, "running"), ctGuest(162, "running"), ctGuest(163, "running"),
+		{"type": "qemu", "vmid": 164, "name": "isodisk", "node": "pve-01", "status": "stopped", "maxmem": gib},
+	})
+	// 160: rootfs on a storage without content rootdir.
+	f.ctConf[160] = `{"rootfs":"isos:160/vm-160-disk-0.raw"}`
+	// 161: a pending new-disk spec on tank (pve-01,pve-02 only) is skipped by PVE.
+	f.ctConfCurrent[161] = `{"rootfs":"local-lvm:vm-161-disk-0"}`
+	f.ctConf[161] = `{"rootfs":"local-lvm:vm-161-disk-0","mp0":"tank:8,mp=/t"}`
+	// 162: an existing pending volume on tank restricts to pve-02.
+	f.ctConfCurrent[162] = `{"rootfs":"local-lvm:vm-162-disk-0"}`
+	f.ctConf[162] = `{"rootfs":"local-lvm:vm-162-disk-0","mp0":"tank:subvol-162-disk-1,mp=/t"}`
+	// 163: a pending-only volume on shared storage isn't target-checked.
+	f.ctConfCurrent[163] = `{"rootfs":"local-lvm:vm-163-disk-0"}`
+	f.ctConf[163] = `{"rootfs":"local-lvm:vm-163-disk-0","mp0":"nfs:163/vm-163-disk-1.raw,mp=/n"}`
+	// 164: a local VM disk on a storage without content images.
+	f.pre[164] = `{"running":0,"allowed_nodes":["pve-02","pve-03"],"local_disks":[{"volid":"isos:164/vm-164-disk-0.qcow2"}],"local_resources":[]}`
+	srv := f.start()
+	defer srv.Close()
+
+	out, _ := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--all", "-o", "json")...)
+	plan := evacPlan(t, out)
+	for id, w := range map[int]string{160: "content type rootdir", 164: "content type images"} {
+		if it := plan[id]; it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
+			t.Errorf("vmid %d: want skip with %q, got %v", id, w, it)
+		}
+	}
+	if plan[161]["to"] != "pve-03" {
+		t.Errorf("a pending new-disk spec must not restrict (want pve-03, most headroom): %v", plan[161])
+	}
+	if plan[162]["to"] != "pve-02" {
+		t.Errorf("an existing pending volume on tank restricts to pve-02: %v", plan[162])
+	}
+	if plan[163]["skip"] != false {
+		t.Errorf("a pending shared volume must not restrict: %v", plan[163])
+	}
+}
+
+// /cluster/resources can lag the real power state (seen live right after a
+// restart migration): the precondition's running flag wins.
+func TestNodeEvacuateStaleStatusUsesPrecondition(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		ctGuest(170, "stopped"),
+		{"type": "qemu", "vmid": 171, "name": "vm", "node": "pve-01", "status": "running", "maxmem": gib},
+	})
+	f.liveRunning[170] = 1 // actually running
+	f.liveRunning[171] = 0 // actually stopped
+	srv := f.start()
+	defer srv.Close()
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--all", "--yes", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	plan := evacPlan(t, out)
+	if plan[170]["mode"] != "restart" || plan[170]["status"] != "running" || f.posts[170]["restart"] != "1" {
+		t.Errorf("170 is running per the precondition: %v / %v", plan[170], f.posts[170])
+	}
+	if plan[171]["mode"] != "offline" || f.posts[171]["online"] != "" {
+		t.Errorf("171 is stopped per the precondition: %v / %v", plan[171], f.posts[171])
 	}
 }
 

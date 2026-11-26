@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const gib = int64(1) << 30
@@ -24,9 +25,12 @@ type evacFixture struct {
 	repl    string           // /cluster/replication entries (JSON, comma-separated)
 	postErr map[int]bool     // vmid → migrate POST fails synchronously
 	hang    map[int]bool     // vmid → migration task never finishes
+	slow    map[int]bool     // vmid → status poll takes longer than --wait-timeout
+	pollErr map[int]bool     // vmid → status poll fails (non-terminal)
 	// vmid → CT config with ?current=1 (active config; ctConf is the
 	// pending-applied view). Unset = same as ctConf.
 	ctConfCurrent map[int]string
+	liveRunning   map[int]int      // vmid → precondition running flag override (stale /cluster/resources)
 	fail          map[int]bool     // vmid → migration task ends with an error
 	nodes         []map[string]any // override nodes (nil = default 3-node cluster)
 	mu            sync.Mutex
@@ -47,7 +51,7 @@ func defaultEvacGuests() []map[string]any {
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
 	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
-		hang: map[int]bool{}, ctConfCurrent: map[int]string{},
+		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
@@ -70,7 +74,7 @@ func (f *evacFixture) start() *httptest.Server {
 		fmt.Fprintf(w, `{"data":[%s]}`, f.repl)
 	})
 	mux.HandleFunc("/api2/json/storage", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"data":[{"storage":"local-lvm","type":"lvmthin"},{"storage":"tank","type":"zfspool","nodes":"pve-01,pve-02"},{"storage":"off","type":"dir","disable":1}]}`))
+		w.Write([]byte(`{"data":[{"storage":"local-lvm","type":"lvmthin","content":"rootdir,images"},{"storage":"tank","type":"zfspool","nodes":"pve-01,pve-02","content":"rootdir,images"},{"storage":"off","type":"dir","disable":1,"content":"rootdir,images"},{"storage":"isos","type":"dir","content":"iso,vztmpl"},{"storage":"nfs","type":"nfs","shared":1,"nodes":"pve-01","content":"rootdir,images"}]}`))
 	})
 	mux.HandleFunc("/api2/json/cluster/ha/resources", func(w http.ResponseWriter, _ *http.Request) {
 		var out []map[string]string
@@ -85,7 +89,14 @@ func (f *evacFixture) start() *httptest.Server {
 		if len(parts) == 3 && parts[0] == "tasks" && parts[2] == "status" {
 			fields := strings.Split(parts[1], ":")
 			vmid, _ := strconv.Atoi(fields[6])
-			if f.hang[vmid] {
+			if f.slow[vmid] {
+				time.Sleep(1500 * time.Millisecond)
+			}
+			if f.pollErr[vmid] {
+				http.Error(w, "proxy error", 595)
+				return
+			}
+			if f.hang[vmid] || f.slow[vmid] {
 				w.Write([]byte(`{"data":{"status":"running"}}`))
 				return
 			}
@@ -122,9 +133,9 @@ func (f *evacFixture) start() *httptest.Server {
 				case ok:
 					fmt.Fprintf(w, `{"data":%s}`, d)
 				case parts[0] == "lxc":
-					w.Write([]byte(`{"data":{"running":1,"allowed-nodes":["pve-02","pve-03"],"not-allowed-nodes":{}}}`))
+					fmt.Fprintf(w, `{"data":{"running":%d,"allowed-nodes":["pve-02","pve-03"],"not-allowed-nodes":{}}}`, f.running(vmid))
 				default:
-					w.Write([]byte(`{"data":{"running":1,"allowed_nodes":["pve-02","pve-03"],"not_allowed_nodes":{},"local_disks":[],"local_resources":[]}}`))
+					fmt.Fprintf(w, `{"data":{"running":%d,"allowed_nodes":["pve-02","pve-03"],"not_allowed_nodes":{},"local_disks":[],"local_resources":[]}}`, f.running(vmid))
 				}
 				return
 			}
@@ -147,6 +158,20 @@ func (f *evacFixture) start() *httptest.Server {
 		http.NotFound(w, r)
 	})
 	return httptest.NewServer(mux)
+}
+
+// running is the default precondition `running` flag: 1 when the guest's
+// /cluster/resources status is running, else the liveRunning override.
+func (f *evacFixture) running(vmid int) int {
+	if v, ok := f.liveRunning[vmid]; ok {
+		return v
+	}
+	for _, g := range f.guests {
+		if g["vmid"] == vmid && g["status"] == "running" {
+			return 1
+		}
+	}
+	return 0
 }
 
 func evacPlan(t *testing.T, out string) map[int]map[string]any {

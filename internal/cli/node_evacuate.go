@@ -332,7 +332,9 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 			it.Mode = "offline"
 		}
 		if it.Kind == domain.KindVM {
-			vmPrecondition(ctx, p, it, o.withLocalDisks)
+			if err := vmPrecondition(ctx, p, it, o.online, o.withLocalDisks, &cache); err != nil {
+				return nil, err
+			}
 		} else {
 			if err := ctPrecondition(ctx, p, it, &cache, sortedKeys(targetSet)); err != nil {
 				return nil, err
@@ -436,13 +438,14 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 // vmPrecondition consults the qemu migrate precondition endpoint and marks the
 // item skipped when it has local resources that block migration, or narrows
 // its allowed destinations to the nodes PVE says can host its storage.
-func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, withLocalDisks bool) {
+func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, online, withLocalDisks bool, cache *evacCache) error {
 	body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/qemu/%d/migrate", it.From, it.VMID), nil)
 	if err != nil {
 		it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
-		return
+		return nil
 	}
 	var pre struct {
+		Running         any                       `json:"running"`
 		AllowedNodes    *[]string                 `json:"allowed_nodes"`
 		NotAllowedNodes map[string]map[string]any `json:"not_allowed_nodes"`
 		LocalResources  []string                  `json:"local_resources"`
@@ -455,7 +458,10 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 	}
 	if err := protocol.DecodeData(body, &pre); err != nil {
 		it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
-		return
+		return nil
+	}
+	if it.applyRunning(pre.Running, online); it.Skip {
+		return nil
 	}
 	// As QemuMigrate::prepare: local resources that are cluster mappings
 	// don't block (missing mappings show up in not_allowed_nodes), but a
@@ -468,7 +474,7 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 	}
 	if len(blocking) > 0 {
 		it.Skip, it.Reason = true, "local resources: "+strings.Join(blocking, ",")
-		return
+		return nil
 	}
 	if it.Mode == "online" {
 		for _, k := range sortedMapKeys(pre.MappedInfo) {
@@ -478,14 +484,14 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 		}
 		if len(noLive) > 0 {
 			it.Skip, it.Reason = true, "mapped resources not live-migratable: "+strings.Join(noLive, ",")
-			return
+			return nil
 		}
 	}
 	// Mirrors PVE's QemuMigrate rules: a cloud-init drive is regenerated on
 	// the target, any other local CD-ROM blocks migration, and attached local
 	// disks only need with-local-disks for a live migration (offline
 	// migration copies them, as it does unused ones).
-	var cdroms, attached []string
+	var cdroms, attached, copied []string
 	for _, d := range pre.LocalDisks {
 		switch {
 		case truthy(d.CDROM) && cloudinitVol.MatchString(d.Volid):
@@ -493,22 +499,41 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 			cdroms = append(cdroms, d.Volid)
 		case !truthy(d.IsUnused):
 			attached = append(attached, d.Volid)
+			copied = append(copied, d.Volid)
+		default:
+			copied = append(copied, d.Volid)
+		}
+	}
+	// Copied disks land on the same storage id on the target, which must
+	// allow content type images (target_storage_check_available).
+	if len(copied) > 0 {
+		cfg, err := cache.storage(ctx, p)
+		if err != nil {
+			return err
+		}
+		for _, v := range copied {
+			s, _, _ := strings.Cut(v, ":")
+			if sc, known := cfg[s]; known && !sc.hasContent("images") {
+				it.Skip, it.Reason = true, "storage "+s+" does not allow content type images ("+v+")"
+				return nil
+			}
 		}
 	}
 	if len(cdroms) > 0 {
 		it.Skip, it.Reason = true, "local CD-ROM ISO: "+strings.Join(cdroms, ",")
-		return
+		return nil
 	}
 	if len(attached) > 0 && it.Mode == "online" {
 		if !withLocalDisks {
 			it.Skip, it.Reason = true, "local disks need --with-local-disks for live migration: "+strings.Join(attached, ",")
-			return
+			return nil
 		}
 		it.localDisks = true
 	}
 	if pre.AllowedNodes != nil {
 		it.restrict(*pre.AllowedNodes, notAllowedReasons(pre.NotAllowedNodes))
 	}
+	return nil
 }
 
 // ctPrecondition checks a container the way LXC/Migrate.pm will: the LXC
@@ -521,6 +546,7 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 	switch {
 	case err == nil:
 		var pre struct {
+			Running         any                       `json:"running"`
 			AllowedNodes    *[]string                 `json:"allowed-nodes"`
 			NotAllowedNodes map[string]map[string]any `json:"not-allowed-nodes"`
 		}
@@ -528,6 +554,7 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 			it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
 			return nil
 		}
+		it.applyRunning(pre.Running, true)
 		if pre.AllowedNodes != nil {
 			it.restrict(*pre.AllowedNodes, notAllowedReasons(pre.NotAllowedNodes))
 		}
@@ -538,11 +565,12 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 		return nil
 	}
 
-	// LXC/Migrate.pm walks the active config and then the pending volumes,
-	// so check both: the active config (current=1) and the default view with
-	// pending changes applied. A mount point in either blocks; a pending
-	// deletion doesn't hide an active one.
-	var local, storages []string
+	// LXC/Migrate.pm: prepare() walks the active config (current=1): it
+	// refuses non-shared bind/device mounts and requires each volume's
+	// storage enabled on the target with content rootdir. sync_volumes()
+	// then also checks pending volumes (the default view, pending applied)
+	// on non-shared storage for target availability.
+	var local, storages, activeStor []string
 	for _, query := range []url.Values{{"current": {"1"}}, nil} {
 		body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/lxc/%d/config", it.From, it.VMID), query)
 		if err != nil {
@@ -554,6 +582,7 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 			it.Skip, it.Reason = true, "reading config failed: "+err.Error()
 			return nil
 		}
+		active := query != nil
 		for _, k := range sortedMapKeys(conf) {
 			if k != "rootfs" && !ctMountKey.MatchString(k) {
 				continue
@@ -561,13 +590,26 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 			val, _ := conf[k].(string)
 			vol, shared := parseCTMount(val)
 			if strings.HasPrefix(vol, "/") {
-				if !shared && !hasString(local, k) {
+				// prepare() refuses non-shared bind/device mounts of the
+				// active config only; the pending walk ignores them.
+				if active && !shared && !hasString(local, k) {
 					local = append(local, k)
 				}
 				continue
 			}
-			if i := strings.Index(vol, ":"); i > 0 && !hasString(storages, vol[:i]) {
-				storages = append(storages, vol[:i])
+			// A pending new-disk spec (local-lvm:8) doesn't exist yet;
+			// PVE skips it ($NEW_DISK_RE).
+			if !active && newDiskSpec.MatchString(vol) {
+				continue
+			}
+			if i := strings.Index(vol, ":"); i > 0 {
+				s := vol[:i]
+				if active && !hasString(activeStor, s) {
+					activeStor = append(activeStor, s)
+				}
+				if !hasString(storages, s) {
+					storages = append(storages, s)
+				}
 			}
 		}
 	}
@@ -579,6 +621,14 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 	if err != nil {
 		return err
 	}
+	// prepare() requires content type rootdir on every active volume's
+	// storage (same cluster-wide config on source and target).
+	for _, s := range activeStor {
+		if sc, known := cfg[s]; known && !sc.hasContent("rootdir") {
+			it.Skip, it.Reason = true, "storage "+s+" does not allow content type rootdir"
+			return nil
+		}
+	}
 	var ok []string
 	reasons := map[string]string{}
 	for _, n := range nodes {
@@ -587,6 +637,9 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 			// A storage absent from /storage is one this token can't see
 			// (no Datastore.Audit): leave that decision to PVE.
 			sc, known := cfg[s]
+			if known && sc.Shared == 1 && !hasString(activeStor, s) {
+				continue // pending-only volume on shared storage: not checked by PVE
+			}
 			if known && (sc.Disable == 1 || (sc.Nodes != "" && !hasString(strings.Split(sc.Nodes, ","), n))) {
 				missing = s
 				break
@@ -632,6 +685,31 @@ var ctMountKey = regexp.MustCompile(`^(mp|unused)\d+$`)
 func endpointMissing(err error) bool {
 	var apiErr *protocol.APIError
 	return errors.As(err, &apiErr) && (apiErr.StatusCode == 404 || apiErr.StatusCode == 501)
+}
+
+// applyRunning updates the guest's power state and migration mode from a
+// precondition's live `running` flag. /cluster/resources can lag by several
+// seconds (e.g. right after a restart migration), and planning a running CT as
+// offline makes PVE refuse the migration.
+func (it *evacItem) applyRunning(v any, online bool) {
+	if v == nil {
+		return
+	}
+	running := truthy(v)
+	if running == (it.Status == "running") {
+		return
+	}
+	switch {
+	case running && it.Kind == domain.KindCT:
+		it.Status, it.Mode = "running", "restart"
+	case running && !online:
+		it.Status = "running"
+		it.Skip, it.Reason = true, "running VM; live migration disabled (--online=false)"
+	case running:
+		it.Status, it.Mode = "running", "online"
+	default:
+		it.Status, it.Mode = "stopped", "offline"
+	}
 }
 
 // restrict narrows the item's allowed destinations to list (intersecting any
@@ -688,8 +766,20 @@ type evacCache struct {
 type evacStorage struct {
 	Storage string `json:"storage"`
 	Nodes   string `json:"nodes"`
+	Content string `json:"content"`
 	Disable int    `json:"disable"`
+	Shared  int    `json:"shared"`
 }
+
+// hasContent reports whether the storage allows content type c. An empty
+// content list (not reported) is treated as allowed.
+func (s evacStorage) hasContent(c string) bool {
+	return s.Content == "" || hasString(strings.Split(s.Content, ","), c)
+}
+
+// newDiskSpec matches a pending new-disk spec such as "local-lvm:8"
+// (PVE::LXC::NEW_DISK_RE / qemu's equivalent).
+var newDiskSpec = regexp.MustCompile(`^[^:\s]+:\d+(\.\d+)?$`)
 
 // replication maps vmid → replication target nodes (/cluster/replication).
 func (c *evacCache) replication(ctx context.Context, p provider.Provider) (map[int][]string, error) {
@@ -737,10 +827,11 @@ func (c *evacCache) storage(ctx context.Context, p provider.Provider) (map[strin
 // runEvacuation migrates the planned items, at most `parallel` at a time, each
 // task-polled to completion. Results are recorded on the items.
 //
-// A wait that ends without a final task status (--wait-timeout, or the
-// context cancelled) leaves that migration running in PVE while its slot
-// frees up here, so dispatching more would exceed --parallel. After one, no
-// new migration starts: the rest are marked not-attempted.
+// A wait that ends without a terminal task status (--wait-timeout, a
+// cancelled context, a status-poll error) may leave that migration running in
+// PVE while its slot frees up here, so dispatching more could exceed
+// --parallel. After one, no new migration starts: the rest are marked
+// not-attempted.
 func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, parallel, timeout, restartTimeout int) {
 	var mu sync.Mutex
 	halted := false
@@ -761,7 +852,7 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 		sem <- struct{}{}
 		if isHalted() {
 			<-sem
-			it.Result, it.Error = "not-attempted", "not attempted: an earlier migration's state is unknown (wait timed out)"
+			it.Result, it.Error = "not-attempted", "not attempted: an earlier migration ended without a final task status"
 			continue
 		}
 		wg.Add(1)
@@ -774,9 +865,14 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 			it.UPID = upid
 			if err != nil {
 				it.Result, it.Error = "failed", err.Error()
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				// Once a task exists, only a terminal task status (a
+				// KindTaskFailed error from task.Wait) settles it. Any other
+				// wait error (timeout, poll failure, auth expiry) leaves the
+				// migration possibly still running.
+				var apiErr *protocol.APIError
+				if upid != "" && !(errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTaskFailed) {
 					it.Result = "unknown"
-					it.Error = "gave up waiting; the migration may still be running in PVE (check `pc task show` with the upid): " + err.Error()
+					it.Error = "no final task status; the migration may still be running in PVE (check `pc task show " + upid + "`): " + err.Error()
 					mu.Lock()
 					halted = true
 					mu.Unlock()
@@ -796,7 +892,11 @@ func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, timeout,
 	switch it.Mode {
 	case "online":
 		params.Set("online", "1")
-	case "restart":
+	}
+	// restart only takes effect for a running CT (LXC/Migrate.pm), so send it
+	// for every CT: one that started after planning is restart-migrated
+	// instead of refused.
+	if it.Kind == domain.KindCT {
 		params.Set("restart", "1")
 		params.Set("timeout", strconv.Itoa(restartTimeout))
 	}

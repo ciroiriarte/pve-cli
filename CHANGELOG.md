@@ -16,20 +16,24 @@ surface may change between minor releases.
   live-migrated (with `--with-local-disks` when they have attached local disks)
   and running containers use restart migration (`--restart-timeout`).
   Migrations run one at a time, or up to 8 at once with `--parallel`, and each
-  task is polled. If a wait hits `--wait-timeout`, no further migration starts
-  (the timed-out one may still be running), and the rest are reported as
-  `not-attempted`. Destinations are limited to the nodes the qemu/LXC migrate
-  preconditions allow (storage, mappings, HA affinity), the nodes where a
-  container's storages are enabled, and a running replicated VM's replication
-  targets. Guests that can't move are skipped and reported: HA-managed guests,
-  VMs with unmapped local devices, mapped devices that can't live-migrate, a
-  local CD-ROM ISO, or (running) local disks without `--with-local-disks`,
-  containers with local bind/device mount points, guests with no allowed
-  destination or not enough capacity, locked guests and templates. `--dry-run`
+  task is polled. If a started migration's wait ends without a final task
+  status (`--wait-timeout`, a status-poll error, cancellation), that guest is
+  reported as `unknown` because it may still be migrating. No further
+  migration starts, and the rest are reported as `not-attempted`.
+  Destinations are limited to the nodes the qemu/LXC migrate preconditions
+  allow (storage, mappings, HA affinity), the nodes where a container's
+  storages are enabled, and a running replicated VM's replication targets.
+  Guests that can't move are skipped and reported: HA-managed guests, VMs with
+  unmapped local devices, mapped devices that can't live-migrate, a local
+  CD-ROM ISO, (running) local disks without `--with-local-disks`, or local
+  disks on a storage without content `images`, containers with active local
+  bind/device mount points or a volume on a storage without content `rootdir`,
+  guests with no allowed destination or not enough capacity, locked guests and
+  templates. `--dry-run`
   prints the plan, which `-o json` emits as an array of objects (`vmid`,
   `name`, `kind`, `status`, `from`, `to`, `mode`, `maxmem`, `skip`, `reason`;
   after a real run also `result`, `error` and `upid`). The command asks for
-  confirmation (`--yes` skips it). It exits 5 if any migration failed, or 6 if
+  confirmation (`--yes` skips it). It exits 5 if any migration failed or ended `unknown`/`not-attempted`, or 6 if
   any guest other than a template could not be moved. PVE only.
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
