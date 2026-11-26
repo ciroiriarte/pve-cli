@@ -37,6 +37,9 @@ type Settings struct {
 	// the server answers a ticket login with a TFA challenge. Not read from
 	// config: the CLI injects it when stdin is a terminal.
 	OTPPrompt func() (string, error)
+	// TicketCacheOnly restricts ticket auth to an existing cached ticket (no
+	// password/TFA login). Set by shell completion, never from config/env.
+	TicketCacheOnly bool
 }
 
 // Overrides carries explicit flag values (highest precedence). Empty string /

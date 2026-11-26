@@ -104,6 +104,7 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		}
 		t.OTP = s.OTP
 		t.PromptOTP = s.OTPPrompt
+		t.CacheOnly = s.TicketCacheOnly
 		t.Cache = auth.NewKeyringTicketCache(KeyringService, s.Server, s.User)
 		ap = t
 	default:

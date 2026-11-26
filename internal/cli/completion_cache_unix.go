@@ -4,7 +4,9 @@ package cli
 
 import (
 	"os"
+	"strconv"
 	"syscall"
+	"time"
 )
 
 func ownedByMe(fi os.FileInfo) bool {
@@ -25,15 +27,29 @@ func cacheDirSafe(dir string) bool {
 	return err == nil && fi.IsDir() && ownedByMe(fi) && fi.Mode().Perm() == 0o700
 }
 
-// cacheDirUsable reports whether dir is a real directory (not a symlink) owned
-// by the current user, tightening it to 0700 if needed. Write-side only.
-func cacheDirUsable(dir string) bool {
+// prepareCacheDir makes dir a safe cache directory before a write, deciding
+// from a single Lstat. A missing dir is created 0700; a dir of ours with a
+// loose mode is not tightened in place but atomically replaced by a fresh,
+// empty 0700 dir (rename aside, then remove). So nothing written while it
+// was open — a planted file, or one of ours renamed over another key — can
+// ever be read, even by a completion racing this repair: it sees either the
+// old (unsafe, skipped) dir or the new empty one. Anything else (not ours,
+// a symlink, a file) is refused.
+func prepareCacheDir(dir string) bool {
 	fi, err := os.Lstat(dir)
-	if err != nil || !fi.IsDir() || !ownedByMe(fi) {
+	switch {
+	case os.IsNotExist(err):
+		return os.Mkdir(dir, 0o700) == nil || cacheDirSafe(dir)
+	case err != nil || !fi.IsDir() || !ownedByMe(fi):
+		return false
+	case fi.Mode().Perm() == 0o700:
+		return true
+	}
+	stale := dir + ".stale-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if os.Rename(dir, stale) != nil {
 		return false
 	}
-	if fi.Mode().Perm() != 0o700 {
-		return os.Chmod(dir, 0o700) == nil
-	}
-	return true
+	defer os.RemoveAll(stale) // never follows symlinks
+	// A racing completion may have created the new dir first.
+	return os.Mkdir(dir, 0o700) == nil || cacheDirSafe(dir)
 }

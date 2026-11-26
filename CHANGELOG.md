@@ -17,9 +17,11 @@ surface may change between minor releases.
   keyring, cache and API access are all bounded by a 1.5s timeout
   (`PVE_CLI_COMPLETION_TIMEOUT`); it never prompts or prints, yields nothing
   when the backend is unreachable, and never contacts an insecure (unverified,
-  unpinned) backend. Results are cached for 45s per backend identity in the
-  user cache dir (`$XDG_CACHE_HOME` or `~/.cache`; `~/Library/Caches` on
-  macOS), trusting only 0600 files you own in a 0700 directory you own.
+  unpinned) backend; with ticket auth it never logs in or sends a TOTP code,
+  only reusing (or renewing) a cached ticket. Results are cached for 45s per
+  backend identity in the user cache dir (`$XDG_CACHE_HOME` or `~/.cache`;
+  `~/Library/Caches` on macOS), trusting only 0600 files you own in a 0700
+  directory you own.
   Tag-name completion now uses the same bounded, cached path. See *Shell
   completion* in `docs/install.md` (#23).
 - **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login

@@ -152,38 +152,17 @@ func readCompCache(path string) map[string]compCacheEntry {
 }
 
 // writeCompCache stores one data set atomically (0600 temp file + rename) in a
-// directory we own with mode 0700; otherwise it doesn't cache. If the
-// directory was unsafe when found, every cache file in it is deleted rather
-// than merged: tightening it must not launder files planted (or renamed over
-// another key) while it was open.
+// directory we own with mode 0700 (see prepareCacheDir); otherwise it doesn't
+// cache.
 func writeCompCache(path, set string, items []compEntry) {
 	if path == "" {
 		return
 	}
 	dir := filepath.Dir(path)
-	if os.MkdirAll(dir, 0o700) != nil {
+	if os.MkdirAll(filepath.Dir(dir), 0o700) != nil || !prepareCacheDir(dir) {
 		return
 	}
-	wasSafe := cacheDirSafe(dir)
-	if !cacheDirUsable(dir) {
-		return
-	}
-	m := map[string]compCacheEntry{}
-	if wasSafe {
-		m = readCompCache(path)
-	} else {
-		// Repairing an unsafe dir (now 0700, so no one else can add files):
-		// drop every cache file in it — any could have been planted or
-		// renamed over another backend's key while it was open.
-		// Match entry names only: the dir path may contain glob metacharacters.
-		entries, _ := os.ReadDir(dir)
-		for _, e := range entries {
-			n := e.Name()
-			if (strings.HasPrefix(n, "completion-") && strings.HasSuffix(n, ".json")) || strings.HasPrefix(n, ".completion-") {
-				_ = os.Remove(filepath.Join(dir, n))
-			}
-		}
-	}
+	m := readCompCache(path)
 	m[set] = compCacheEntry{At: time.Now(), Items: items}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -265,6 +244,10 @@ func loadCompletion(ctx context.Context, ov config.Overrides, set string) (compR
 	if err != nil {
 		return compResult{}, err
 	}
+	// A <TAB> never logs in with a password and never sends a TFA code
+	// (PVE_CLI_OTP is ignored): ticket auth only uses (and may renew) an
+	// existing cached ticket; without one, no suggestions.
+	s.OTP, s.OTPPrompt, s.TicketCacheOnly = "", nil, true
 	p, err := provider.New(s, false)
 	if err != nil {
 		return compResult{}, err

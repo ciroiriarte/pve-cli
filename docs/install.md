@@ -270,10 +270,18 @@ false` or `PVE_CLI_INSECURE`) and no pinned fingerprint is **never contacted**
 by completion — it couldn't show the insecure-credentials warning, so it
 doesn't send credentials; pin the cert to get live suggestions.
 
+With ticket auth (`auth.type: ticket`), completion never logs in with your
+password and never sends a TOTP code (`PVE_CLI_OTP` is ignored). It only uses
+the ticket that a two-factor login cached in the keyring (renewing it once it
+is over an hour old). Without one, which includes every ticket user without
+TFA (their tickets aren't cached), it offers no live suggestions; use an API
+token for live completion.
+
 Results are cached for 45s in the user cache dir (`$XDG_CACHE_HOME`, default
 `~/.cache`; `~/Library/Caches` on macOS) as
 `pve-cli/completion-<hash>.json`, keyed by provider, server, auth identity and
 TLS pin/CA — never the secret. Only a regular 0600 file owned by you, in a
 0700 directory you own, is read; otherwise the cache is skipped (the directory
-is tightened to 0700 only when completion next writes to it, and every cache
-file already in it is deleted then). Delete the file to refresh sooner.
+is replaced by a fresh, empty 0700 directory the next time completion writes,
+so nothing written while it was open is ever read). Delete the file to
+refresh sooner.

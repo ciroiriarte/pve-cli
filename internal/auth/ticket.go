@@ -90,6 +90,10 @@ type TicketProvider struct {
 	PromptOTP func() (string, error)
 	// Cache, when set, persists TFA-confirmed tickets across processes.
 	Cache TicketCache
+	// CacheOnly forbids password logins: only the in-memory or persisted
+	// ticket may be used (and renewed). Shell completion sets it so a <TAB>
+	// never sends the password or a TFA code.
+	CacheOnly bool
 
 	now func() time.Time // clock; nil means time.Now (tests override it)
 
@@ -274,6 +278,9 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 		}
 	}
 
+	if t.CacheOnly {
+		return authError(fmt.Sprintf("no usable cached ticket for %s (password login disabled here)", t.user))
+	}
 	res, err := t.post(ctx, url.Values{"username": {t.user}, "password": {t.password}})
 	if err != nil {
 		return err
