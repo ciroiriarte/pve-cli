@@ -79,6 +79,10 @@ type TicketProvider struct {
 	user     string // user@realm
 	password string
 	client   *http.Client
+	// CookieName is the auth cookie built from the body ticket when the server
+	// sets no cookie itself: "PVEAuthCookie" (default) or "PBSAuthCookie".
+	// Set it with CookieNameFor so every ticket login path agrees.
+	CookieName string
 
 	// OTP is the second-factor response used when the server answers with a
 	// TFA challenge: a bare TOTP code, or a typed response such as
@@ -102,6 +106,29 @@ type TicketProvider struct {
 	skipCache bool      // a cached ticket was rejected: never load from Cache again
 	tfaChain  bool      // current ticket descends from a TFA login: persist renewals
 	tfa       bool      // the last password login answered a TFA challenge
+}
+
+// CookieNameFor returns the auth cookie a backend expects for a body-only
+// ticket: "PBSAuthCookie" for pbs, "" (the PVEAuthCookie default) otherwise.
+func CookieNameFor(provider string) string {
+	if provider == "pbs" {
+		return "PBSAuthCookie"
+	}
+	return ""
+}
+
+// NewProviderTicket is the single construction point for a backend's ticket
+// provider: it applies the backend's cookie name and the keyring ticket cache
+// (keyed by provider, user and server), so `pc auth login` and the runtime
+// client always cache and replay the same cookie.
+func NewProviderTicket(provider, service, baseURL, user, password string, client *http.Client) (*TicketProvider, error) {
+	t, err := NewTicket(baseURL, user, password, client)
+	if err != nil {
+		return nil, err
+	}
+	t.CookieName = CookieNameFor(provider)
+	t.Cache = NewKeyringTicketCache(service, provider, baseURL, user)
+	return t, nil
 }
 
 // NewTicket builds a TicketProvider. client must be configured with the same
@@ -252,7 +279,7 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 		if c, ok := t.Cache.Load(); ok && c.User == t.user && c.Ticket != "" {
 			age := now.Sub(c.Issued)
 			adopt := func() {
-				t.set(c.cookieList(), c.CSRF, c.Ticket, c.Issued)
+				t.set(c.cookieList(t.CookieName), c.CSRF, c.Ticket, c.Issued)
 				t.fromCache, t.tfaChain = true, true
 			}
 			switch {
@@ -442,7 +469,8 @@ func (t *TicketProvider) post(ctx context.Context, form url.Values) (ticketResul
 
 	// The ticket is delivered as a Set-Cookie (PVE: PVEAuthCookie; PDM:
 	// __Host-PDMAuthCookie, HttpOnly with no body ticket). Capture whatever the
-	// server set; fall back to constructing PVEAuthCookie from the body ticket
+	// server set; fall back to constructing CookieName (PVEAuthCookie or
+	// PBSAuthCookie) from the body ticket
 	// for servers that only return it in the JSON.
 	res.cookies = resp.Cookies()
 	if res.ticket == "" {
@@ -472,7 +500,11 @@ func (t *TicketProvider) post(ctx context.Context, form url.Values) (ticketResul
 	}
 
 	if len(res.cookies) == 0 && res.ticket != "" {
-		res.cookies = []*http.Cookie{{Name: "PVEAuthCookie", Value: res.ticket}}
+		name := t.CookieName
+		if name == "" {
+			name = "PVEAuthCookie"
+		}
+		res.cookies = []*http.Cookie{{Name: name, Value: res.ticket}}
 	}
 	if len(res.cookies) == 0 {
 		return res, fmt.Errorf("ticket login: no auth cookie or ticket in response")

@@ -40,7 +40,7 @@ contexts:
   corp: { profile: corp-pdm, remote: dc-west }   # 'remote' applies to PDM only
 profiles:
   homelab:
-    provider: pve                                 # pve | pdm
+    provider: pve                                 # pve | pdm | pbs
     server: https://pve1.example:8006
     auth:
       type: token                                 # token | ticket
@@ -108,7 +108,7 @@ and saves nothing. A server that can't be reached only warns. Without a code
 and without a terminal, login stays offline, as for non-TFA users.
 
 The password alone can't produce a ticket for a TFA user, so the TFA-confirmed
-ticket is cached in the OS keyring (entry `ticket:<user>@<server>` under the
+ticket is cached in the OS keyring (entry `ticket:<provider>:<user>@<server>` under the
 `pve-cli` service) and reused by later commands. A ticket older than 1 h is
 renewed by passing it as the password, which keeps the TFA state and does not
 ask for a code; a long-running command renews its in-memory ticket the same
@@ -213,7 +213,8 @@ To fetch a node's fingerprint out of band instead:
 ssh root@node "openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256"
 ```
 
-## Selecting the backend (PVE vs PDM)
+## Selecting the backend (PVE, PDM or PBS)
 
 Set `provider:` in the profile, or override per-invocation with `--provider
-pve|pdm`. See [providers.md](providers.md) for what differs between them.
+pve|pdm|pbs`. A `pbs` server URL without a port defaults to `:8007`. See
+[providers.md](providers.md) for what differs between them.

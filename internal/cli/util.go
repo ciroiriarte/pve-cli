@@ -44,8 +44,8 @@ func confirm(a *app, prompt string) error {
 // naming the current provider so the pve/pdm split isn't invisible (design
 // decision #9). `op` is the human verb, e.g. "node network create".
 func ensurePVE(p interface{ Name() string }, op, alt string) error {
-	if p.Name() == "pdm" {
-		msg := fmt.Sprintf("%s is only available on PVE (current provider: pdm); set provider: pve", op)
+	if p.Name() != "pve" {
+		msg := fmt.Sprintf("%s is only available on PVE (current provider: %s); set provider: pve", op, p.Name())
 		if alt != "" {
 			msg += ", " + alt
 		}

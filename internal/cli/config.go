@@ -270,7 +270,7 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 
 // tfaState describes the persisted two-factor ticket for a ticket profile.
 func tfaState(s *config.Settings) string {
-	c, ok := auth.NewKeyringTicketCache(keyringService, s.Server, s.User).Load()
+	c, ok := auth.NewKeyringTicketCache(keyringService, s.Provider, s.Server, s.User).Load()
 	otp := ""
 	if s.OTP != "" {
 		otp = "; PVE_CLI_OTP is set"
@@ -316,10 +316,19 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			"  pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret-ref env:PVE_TOKEN\n" +
 			"  pass show pve/token | pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret -\n" +
 			"  pc auth login https://pve1:8006 --user root@pam\n" +
-			"  pc auth login https://pve1:8006 --user ops@pve --password-ref env:PVE_PW --otp 123456",
+			"  pc auth login https://pve1:8006 --user ops@pve --password-ref env:PVE_PW --otp 123456\n" +
+			"  pc auth login https://pbs1:8007 --provider pbs --token-id 'svc@pbs!cli'",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			server := args[0]
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			switch provider {
+			case "pve", "pdm", "pbs":
+			default:
+				return fmt.Errorf("invalid --provider %q: want pve, pdm or pbs", provider)
+			}
+			// PBS listens on 8007; fill it in when the URL names no port so
+			// the probe, the pin and the saved profile all target the API.
+			server := config.WithDefaultPort(provider, args[0])
 			if (tokenID == "") == (user == "") {
 				return fmt.Errorf("provide exactly one of --token-id (token auth) or --user (ticket auth)")
 			}
@@ -391,7 +400,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			}
 
 			if auth.Type == "ticket" {
-				if err := verifyTicketLogin(cmd.Context(), server, user, cred, otp, otpRef, fingerprint, insecure); err != nil {
+				if err := verifyTicketLogin(cmd.Context(), provider, server, user, cred, otp, otpRef, fingerprint, insecure); err != nil {
 					return err
 				}
 			}
@@ -442,7 +451,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("token-id", "otp-ref")
 	cmd.Flags().StringVar(&profile, "profile", "default", "profile name to write")
 	cmd.Flags().StringVar(&fingerprint, "fingerprint", "", "pin the server cert SHA-256 fingerprint")
-	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")
+	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm|pbs (pbs defaults the port to 8007)")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "disable TLS verification for this profile")
 	return cmd
 }
@@ -453,7 +462,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 // saved) and a two-factor ticket is cached for later commands. A server that
 // can't be reached only warns, like the certificate probe. Non-interactive
 // logins without a code stay offline, as before.
-func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
+func verifyTicketLogin(ctx context.Context, provider, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
 	// A TOTP code expires in seconds, so argv is acceptable for it; a typed
 	// response such as recovery:<key> stays valid until used, so warn (§7:
 	// security warnings go to stderr and are not TTY-gated).
@@ -481,13 +490,12 @@ func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef,
 	if err != nil {
 		return err
 	}
-	tp, err := auth.NewTicket(server, user, password, hc)
+	tp, err := auth.NewProviderTicket(provider, keyringService, server, user, password, hc)
 	if err != nil {
 		return err
 	}
 	tp.OTP, tp.PromptOTP = otp, prompt
-	cache := auth.NewKeyringTicketCache(keyringService, server, user)
-	tp.Cache = cache
+	cache := tp.Cache
 	if err := tp.Refresh(ctx); err != nil {
 		var ae *protocol.APIError
 		if errors.As(err, &ae) {

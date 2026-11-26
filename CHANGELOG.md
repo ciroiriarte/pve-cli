@@ -6,13 +6,46 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: Proxmox Backup Server as a third backend, `provider: pbs` (#19).
+  Token auth (`PBSAPIToken=<id>:<secret>`), ticket auth (`PBSAuthCookie` +
+  CSRF), TOFU fingerprint pinning, `pc auth login --provider pbs` and
+  `pc config test-auth` all work against PBS. A port-less pbs server URL
+  defaults to 8007. New `pc datastore` tree (PBS-only): `list`, `show`,
+  `status [store]`, `namespace list`, `group list`, `snapshot list` (`--ns`,
+  `--group`), `gc status`/`gc start`, `prune` (`--keep-*`, confirm-gated,
+  `--dry-run`), `verify start` and `job list` (prune/verify/sync). `pc task`
+  works with PBS tasks, and `pc raw`/`pc api` walk an embedded PBS schema.
+  Commands that don't apply to PBS (guests, nodes, storage, remotes, …) are
+  refused up front with an error naming the current provider, and
+  `pc datastore` is refused on pve/pdm. The PDM-proxied `pc pbs` is unchanged.
+  `protocol.ParseUPID` now understands the PBS UPID layout (extra task-id
+  field), and the schema parser flattens `allOf` parameter sets, so
+  `pc raw … --help` lists every PBS parameter. On `prune` and `verify start`,
+  `--set` refuses keys that have a dedicated flag (`dry-run`, `ns`,
+  `backup-type`/`backup-id`, `keep-*`, …), so the confirmation always matches
+  the request. Provider names are now case-insensitive (`provider: PBS`), and
+  backend-agnostic commands (`version`, `config`, `context`, `auth`, `plugin`,
+  `task`, `raw`, `api`) are never refused by the provider gate. `datastore job
+  list` requests `sync-direction=all`, so push sync jobs are listed too (PBS
+  defaults to pull); on PBS < 3.3, which has no push sync and rejects the
+  parameter, it retries without it. A PBS ticket login (`pc auth login
+  --provider pbs --user … --otp`) caches and replays the ticket as
+  `PBSAuthCookie`, the same as the runtime client.
+- **Changed (json output)**: a task handle printed for a plain UPID now reports
+  the provider that returned it in `backend` (`pbs` on PBS; `pdm` for a PDM
+  task without a remote, where it used to say `pve`). PDM-proxied
+  `pve:<remote>!UPID:…` handles are unchanged (#19).
+- **Fixed**: key/value and generic list tables printed large integers in
+  exponent notation (`1.4420443136e+10`); they now print plain integers, as
+  column-projected lists already did (table output only; json unchanged) (#19).
 - **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login
   --user` takes `--otp <code>`, `--otp-ref env:NAME|keyring://…`, or
   `PVE_CLI_OTP`, and prompts for the code on a terminal when the server answers
   with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
   given or on a terminal, `auth login` now verifies the ticket login, so a wrong
   password or code fails (exit 2) without saving the profile. The TFA-confirmed
-  ticket is cached in the OS keyring and renewed once it is an hour old (by
+  ticket is cached in the OS keyring (one entry per provider, user and server:
+  `ticket:<provider>:<user>@<server>`) and renewed once it is an hour old (by
   later commands, and in memory by a long-running one), so commands don't need
   a code until it lapses (~2h idle); then they prompt on a terminal, use
   `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.

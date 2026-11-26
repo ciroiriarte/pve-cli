@@ -142,7 +142,7 @@ TFA (#18) lives in `auth.TicketProvider`, so `auth login` and runtime ticket
 acquisition share it: a `NeedTFA` / `…:!tfa!` challenge is answered with
 `tfa-challenge` + `password=totp:<code>` (code from `--otp`/`PVE_CLI_OTP`, else
 the `otpPrompter` TTY seam, else a KindAuth error, exit 2). The TFA-confirmed
-ticket is cached in the keyring (`ticket:<user>@<server>`) and renewed with the
+ticket is cached in the keyring (`ticket:<provider>:<user>@<server>`) and renewed with the
 ticket as password (no re-prompt); it is never written to the config file.
 Login failures are `*protocol.APIError`s, which the transport returns without
 retrying, so a bad code is never re-sent or re-prompted.
@@ -178,6 +178,29 @@ is disabled — the guest is always resolved and `--node` must match. Commands
 that build PVE `/nodes/...` paths from a guest (`backup create`, `firewall
 --vmid`) are refused on PDM via `ensurePVE`; don't call `p.ResolveGuest`
 directly from new commands.
+
+### 14. PBS is a third provider; commands are gated per provider up front
+`provider: pbs` targets a Proxmox Backup Server (port 8007 default). PBS shares
+almost none of the PVE API, so the root `PersistentPreRunE` runs `providerGate`:
+each top-level command declares its backends with `forProviders(cmd, "…")`;
+unannotated commands are `pve,pdm`. On pbs only `datastore`, `task`, `raw`,
+`api` and the local commands run — everything else fails before any request
+with `current provider: pbs`. The gate uses `config.ResolveProvider` (no secret
+or keyring access). When adding a top-level command that works on PBS, annotate
+it. Backend-agnostic commands (`allProviders`) and unknown provider names
+always pass the gate, so a broken config can be repaired (`provider.New`
+reports an unknown provider); a missing profile also skips it so "profile not
+found" surfaces. Provider names are lower-cased in `config` (one shared
+selection helper for `Resolve`/`ResolveProvider`). Confirm-gated PBS
+mutations refuse `--set` for keys that have a flag (`refuseFlaggedSet`), so
+the prompt and the dry-run decision always match the request — apply the same
+rule to new confirm-gated commands with `--set`.
+
+The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
+older `pc pbs` stays the PDM-through-remotes view and is refused on pbs with a
+pointer to `pc datastore` — don't merge the two, their arities differ. PBS
+node-scoped endpoints use the node `localhost`. PBS UPIDs have an extra hex
+task-id field; `protocol.ParseUPID` handles both layouts.
 
 ## UX roadmap
 

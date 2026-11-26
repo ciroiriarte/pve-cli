@@ -34,19 +34,23 @@ type CachedCookie struct {
 	Value string `json:"value"`
 }
 
-func (c CachedTicket) cookieList() []*http.Cookie {
+func (c CachedTicket) cookieList(name string) []*http.Cookie {
 	out := make([]*http.Cookie, 0, len(c.Cookies))
 	for _, ck := range c.Cookies {
 		out = append(out, &http.Cookie{Name: ck.Name, Value: ck.Value})
 	}
 	if len(out) == 0 && c.Ticket != "" {
-		out = append(out, &http.Cookie{Name: "PVEAuthCookie", Value: c.Ticket})
+		if name == "" {
+			name = "PVEAuthCookie"
+		}
+		out = append(out, &http.Cookie{Name: name, Value: c.Ticket})
 	}
 	return out
 }
 
-// KeyringTicketCache stores the ticket in the OS keyring, keyed by user and
-// server so a ticket is never replayed to another server or for another user.
+// KeyringTicketCache stores the ticket in the OS keyring, keyed by provider,
+// user and server so a ticket is never replayed to another backend, server or
+// user.
 // With no keyring available nothing is cached (the ticket is a bearer
 // credential, so it is never written to the config file).
 type KeyringTicketCache struct {
@@ -54,9 +58,14 @@ type KeyringTicketCache struct {
 	Key     string
 }
 
-// NewKeyringTicketCache returns the cache entry for user@server under service.
-func NewKeyringTicketCache(service, server, user string) *KeyringTicketCache {
-	return &KeyringTicketCache{Service: service, Key: "ticket:" + user + "@" + strings.TrimRight(server, "/")}
+// NewKeyringTicketCache returns the cache entry for user@server on provider
+// ("" means pve) under service: key "ticket:<provider>:<user>@<server>", so a
+// ticket cached for one backend is never replayed to another.
+func NewKeyringTicketCache(service, provider, server, user string) *KeyringTicketCache {
+	if provider == "" {
+		provider = "pve"
+	}
+	return &KeyringTicketCache{Service: service, Key: "ticket:" + provider + ":" + user + "@" + strings.TrimRight(server, "/")}
 }
 
 // Load reads the cached ticket, if any.
