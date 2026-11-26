@@ -96,15 +96,25 @@ The highest floor every target can reach with those paths added is **Go 1.26**
 `go` directive required by x/net: v0.35 needs 1.18, v0.36-v0.43 need 1.23,
 v0.44-v0.50 need 1.24, v0.51-v0.58 need 1.25, v0.59-v0.63 need 1.26.
 
+Scope: this table lists the advisories `govulncheck` v1.10.0 reports at package
+level (the x/net packages `pc` imports) for this module as of 2026-11. None is
+reachable from `pc`.
+
 | Advisory | Fixed in | Needs Go |
 |---|---|---|
-| GO-2025-3503 (`x/net/proxy` `PerHost`) | v0.36.0 | 1.23 |
+| GO-2025-3503 (`x/net/proxy`) | v0.36.0 | 1.23 |
 | GO-2026-5942 (`x/net/dns/dnsmessage`) | v0.56.0 | 1.25 |
-| GO-2026-6866, GO-2026-6860 | v0.62.0 | 1.26 |
+| GO-2026-5026 (`x/net/idna`) | v0.57.0 | 1.25 |
+| GO-2026-6603, 6610, 6611, 6612, 6617 | v0.60.0 | 1.26 |
 
-A higher floor fixes some advisories, not all: 1.23/1.24 clears GO-2025-3503 only,
-1.25 adds GO-2026-5942, and 1.26 is needed for the rest. govulncheck currently
-reports none of the x/net findings as reachable from `pc`.
+govulncheck also reports 16 module-level x/net-and-other advisories (modules
+required but no imported package affected), so a higher floor fixes more of
+them: 1.23 (up to v0.43) includes GO-2025-3595 (v0.38); 1.24 (up to v0.50) adds
+GO-2026-4440 and GO-2026-4441 (v0.45); 1.25 (up to v0.58) adds GO-2026-4918
+(v0.53) and GO-2026-5025, 5027, 5028, 5029, 5030 (v0.55); 1.26 adds
+GO-2026-6860 and GO-2026-6866 (v0.62). Fix versions were checked against
+https://vuln.go.dev. A higher floor fixes some advisories, not all: only 1.26
+clears everything listed here.
 
 ### Path to raising the floor (maintainer decision; edits the OBS project)
 
@@ -136,7 +146,10 @@ release step) and revisit the floor if the results change.
 
 Proxy reachability is separate. GO-2025-3503 becomes reachable if code calls
 the x/net symbols `proxy.Dial`, `proxy.FromEnvironment`,
-`proxy.FromEnvironmentUsing`, `PerHost.*`, or httpproxy `config.useProxy`.
+`proxy.FromEnvironmentUsing`, `PerHost.*`, httpproxy `config.useProxy` or
+`domainMatch.match` (non-exhaustive; see
+https://pkg.go.dev/vuln/GO-2025-3503).
 gorilla/websocket uses `proxy.FromURL`, which is not among them, and
 `http.ProxyFromEnvironment` is the stdlib half of that advisory, fixed by the
-toolchain. CI runs govulncheck on every push and fails on reachable findings.
+toolchain. CI runs govulncheck on pull requests and on pushes to `main` and `v*` tags, and
+fails on reachable findings.
