@@ -229,3 +229,35 @@ sudo cp -r dist/man/man1/*.1 /usr/local/share/man/man1/
 
 `go install github.com/ciroiriarte/pve-cli/cmd/pc@latest` also works (installs
 `pc` into `$GOBIN`).
+
+## Shell completion
+
+Distribution packages install bash/zsh/fish completions automatically. For a
+static binary or a source build, load them from `pc` itself:
+
+```bash
+# bash (~/.bashrc); needs the bash-completion package
+source <(pc completion bash)
+# zsh (~/.zshrc)
+source <(pc completion zsh)
+# fish
+pc completion fish > ~/.config/fish/completions/pc.fish
+```
+
+Besides commands and flags, completion queries the active backend (the same
+context, `--server`/`--context` flags and `PVE_CLI_*` env vars the command
+would use) for live values:
+
+- guest vmids (shown with their name) and guest names for `vm`/`ct`/`guest`
+  verbs, filtered to the command's kind and narrowed by `--node`/`--remote`;
+- online node names for `--node`, `--target-node` and `<node>` arguments;
+- PDM remote ids for `--remote` and `pc remote … <id>`;
+- storage ids for `--storage` and `<storage>` arguments (PVE).
+
+It is best-effort and never blocks the shell: each lookup gives up after 1.5s
+(`PVE_CLI_COMPLETION_TIMEOUT`, e.g. `3s` on a slow link) and an unreachable or
+untrusted server simply yields no suggestions — completion never prompts (an
+unpinned self-signed cert needs `pc auth login` first). Results are cached for
+45s in `$XDG_CACHE_HOME/pve-cli/completion-<hash>.json` (mode 0600; keyed by
+provider, server and auth identity, never the secret), so repeated tabs are
+instant; delete the file to refresh sooner.

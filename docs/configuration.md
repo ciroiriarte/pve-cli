@@ -141,6 +141,7 @@ token/fingerprint.
 | `PVE_CLI_OUTPUT` | default output format |
 | `PVE_CLI_PROFILE` / `PVE_CLI_CONTEXT` | select profile/context |
 | `PVE_CLI_CONFIG` | config file path |
+| `PVE_CLI_COMPLETION_TIMEOUT` | live tab-completion API budget (Go duration, default `1.5s`) |
 
 ## TLS
 

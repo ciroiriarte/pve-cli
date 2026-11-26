@@ -6,6 +6,17 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: live-API tab completion. Shell completion now suggests guest
+  vmids (described by name) and names for `pc vm|ct|guest <verb>` (filtered by
+  kind, `--node` and `--remote`), online node names for `--node`/
+  `--target-node`/`<node>`, PDM remote ids for `--remote` and `pc remote …
+  <id>`, and PVE storage ids for `--storage`/`<storage>`. It is wired centrally
+  from argument/flag names, bounded by a 1.5s timeout
+  (`PVE_CLI_COMPLETION_TIMEOUT`), never prompts or prints, yields nothing when
+  the backend is unreachable, and caches results for 45s per backend identity
+  under `$XDG_CACHE_HOME/pve-cli/` (0600). See *Shell completion* in
+  `docs/install.md` (#23).
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a

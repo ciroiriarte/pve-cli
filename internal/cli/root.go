@@ -266,6 +266,8 @@ func NewRootCmd() *cobra.Command {
 
 	// Mark read commands so the table-only global flags only clutter their help.
 	annotateTabularReads(root)
+	// Live-API completion for guest/node/remote/storage args and flags (#23).
+	wireLiveCompletion(a, root)
 
 	// Custom help: (a) hide --column/--sort/--no-headers on non-tabular
 	// subcommands (they stay functional, just off that command's help); and
