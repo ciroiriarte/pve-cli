@@ -346,6 +346,73 @@ func TestNodeEvacuateDefaultFilterUsesLiveState(t *testing.T) {
 	}
 }
 
+// A guest listed running whose precondition says stopped (it stopped between
+// listing and planning) leaves the default plan like one stopped at listing;
+// with --all it is planned offline.
+func TestNodeEvacuatePreconditionStoppedLeavesDefaultPlan(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		{"type": "qemu", "vmid": 195, "name": "vm-stopping", "node": "pve-01", "status": "running", "maxmem": gib},
+		ctGuest(196, "running"),
+		ctGuest(197, "running"),
+	})
+	f.listStatus[195], f.listStatus[196] = "running", "running"
+	f.liveRunning[195], f.liveRunning[196] = 0, 0 // the preconditions see them stopped
+	srv := f.start()
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	plan := evacPlan(t, out)
+	for _, id := range []int{195, 196} {
+		if _, ok := plan[id]; ok {
+			t.Errorf("vmid %d is stopped per its precondition and must leave the default plan: %v", id, plan[id])
+		}
+	}
+	if plan[197] == nil || plan[197]["mode"] != "restart" {
+		t.Errorf("197 is running and must be planned: %v", plan[197])
+	}
+
+	out, err = runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--all", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("dry-run --all: %v", err)
+	}
+	plan = evacPlan(t, out)
+	for _, id := range []int{195, 196} {
+		if it := plan[id]; it == nil || it["mode"] != "offline" || it["skip"] != false || it["status"] != "stopped" {
+			t.Errorf("--all: vmid %d must be planned offline: %v", id, it)
+		}
+	}
+}
+
+// A live-list entry with an empty or unknown status is not taken as stopped:
+// in default mode it becomes an unknown skip (exit 6).
+func TestNodeEvacuateUnknownListStatus(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		{"type": "qemu", "vmid": 210, "name": "blank", "node": "pve-01", "status": "stopped", "maxmem": gib},
+		ctGuest(211, "stopped"),
+		ctGuest(212, "stopped"),
+	})
+	f.listStatus[210], f.listStatus[211] = "", "weird"
+	srv := f.start()
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) != ExitValidation {
+		t.Fatalf("unknown status must exit %d, got %v", ExitValidation, err)
+	}
+	plan := evacPlan(t, out)
+	for _, id := range []int{210, 211} {
+		if it := plan[id]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), "power state unknown") {
+			t.Errorf("vmid %d: want an unknown-power-state skip, got %v", id, it)
+		}
+	}
+	if _, ok := plan[212]; ok {
+		t.Errorf("212 is confirmed stopped and stays out: %v", plan[212])
+	}
+}
+
 // Default mode: liveness comes from the node's guest lists. A guest listed
 // stopped leaves the plan only when the live list confirms it stopped; if a
 // list call fails, stopped-listed guests of that kind stay as skips (exit 6).

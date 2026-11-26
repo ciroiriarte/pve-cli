@@ -292,25 +292,34 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 	}
 	kept := items[:0]
 	for _, it := range items {
+		var unknown string
 		if err := liveErr[it.Kind]; err != nil {
+			unknown = "listing " + kindEndpoint(it.Kind) + " guests on " + src + " failed: " + err.Error()
+		} else {
+			st, ok := live[it.Kind][it.VMID]
 			switch {
-			case o.all || it.Status == "running":
-			case it.expected:
-				continue // a stopped template can't be running
-			case !it.Skip:
-				it.Skip, it.Reason = true, "power state unknown (listing "+kindEndpoint(it.Kind)+" guests on "+src+" failed: "+err.Error()+")"
+			case !ok:
+				continue // no longer on src (moved or deleted since the inventory)
+			case st == "running" || st == "stopped":
+				it.Status = st
+				if o.all || st == "running" {
+					kept = append(kept, it)
+				}
+				continue
+			default:
+				unknown = fmt.Sprintf("live status %q on %s", st, src)
 			}
-			kept = append(kept, it)
-			continue
 		}
-		st, ok := live[it.Kind][it.VMID]
-		if !ok {
-			continue // no longer on src (moved or deleted since the inventory)
+		// Unconfirmed: keep the /cluster/resources state; in default mode a
+		// guest it shows as stopped may be running, so it stays as a skip.
+		switch {
+		case o.all || it.Status == "running":
+		case it.expected:
+			continue // a stopped template can't be running
+		case !it.Skip:
+			it.Skip, it.Reason = true, "power state unknown ("+unknown+")"
 		}
-		it.Status = st
-		if o.all || st == "running" {
-			kept = append(kept, it)
-		}
+		kept = append(kept, it)
 	}
 	items = kept
 	if len(items) == 0 {
@@ -344,6 +353,7 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 	}
 
 	var cache evacCache
+	stoppedNow := map[*evacItem]bool{} // listed running, precondition says stopped
 	targetSet := map[string]bool{}
 	for n := range targets {
 		targetSet[n] = true
@@ -376,6 +386,10 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 				return nil, err
 			}
 		}
+		if !o.all && it.Status != "running" {
+			stoppedNow[it] = true
+			continue
+		}
 		// PVE refuses to live-migrate a replicated VM to a node that isn't one
 		// of its replication targets (Qemu.pm migrate_vm, unless force).
 		if !it.Skip && it.Kind == domain.KindVM && it.Status == "running" {
@@ -393,6 +407,18 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 				it.restrict(tgts, reasons)
 			}
 		}
+	}
+
+	// Default mode is running-only: a guest the precondition found stopped
+	// leaves the plan like one stopped at listing (not planned, not a skip).
+	if len(stoppedNow) > 0 {
+		kept := items[:0]
+		for _, it := range items {
+			if !stoppedNow[it] {
+				kept = append(kept, it)
+			}
+		}
+		items = kept
 	}
 
 	// Greedy placement: running guests first (they need the capacity now),

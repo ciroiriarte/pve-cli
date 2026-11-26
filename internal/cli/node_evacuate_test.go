@@ -32,6 +32,7 @@ type evacFixture struct {
 	ctConfCurrent map[int]string
 	liveRunning   map[int]int      // vmid → live running flag override (stale /cluster/resources)
 	listErr       map[string]bool  // "qemu"/"lxc" → the node guest list call fails (403)
+	listStatus    map[int]string   // vmid → status in the node guest list (overrides the live state)
 	fail          map[int]bool     // vmid → migration task ends with an error
 	nodes         []map[string]any // override nodes (nil = default 3-node cluster)
 	mu            sync.Mutex
@@ -52,7 +53,7 @@ func defaultEvacGuests() []map[string]any {
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
 	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
-		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, listErr: map[string]bool{},
+		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, listErr: map[string]bool{}, listStatus: map[int]string{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
@@ -123,6 +124,9 @@ func (f *evacFixture) start() *httptest.Server {
 				st := "stopped"
 				if f.running(vmid) == 1 {
 					st = "running"
+				}
+				if s, ok := f.listStatus[vmid]; ok {
+					st = s
 				}
 				out = append(out, map[string]any{"vmid": vmid, "status": st})
 			}
