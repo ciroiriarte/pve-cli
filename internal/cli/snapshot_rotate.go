@@ -16,13 +16,15 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/task"
 )
 
-// Snapshot rotation (#24). pc-managed snapshots are named
+// Snapshot rotation (#24). A pc-managed snapshot is named
 //
 //	pc-<label>-YYYYMMDD-HHMMSS   (UTC)
 //
-// and rotation only ever considers names that match that exact, anchored
-// pattern for the selected label. Hand-made snapshots, other labels, and
-// look-alikes (`pc-auto-latest`, `pc-autox-…`, `auto-…`) are never touched.
+// AND carries the ownership marker "[pc-rotate:<label>]" in its description.
+// Rotation only ever considers snapshots that have both, for the selected
+// label: hand-made snapshots (even ones named like pc-auto-20260101-000000),
+// other labels, and look-alikes are never touched. Removing the marker from a
+// description makes a snapshot unmanaged, which is the safe direction.
 const (
 	autoSnapPrefix     = "pc-"
 	autoSnapTimeLayout = "20060102-150405"
@@ -54,6 +56,20 @@ func autoSnapName(label string, t time.Time) string {
 	return autoSnapPrefix + label + "-" + t.UTC().Format(autoSnapTimeLayout)
 }
 
+// snapMarker is the ownership marker written into a managed snapshot's
+// description. The closing bracket makes it label-exact ("auto" vs "auto-x").
+func snapMarker(label string) string { return "[pc-rotate:" + label + "]" }
+
+// managedDescription appends the ownership marker to the user's description
+// (or a default text), so the marker is present even with --description.
+func managedDescription(desc, label string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		desc = "pc auto-snapshot"
+	}
+	return desc + " " + snapMarker(label)
+}
+
 // autoSnapPattern matches exactly the managed names of one label. It is
 // anchored at both ends, so another label sharing a prefix ("auto" vs
 // "auto-x" or "autox") can never match.
@@ -63,20 +79,28 @@ func autoSnapPattern(label string) *regexp.Regexp {
 
 // rotSnap is one existing snapshot considered for rotation.
 type rotSnap struct {
-	Name     string
-	Snaptime int64
+	Name        string
+	Snaptime    int64
+	Description string
 }
 
-// planRotation selects which of snaps to keep and delete for label: only names
-// matching the label's managed pattern are considered; they are ordered oldest
-// first by snaptime (name, which embeds the timestamp, breaks ties) and all
-// but the newest keep are deleted. Non-matching snapshots never appear in
-// either result.
+// isManaged reports whether s is a pc-managed snapshot of label: it needs both
+// the anchored name and the ownership marker in its description.
+func isManaged(s rotSnap, label string) bool {
+	return autoSnapPattern(label).MatchString(s.Name) && strings.Contains(s.Description, snapMarker(label))
+}
+
+// planRotation selects which of the existing snaps to keep and delete for
+// label: only managed snapshots (isManaged) are considered; they are ordered
+// oldest first by snaptime (name, which embeds the timestamp, breaks ties) and
+// all but the newest keep are deleted. Unmanaged snapshots never appear in
+// either result. A snapshot about to be created is not part of snaps: the
+// caller pins it as kept and passes keep-1, so it can never be pruned, even
+// when another managed snapshot has a later (clock-skewed) snaptime.
 func planRotation(snaps []rotSnap, label string, keep int) (kept, del []rotSnap) {
-	re := autoSnapPattern(label)
 	var managed []rotSnap
 	for _, s := range snaps {
-		if re.MatchString(s.Name) {
+		if isManaged(s, label) {
 			managed = append(managed, s)
 		}
 	}
@@ -144,16 +168,14 @@ type rotateOpts struct {
 	dryRun      bool
 	vmstate     bool
 	description string
-	timeout     int
+	timeout     int // seconds to wait per task (0 = no limit)
 }
 
-// rotateGuestSnapshots optionally creates a managed snapshot (waiting for the
-// task) and then deletes the label's managed snapshots beyond keep, oldest
-// first. A failed create aborts before anything is deleted.
-//
-// An explicit --keep is the consent for deleting label-matched snapshots, so
-// this never prompts (it is meant for cron); every deletion is reported on
-// stderr and in the result, and --dry-run previews without mutating.
+// rotateGuestSnapshots plans the prune first, confirms it (decision #2), then
+// optionally creates a managed snapshot (waiting for the task) and deletes the
+// label's managed snapshots beyond keep, oldest first. The new snapshot is
+// pinned as kept and counts toward keep. A refused confirmation or a failed
+// create changes or prunes nothing; --dry-run never prompts or mutates.
 func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g domain.Guest, base string, o rotateOpts) error {
 	if err := validateSnapLabel(o.label); err != nil {
 		return err
@@ -161,13 +183,16 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 	if o.keep < 0 {
 		return fmt.Errorf("--keep must be >= 0")
 	}
+	if o.vmstate && g.Kind != domain.KindVM {
+		return fmt.Errorf("--vmstate is only supported for VMs (%d is a container)", g.VMID)
+	}
+	if !o.create && (o.description != "" || o.vmstate) {
+		return fmt.Errorf("--description and --vmstate apply to the new snapshot; they cannot be used with --no-create")
+	}
 	kind := labelFromKind(g.Kind)
 	if o.create {
 		if o.keep == 0 {
 			return fmt.Errorf("--keep 0 would delete the snapshot just created; use --keep >= 1, or --no-create to remove all %q snapshots", o.label)
-		}
-		if o.vmstate && g.Kind != domain.KindVM {
-			return fmt.Errorf("--vmstate is only supported for VMs (%d is a container)", g.VMID)
 		}
 		if o.name == "" {
 			o.name = autoSnapName(o.label, time.Now())
@@ -176,16 +201,57 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 				o.name, o.label, autoSnapPrefix+o.label+"-")
 		}
 	}
+
+	// Plan against the existing snapshots before creating anything.
+	snaps, err := listRotSnaps(ctx, p, base)
+	if err != nil {
+		return err
+	}
+	keepExisting := o.keep
+	if o.create {
+		keepExisting-- // the new snapshot takes one of the N slots
+	}
+	kept, del := planRotation(snaps, o.label, keepExisting)
+
 	res := snapshotRotateResult{VMID: g.VMID, Kind: kind, Node: g.Node, Remote: g.Remote,
 		Label: o.label, Keep: o.keep, DryRun: o.dryRun, Kept: []string{}, Deleted: []string{}}
+	for _, s := range kept {
+		res.Kept = append(res.Kept, s.Name)
+	}
+	if o.create {
+		res.Created = o.name
+		res.Kept = append(res.Kept, o.name)
+	}
+	delNames := make([]string, 0, len(del))
+	for _, s := range del {
+		delNames = append(delNames, s.Name)
+	}
 
-	if o.create && !o.dryRun {
-		params := url.Values{"snapname": {o.name}}
-		desc := o.description
-		if desc == "" {
-			desc = fmt.Sprintf("pc auto-snapshot (label %s)", o.label)
+	if o.dryRun {
+		for _, n := range delNames {
+			fmt.Fprintf(stderrWriter(), "dry-run: would delete snapshot %s of %s %d\n", n, kind, g.VMID)
 		}
-		params.Set("description", desc)
+		res.Deleted = append(res.Deleted, delNames...)
+		return a.render(rotateTable(res))
+	}
+
+	if len(del) > 0 {
+		target := fmt.Sprintf("%s %d", kind, g.VMID)
+		if g.Name != "" {
+			target += " (" + g.Name + ")"
+		}
+		msg := fmt.Sprintf("delete %d %q snapshot(s) of %s: %s?", len(del), o.label, target, strings.Join(delNames, ", "))
+		if o.create {
+			msg = fmt.Sprintf("create %s on %s and delete %d old %q snapshot(s): %s?",
+				o.name, target, len(del), o.label, strings.Join(delNames, ", "))
+		}
+		if err := confirm(a, msg); err != nil {
+			return err
+		}
+	}
+
+	if o.create {
+		params := url.Values{"snapname": {o.name}, "description": {managedDescription(o.description, o.label)}}
 		if o.vmstate {
 			params.Set("vmstate", "1")
 		}
@@ -195,30 +261,8 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 		}
 		fmt.Fprintf(stderrWriter(), "created snapshot %s of %s %d\n", o.name, kind, g.VMID)
 	}
-	if o.create {
-		res.Created = o.name
-	}
 
-	snaps, err := listRotSnaps(ctx, p, base)
-	if err != nil {
-		if o.create && !o.dryRun {
-			return fmt.Errorf("created %s but could not list snapshots to prune: %w", o.name, err)
-		}
-		return err
-	}
-	if o.create && o.dryRun {
-		snaps = append(snaps, rotSnap{Name: o.name, Snaptime: time.Now().Unix()})
-	}
-	kept, del := planRotation(snaps, o.label, o.keep)
-	for _, s := range kept {
-		res.Kept = append(res.Kept, s.Name)
-	}
 	for _, s := range del {
-		if o.dryRun {
-			fmt.Fprintf(stderrWriter(), "dry-run: would delete snapshot %s of %s %d\n", s.Name, kind, g.VMID)
-			res.Deleted = append(res.Deleted, s.Name)
-			continue
-		}
 		label := fmt.Sprintf("delete snapshot %s of %s %d", s.Name, kind, g.VMID)
 		if err := mutateAndWait(ctx, p, "DELETE", base+"/snapshot/"+s.Name, nil, label, o.timeout); err != nil {
 			fmt.Fprintf(stderrWriter(), "%s: %v\n", label, err)
@@ -254,7 +298,7 @@ func listRotSnaps(ctx context.Context, p provider.Provider, base string) ([]rotS
 			continue
 		}
 		t, _ := asInt64(s["snaptime"])
-		out = append(out, rotSnap{Name: name, Snaptime: t})
+		out = append(out, rotSnap{Name: name, Snaptime: t, Description: asString(s["description"])})
 	}
 	return out, nil
 }
@@ -263,7 +307,9 @@ func listRotSnaps(ctx context.Context, p provider.Provider, base string) ([]rotS
 // for the task — regardless of output format — without rendering anything on
 // stdout (a spinner goes to stderr on a TTY). Rotation needs this: the prune
 // must not start before the create succeeded, and deletions on one guest must
-// not overlap (PVE locks the guest per snapshot task).
+// not overlap (PVE locks the guest per snapshot task). As with every task wait
+// in pc, an exit status other than "OK" (including "WARNINGS: n") is a
+// failure, so a create that ends with warnings stops the run before pruning.
 func mutateAndWait(ctx context.Context, p provider.Provider, method, path string, params url.Values, label string, timeout int) error {
 	body, err := p.Raw(ctx, method, path, params)
 	if err != nil {

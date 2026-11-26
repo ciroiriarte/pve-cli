@@ -8,17 +8,23 @@ surface may change between minor releases.
 
 - **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
   create <id> --keep N [--label L]` takes a pc-managed snapshot named
-  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`), waits for it, then
-  deletes that label's managed snapshots beyond the newest N, oldest first.
-  `pc vm|ct|guest snapshot rotate <id> --keep N` is the cron-friendly verb
-  (create + prune; `--no-create` prunes only, `--dry-run` changes nothing).
-  Only names matching the label's exact pattern are ever deleted, so
-  hand-made snapshots and other labels are never touched; an explicit `--keep`
-  is the consent for those deletions (no prompt), each is reported on stderr,
-  and `-o json` emits a summary object (`created`, `kept`, `deleted`). A failed
-  create prunes nothing. `snapshot create` also gains `--description` and
-  `--vmstate`, its name is optional with `--keep`, and `pc guest snapshot …` is
-  now available (type-agnostic, like the other `guest` verbs).
+  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`) with the ownership
+  marker `[pc-rotate:<label>]` appended to its description, waits for it, then
+  deletes that label's managed snapshots beyond the newest N, oldest first. The
+  new snapshot counts toward N and is never pruned. `pc vm|ct|guest snapshot
+  rotate <id> --keep N` is the cron-friendly verb (create + prune;
+  `--no-create` prunes only, `--dry-run` changes nothing and never prompts).
+  A snapshot is managed only if it has both the label's exact name pattern and
+  the marker, so hand-made snapshots (even ones named like `pc-auto-…`),
+  snapshots made without `--keep`, and other labels are never touched; removing
+  the marker unmanages a snapshot. Deletions are planned first and
+  confirm-gated before anything is created (`-y/--yes` for cron; no prompt when
+  nothing is to be deleted). Each deletion is reported on stderr, and `-o json`
+  emits a summary object (`created`, `kept`, `deleted`, `failed`). A failed
+  create, including a task ending with `WARNINGS`, prunes nothing.
+  `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
+  `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
+  …` is now available (type-agnostic, like the other `guest` verbs).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 

@@ -33,6 +33,12 @@ func TestAutoSnapName(t *testing.T) {
 			t.Errorf("validateSnapLabel(%q) = nil; want error", bad)
 		}
 	}
+	if d := managedDescription("before upgrade", "daily"); d != "before upgrade [pc-rotate:daily]" {
+		t.Errorf("managedDescription with user text = %q", d)
+	}
+	if d := managedDescription("", "auto"); !strings.Contains(d, "[pc-rotate:auto]") {
+		t.Errorf("managedDescription default = %q", d)
+	}
 }
 
 func names(s []rotSnap) []string {
@@ -43,23 +49,34 @@ func names(s []rotSnap) []string {
 	return out
 }
 
-// Rotation must only ever select the label's own managed names, never
-// hand-made snapshots or look-alikes.
+// managed builds a snapshot that carries label's ownership marker.
+func managed(name string, snaptime int64, label string) rotSnap {
+	return rotSnap{Name: name, Snaptime: snaptime, Description: managedDescription("", label)}
+}
+
+// Rotation must only ever select the label's own managed snapshots (name AND
+// marker), never hand-made snapshots or look-alikes.
 func TestPlanRotationSelection(t *testing.T) {
+	m := managedDescription("", "auto")
 	snaps := []rotSnap{
-		{"pc-auto-20260103-000000", 3000},
-		{"pc-auto-20260101-000000", 1000},
-		{"pc-auto-20260102-000000", 2000},
-		// look-alikes that must never be selected for label "auto"
-		{"pc-auto-other-20260101-000000", 1},
-		{"pc-autox-20260101-000000", 1},
-		{"pc-auto-latest", 1},
-		{"pc-auto-20260101-000000x", 1},
-		{"xpc-auto-20260101-000000", 1},
-		{"auto-auto-20260101-000000", 1},
-		{"autox", 1},
-		{"pc-auto-2026010-000000", 1},
-		{"preupgrade", 1},
+		managed("pc-auto-20260103-000000", 3000, "auto"),
+		managed("pc-auto-20260101-000000", 1000, "auto"),
+		managed("pc-auto-20260102-000000", 2000, "auto"),
+		// look-alike names, even with the "auto" marker, never match
+		{"pc-auto-other-20260101-000000", 1, m},
+		{"pc-autox-20260101-000000", 1, m},
+		{"pc-auto-latest", 1, m},
+		{"pc-auto-20260101-000000x", 1, m},
+		{"xpc-auto-20260101-000000", 1, m},
+		{"auto-auto-20260101-000000", 1, m},
+		{"pc-auto-2026010-000000", 1, m},
+		{"preupgrade", 1, m},
+		// a managed-looking name without the marker is hand-made
+		{"pc-auto-20250101-000000", 1, "hand made"},
+		{"pc-auto-20250102-000000", 1, ""},
+		// another label's marker on an "auto" name
+		{"pc-auto-20250103-000000", 1, managedDescription("", "auto-x")},
+		managed("pc-auto-other-20260101-000001", 1, "auto-other"),
 	}
 	cases := []struct {
 		keep      int
@@ -77,22 +94,38 @@ func TestPlanRotationSelection(t *testing.T) {
 			t.Errorf("keep=%d: kept=%v del=%v; want kept=%v del=%v", c.keep, names(kept), names(del), c.kept, c.del)
 		}
 	}
-	// The "auto-other" label sees only its own snapshot.
+	// The "auto-other" label sees only its own marked snapshot.
 	kept, del := planRotation(snaps, "auto-other", 0)
-	if len(kept) != 0 || !reflect.DeepEqual(names(del), []string{"pc-auto-other-20260101-000000"}) {
+	if len(kept) != 0 || !reflect.DeepEqual(names(del), []string{"pc-auto-other-20260101-000001"}) {
 		t.Errorf("label auto-other: kept=%v del=%v", names(kept), names(del))
 	}
 }
 
-// rotServer is a stateful fake PVE with CT 9320 on pve-01: snapshots can be
-// created and deleted; every mutation is recorded.
+// Equal snaptimes fall back to the name (which embeds the timestamp).
+func TestPlanRotationTieBreak(t *testing.T) {
+	snaps := []rotSnap{
+		managed("pc-auto-20260102-000000", 5000, "auto"),
+		managed("pc-auto-20260101-000000", 5000, "auto"),
+		managed("pc-auto-20260103-000000", 5000, "auto"),
+	}
+	kept, del := planRotation(snaps, "auto", 1)
+	if !reflect.DeepEqual(names(kept), []string{"pc-auto-20260103-000000"}) ||
+		!reflect.DeepEqual(names(del), []string{"pc-auto-20260101-000000", "pc-auto-20260102-000000"}) {
+		t.Fatalf("tie-break: kept=%v del=%v", names(kept), names(del))
+	}
+}
+
+// rotServer is a stateful fake PVE with CT 9320 and VM 100 on pve-01 (sharing
+// one snapshot store): snapshots can be created and deleted; every mutation is
+// recorded.
 type rotServer struct {
-	mu        sync.Mutex
-	snaps     []rotSnap
-	calls     []string
-	createErr bool // POST /snapshot returns HTTP 500
-	taskFail  bool // tasks end with a non-OK exit status
-	params    map[string]string
+	mu         sync.Mutex
+	snaps      []rotSnap
+	calls      []string
+	createErr  bool   // POST /snapshot returns HTTP 500
+	taskFail   bool   // tasks end with a non-OK exit status
+	failDelete string // DELETE of this snapshot returns HTTP 500
+	params     map[string]string
 }
 
 func (s *rotServer) mutations() []string {
@@ -115,53 +148,61 @@ func (s *rotServer) start(t *testing.T) *httptest.Server {
 		}
 		w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 	})
-	upid := `{"data":"UPID:pve-01:0001:0002:6A00:vzsnapshot:9320:root@pam!t:"}`
-	mux.HandleFunc("/api2/json/nodes/pve-01/lxc/9320/snapshot", func(w http.ResponseWriter, r *http.Request) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		switch r.Method {
-		case http.MethodGet:
-			out := []map[string]any{{"name": "current", "description": "You are here!"}}
-			for _, x := range s.snaps {
-				out = append(out, map[string]any{"name": x.Name, "snaptime": x.Snaptime})
+	for _, base := range []string{"/api2/json/nodes/pve-01/lxc/9320", "/api2/json/nodes/pve-01/qemu/100"} {
+		base := base
+		upid := `{"data":"UPID:pve-01:0001:0002:6A00:snapshot:1:root@pam!t:"}`
+		mux.HandleFunc(base+"/snapshot", func(w http.ResponseWriter, r *http.Request) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			switch r.Method {
+			case http.MethodGet:
+				out := []map[string]any{{"name": "current", "description": "You are here!"}}
+				for _, x := range s.snaps {
+					out = append(out, map[string]any{"name": x.Name, "snaptime": x.Snaptime, "description": x.Description})
+				}
+				b, _ := json.Marshal(map[string]any{"data": out})
+				w.Write(b)
+			case http.MethodPost:
+				r.ParseForm()
+				s.calls = append(s.calls, "POST "+base[len("/api2/json/nodes/pve-01/"):]+" "+r.PostForm.Get("snapname"))
+				s.params = map[string]string{}
+				for k := range r.PostForm {
+					s.params[k] = r.PostForm.Get(k)
+				}
+				if s.createErr {
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"data":null,"message":"snapshot failed"}`))
+					return
+				}
+				if !s.taskFail {
+					s.snaps = append(s.snaps, rotSnap{r.PostForm.Get("snapname"), time.Now().Unix(), r.PostForm.Get("description")})
+				}
+				w.Write([]byte(upid))
 			}
-			b, _ := json.Marshal(map[string]any{"data": out})
-			w.Write(b)
-		case http.MethodPost:
-			r.ParseForm()
-			s.calls = append(s.calls, "POST "+r.PostForm.Get("snapname"))
-			s.params = map[string]string{}
-			for k := range r.PostForm {
-				s.params[k] = r.PostForm.Get(k)
-			}
-			if s.createErr {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(`{"data":null,"message":"snapshot failed"}`))
+		})
+		mux.HandleFunc(base+"/snapshot/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				http.NotFound(w, r)
 				return
 			}
-			if !s.taskFail {
-				s.snaps = append(s.snaps, rotSnap{r.PostForm.Get("snapname"), time.Now().Unix()})
+			name := strings.TrimPrefix(r.URL.Path, base+"/snapshot/")
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.calls = append(s.calls, "DELETE "+name)
+			if name == s.failDelete {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"data":null,"message":"snapshot is locked"}`))
+				return
+			}
+			for i, x := range s.snaps {
+				if x.Name == name {
+					s.snaps = append(s.snaps[:i], s.snaps[i+1:]...)
+					break
+				}
 			}
 			w.Write([]byte(upid))
-		}
-	})
-	mux.HandleFunc("/api2/json/nodes/pve-01/lxc/9320/snapshot/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.NotFound(w, r)
-			return
-		}
-		name := strings.TrimPrefix(r.URL.Path, "/api2/json/nodes/pve-01/lxc/9320/snapshot/")
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.calls = append(s.calls, "DELETE "+name)
-		for i, x := range s.snaps {
-			if x.Name == name {
-				s.snaps = append(s.snaps[:i], s.snaps[i+1:]...)
-				break
-			}
-		}
-		w.Write([]byte(upid))
-	})
+		})
+	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -169,12 +210,13 @@ func (s *rotServer) start(t *testing.T) *httptest.Server {
 
 func seedSnaps() []rotSnap {
 	return []rotSnap{
-		{"pc-auto-20260101-000000", 1000},
-		{"pc-auto-20260102-000000", 2000},
-		{"pc-auto-20260103-000000", 3000},
-		{"handmade", 500},
-		{"pc-autox-20260101-000000", 600},
-		{"pc-daily-20260101-000000", 700},
+		managed("pc-auto-20260101-000000", 1000, "auto"),
+		managed("pc-auto-20260102-000000", 2000, "auto"),
+		managed("pc-auto-20260103-000000", 3000, "auto"),
+		{"handmade", 500, "hand made"},
+		{"pc-auto-20250101-000000", 400, "made by hand, looks managed"},
+		managed("pc-autox-20260101-000000", 600, "autox"),
+		managed("pc-daily-20260101-000000", 700, "daily"),
 	}
 }
 
@@ -190,14 +232,16 @@ func decodeRotate(t *testing.T, out string) snapshotRotateResult {
 		}
 	}
 	var r snapshotRotateResult
-	json.Unmarshal([]byte(out), &r)
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
 	return r
 }
 
 func TestSnapshotCreateKeepRotates(t *testing.T) {
 	s := &rotServer{snaps: seedSnaps()}
 	srv := s.start(t)
-	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", "--keep", "2", "-o", "json")...)
+	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", "--keep", "2", "--yes", "-o", "json")...)
 	if err != nil {
 		t.Fatalf("create --keep 2: %v", err)
 	}
@@ -215,19 +259,102 @@ func TestSnapshotCreateKeepRotates(t *testing.T) {
 	if !reflect.DeepEqual(r.Deleted, wantDel) {
 		t.Errorf("deleted = %v; want %v", r.Deleted, wantDel)
 	}
-	want := []string{"POST " + r.Created, "DELETE pc-auto-20260101-000000", "DELETE pc-auto-20260102-000000"}
+	want := []string{"POST lxc/9320 " + r.Created, "DELETE pc-auto-20260101-000000", "DELETE pc-auto-20260102-000000"}
 	if got := s.mutations(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("mutations = %v; want %v (create first, then oldest-first deletes, nothing else)", got, want)
 	}
-	if s.params["description"] == "" {
-		t.Errorf("managed snapshot should carry a marker description: %v", s.params)
+	if !strings.Contains(s.params["description"], "[pc-rotate:auto]") {
+		t.Errorf("managed snapshot must carry the ownership marker: %v", s.params)
 	}
-	// The hand-made and look-alike snapshots survived.
 	left := names(s.snaps)
-	for _, n := range []string{"handmade", "pc-autox-20260101-000000", "pc-daily-20260101-000000"} {
+	for _, n := range []string{"handmade", "pc-auto-20250101-000000", "pc-autox-20260101-000000", "pc-daily-20260101-000000"} {
 		if !contains(left, n) {
 			t.Errorf("%s was removed; remaining %v", n, left)
 		}
+	}
+}
+
+// The marker is appended to a user description, not replaced by it.
+func TestSnapshotCreateKeepAppendsMarker(t *testing.T) {
+	s := &rotServer{}
+	srv := s.start(t)
+	if _, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", "--keep", "3", "--label", "daily", "--description", "nightly")...); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := s.params["description"]; got != "nightly [pc-rotate:daily]" {
+		t.Fatalf("description = %q", got)
+	}
+}
+
+// A hand-made snapshot with a managed-looking name but no marker survives
+// even --keep 0 --no-create.
+func TestSnapshotRotateIgnoresUnmarkedLookalike(t *testing.T) {
+	s := &rotServer{snaps: []rotSnap{{"pc-auto-20260101-000000", 1000, "manual"}, managed("pc-auto-20260102-000000", 2000, "auto")}}
+	srv := s.start(t)
+	if _, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create", "--yes")...); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if got := s.mutations(); !reflect.DeepEqual(got, []string{"DELETE pc-auto-20260102-000000"}) {
+		t.Fatalf("mutations = %v; the unmarked snapshot must not be deleted", got)
+	}
+}
+
+// #24 review: a managed snapshot with a future snaptime (clock skew) must not
+// cause the snapshot just created to be pruned; the new one is pinned.
+func TestSnapshotRotateNeverPrunesNewSnapshot(t *testing.T) {
+	future := time.Now().Add(24 * time.Hour).Unix()
+	s := &rotServer{snaps: []rotSnap{managed("pc-auto-20260101-000000", future, "auto")}}
+	srv := s.start(t)
+	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "1", "--yes", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	r := decodeRotate(t, out)
+	if !reflect.DeepEqual(r.Kept, []string{r.Created}) || !reflect.DeepEqual(r.Deleted, []string{"pc-auto-20260101-000000"}) {
+		t.Fatalf("summary: %+v", r)
+	}
+	for _, c := range s.mutations() {
+		if c == "DELETE "+r.Created {
+			t.Fatalf("pruned the snapshot just created: %v", s.mutations())
+		}
+	}
+	// The dry-run plan pins the planned entry the same way.
+	s2 := &rotServer{snaps: []rotSnap{managed("pc-auto-20260101-000000", future, "auto")}}
+	out, err = runCLI(t, withCreds(s2.start(t), "ct", "snapshot", "rotate", "9320", "--keep", "1", "--dry-run", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	r = decodeRotate(t, out)
+	if !reflect.DeepEqual(r.Kept, []string{r.Created}) || !reflect.DeepEqual(r.Deleted, []string{"pc-auto-20260101-000000"}) {
+		t.Fatalf("dry-run summary: %+v", r)
+	}
+}
+
+// decision #2: deletions are confirm-gated; non-interactive without --yes
+// refuses before anything is created.
+func TestSnapshotRotateConfirmGate(t *testing.T) {
+	s := &rotServer{snaps: seedSnaps()}
+	srv := s.start(t)
+	for _, args := range [][]string{
+		{"ct", "snapshot", "create", "9320", "--keep", "2"},
+		{"ct", "snapshot", "rotate", "9320", "--keep", "2"},
+		{"ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create"},
+	} {
+		_, err := runCLI(t, withCreds(srv, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "--yes") || !strings.Contains(err.Error(), "ct 9320 (pcsnap)") {
+			t.Errorf("%v: expected a confirm refusal naming the target, got %v", args, err)
+		}
+	}
+	if m := s.mutations(); len(m) != 0 {
+		t.Fatalf("refused runs changed something: %v", m)
+	}
+	// Nothing to delete -> no prompt needed.
+	s2 := &rotServer{}
+	if _, err := runCLI(t, withCreds(s2.start(t), "ct", "snapshot", "rotate", "9320", "--keep", "2")...); err != nil {
+		t.Fatalf("rotate with nothing to prune should not prompt: %v", err)
+	}
+	if m := s2.mutations(); len(m) != 1 || !strings.HasPrefix(m[0], "POST ") {
+		t.Fatalf("mutations = %v", m)
 	}
 }
 
@@ -238,9 +365,6 @@ func TestSnapshotRotateDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotate --dry-run: %v", err)
 	}
-	if m := s.mutations(); len(m) != 0 {
-		t.Fatalf("dry-run sent mutations: %v", m)
-	}
 	r := decodeRotate(t, out)
 	if !r.DryRun || r.Created == "" {
 		t.Errorf("dry-run summary: %+v", r)
@@ -248,7 +372,6 @@ func TestSnapshotRotateDryRun(t *testing.T) {
 	if !reflect.DeepEqual(r.Deleted, []string{"pc-auto-20260101-000000", "pc-auto-20260102-000000"}) {
 		t.Errorf("dry-run deleted = %v", r.Deleted)
 	}
-	// prune-only dry run keeps the newest 2 existing
 	out, err = runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "2", "--no-create", "--dry-run", "-o", "json")...)
 	if err != nil {
 		t.Fatalf("rotate --no-create --dry-run: %v", err)
@@ -265,7 +388,7 @@ func TestSnapshotRotateDryRun(t *testing.T) {
 func TestSnapshotRotateNoCreateKeepZero(t *testing.T) {
 	s := &rotServer{snaps: seedSnaps()}
 	srv := s.start(t)
-	if _, err := runCLI(t, withCreds(srv, "guest", "snapshot", "rotate", "9320", "--keep", "0", "--no-create")...); err != nil {
+	if _, err := runCLI(t, withCreds(srv, "guest", "snapshot", "rotate", "9320", "--keep", "0", "--no-create", "--yes")...); err != nil {
 		t.Fatalf("rotate --keep 0 --no-create: %v", err)
 	}
 	want := []string{"DELETE pc-auto-20260101-000000", "DELETE pc-auto-20260102-000000", "DELETE pc-auto-20260103-000000"}
@@ -274,12 +397,45 @@ func TestSnapshotRotateNoCreateKeepZero(t *testing.T) {
 	}
 }
 
+// `pc guest snapshot` on a VM routes to the qemu path.
+func TestGuestSnapshotRotateVM(t *testing.T) {
+	s := &rotServer{snaps: []rotSnap{managed("pc-auto-20260101-000000", 1000, "auto")}}
+	srv := s.start(t)
+	out, err := runCLI(t, withCreds(srv, "guest", "snapshot", "rotate", "100", "--keep", "1", "--vmstate", "--yes", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("guest snapshot rotate 100: %v", err)
+	}
+	r := decodeRotate(t, out)
+	m := s.mutations()
+	if r.Kind != "vm" || len(m) != 2 || m[0] != "POST qemu/100 "+r.Created || m[1] != "DELETE pc-auto-20260101-000000" {
+		t.Fatalf("summary %+v, mutations %v", r, m)
+	}
+	if s.params["vmstate"] != "1" {
+		t.Errorf("vmstate not passed for a VM: %v", s.params)
+	}
+}
+
+// One failing delete doesn't stop the rest; it is reported and exits non-zero.
+func TestSnapshotRotateDeleteFailureContinues(t *testing.T) {
+	s := &rotServer{snaps: seedSnaps(), failDelete: "pc-auto-20260101-000000"}
+	srv := s.start(t)
+	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create", "--yes", "-o", "json")...)
+	if err == nil || !strings.Contains(err.Error(), "1 of 3") {
+		t.Fatalf("expected a partial-failure error, got %v", err)
+	}
+	r := decodeRotate(t, out)
+	if !reflect.DeepEqual(r.Failed, []string{"pc-auto-20260101-000000"}) ||
+		!reflect.DeepEqual(r.Deleted, []string{"pc-auto-20260102-000000", "pc-auto-20260103-000000"}) {
+		t.Fatalf("summary: %+v", r)
+	}
+}
+
 // A failed create — HTTP error or failed task — must prune nothing.
 func TestSnapshotRotateCreateFailureNoPrune(t *testing.T) {
 	for _, mode := range []string{"http", "task"} {
 		s := &rotServer{snaps: seedSnaps(), createErr: mode == "http", taskFail: mode == "task"}
 		srv := s.start(t)
-		_, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "1")...)
+		_, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "1", "--yes")...)
 		if err == nil {
 			t.Fatalf("%s: expected an error from the failed create", mode)
 		}
@@ -304,6 +460,10 @@ func TestSnapshotCreateKeepValidation(t *testing.T) {
 		{[]string{"ct", "snapshot", "create", "9320", "--keep", "-1"}, "--keep must be"},
 		{[]string{"ct", "snapshot", "create", "9320", "--keep", "2", "--label", "bad label"}, "invalid"},
 		{[]string{"ct", "snapshot", "create", "9320", "--keep", "2", "--vmstate"}, "only supported for VMs"},
+		{[]string{"ct", "snapshot", "create", "9320", "x", "--vmstate"}, "only supported for VMs"},
+		{[]string{"ct", "snapshot", "rotate", "9320", "--keep", "1", "--no-create", "--vmstate"}, "only supported for VMs"},
+		{[]string{"guest", "snapshot", "rotate", "100", "--keep", "1", "--no-create", "--vmstate"}, "--no-create"},
+		{[]string{"ct", "snapshot", "rotate", "9320", "--keep", "1", "--no-create", "--description", "x"}, "--no-create"},
 		{[]string{"ct", "snapshot", "create", "9320"}, "name is required"},
 		{[]string{"ct", "snapshot", "create", "9320", "x", "--label", "daily"}, "only applies with --keep"},
 		{[]string{"ct", "snapshot", "rotate", "9320"}, "keep"},
@@ -317,31 +477,30 @@ func TestSnapshotCreateKeepValidation(t *testing.T) {
 	if m := s.mutations(); len(m) != 0 {
 		t.Fatalf("refused commands sent mutations: %v", m)
 	}
-	// A matching explicit name is accepted.
 	name := "pc-daily-20260201-000000"
 	if _, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", name, "--keep", "5", "--label", "daily")...); err != nil {
 		t.Fatalf("matching explicit name: %v", err)
 	}
-	if got := s.mutations(); !reflect.DeepEqual(got, []string{"POST " + name}) {
+	if got := s.mutations(); !reflect.DeepEqual(got, []string{"POST lxc/9320 " + name}) {
 		t.Fatalf("mutations = %v", got)
 	}
 }
 
-// Plain create (no --keep) is unchanged apart from the new pass-through flags.
+// Plain create (no --keep) writes no marker, so it is never managed.
 func TestSnapshotCreatePlainPassThrough(t *testing.T) {
 	s := &rotServer{}
 	srv := s.start(t)
-	if _, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", "before", "--description", "pre")...); err != nil {
+	if _, err := runCLI(t, withCreds(srv, "ct", "snapshot", "create", "9320", "pc-auto-20260101-000000", "--description", "pre")...); err != nil {
 		t.Fatalf("plain create: %v", err)
 	}
-	if s.params["snapname"] != "before" || s.params["description"] != "pre" || s.params["vmstate"] != "" {
+	if s.params["snapname"] != "pc-auto-20260101-000000" || s.params["description"] != "pre" || s.params["vmstate"] != "" {
 		t.Fatalf("params = %v", s.params)
 	}
 }
 
 // On PDM, rotation goes through resolveGuest: a colliding vmid is refused
 // before any mutation, and --remote routes create/list to that remote while
-// leaving the non-managed "old" snapshot alone.
+// leaving the unmanaged "old" snapshot alone.
 func TestSnapshotRotatePDMGuard(t *testing.T) {
 	withTempConfig(t)
 	srv, log := pdmTargetServerCounting(t)
