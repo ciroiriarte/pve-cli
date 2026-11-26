@@ -10,8 +10,8 @@ import (
 //
 // It is also the json/yaml payload a task-producing mutation prints when it
 // doesn't wait (--no-wait, or -o json/yaml), so its tags are part of the
-// scripting contract: keys match TaskStatus (`upid`, `node`) so the output can
-// be piped straight into `pc task wait`.
+// scripting contract: keys match TaskStatus (`upid`, `node`), and `.upid` can be
+// passed to `pc task wait` (for PDM it is the full `pve:<remote>!UPID:…` id).
 type TaskHandle struct {
 	Backend string `json:"backend" yaml:"backend"` // "pve" | "pdm"
 	Node    string `json:"node" yaml:"node"`

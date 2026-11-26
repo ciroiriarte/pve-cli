@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -363,5 +364,24 @@ func TestPDMSnapshotPruneHonorsContextRemote(t *testing.T) {
 	out, err := runCLI(t, withPDMCreds(srv, "snapshot", "list", "--remote", "dc-west", "-o", "value", "-c", "remote")...)
 	if err != nil || !strings.Contains(out, "dc-west") || strings.Contains(out, "dc-north") {
 		t.Fatalf("snapshot list --remote override: out=%q err=%v", out, err)
+	}
+}
+
+// #47: a PDM-proxied mutation's task handle carries the remote and the full
+// prefixed id in `upid`, so `jq -r .upid | xargs pc task wait` keeps routing.
+func TestPDMMutationTaskHandleJSON(t *testing.T) {
+	srv := pdmTargetServer(t)
+	defer srv.Close()
+	out, err := runCLI(t, withPDMCreds(srv, "vm", "stop", "100", "--remote", "dc-west", "--yes", "--no-wait", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("vm stop: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not a json object: %v\n%s", err, out)
+	}
+	if got["backend"] != "pdm" || got["remote"] != "dc-west" ||
+		got["upid"] != "pve:dc-west!UPID:n3:0001:0002:6A00:qmstop:100:root@pam:" || got["display"] == nil {
+		t.Errorf("unexpected PDM task handle: %v", got)
 	}
 }

@@ -16,8 +16,9 @@ surface may change between minor releases.
   `age_seconds`, tag style `casesensitive`→`case_sensitive` and
   `colormap`→`color_map`. Zero-valued fields are now omitted in yaml, matching
   json's `omitempty`.
-- **Changed (json output)**: the task handle that task-producing mutations
-  (`vm/ct start|stop|clone|migrate|delete|…`, snapshot ops, etc.) print with
+- **Changed (json output)**: the task handle that every task-producing
+  mutation (guest lifecycle, snapshot, storage incl. upload, ceph, sdn, node
+  network, firewall, tags, access, PDM remote/server ops, …) prints with
   `--no-wait` or `-o json|yaml` now uses lowercase keys — `backend`, `node`,
   `upid`, `remote` (PDM only, omitted when empty), `display` — matching
   `pc task show`. They were the Go field names (`Backend`, `Node`, `UPID`, …)
