@@ -29,7 +29,10 @@ pc cluster check --storage-warn 85 --storage-crit 95 --since 6h
 pc cluster check --skip tasks --fail-on crit   # monitoring: exit 8 only on crit
 ```
 
-Exit `0` = healthy, `7` = warn (or a check's API read failed), `8` = crit.
+Exit `0` = healthy, `7` = warn or any check errored (even with `--fail-on crit`),
+`8` = crit. A rejected token or unreachable API prints no report and exits `2`/`4`.
+The token needs `Sys.Audit` (e.g. PVEAuditor on `/`); without it PVE hides
+other users' tasks and node metrics, which the check flags as incomplete.
 The json schema is `{"status", "checks": [{"name", "status", "detail", "items": [...]}]}`;
 `items` lists only the offending nodes/storages/tasks/HA resources/Ceph checks.
 

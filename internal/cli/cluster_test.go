@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,16 +43,43 @@ func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/api2/json")
-		if strings.HasSuffix(key, "/tasks") {
-			// Node task lists are keyed by path; the check must ask for errors in a window.
-			if q := r.URL.Query(); q.Get("errors") != "1" || q.Get("since") == "" {
-				http.Error(w, "want errors=1&since=", http.StatusBadRequest)
+		var start, limit int
+		paged := strings.HasSuffix(key, "/tasks")
+		if paged {
+			// Node task lists are keyed by path and paged by start/limit; the
+			// check must ask for failures (statusfilter, or errors=1 on servers
+			// without it) since some point in time.
+			q := r.URL.Query()
+			if _, old := f["!nostatusfilter"]; old && q.Has("statusfilter") {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"data":null,"errors":{"statusfilter":"property is not defined in schema"}}`))
 				return
 			}
+			if (q.Get("statusfilter") != "error,unknown" && q.Get("errors") != "1") || q.Get("since") == "" || q.Get("limit") == "" {
+				http.Error(w, "want statusfilter|errors, since, limit", http.StatusTeapot)
+				return
+			}
+			start, _ = strconv.Atoi(q.Get("start"))
+			limit, _ = strconv.Atoi(q.Get("limit"))
 		} else if q := r.URL.RawQuery; q != "" {
 			key += "?" + q
 		}
 		body, ok := f[key]
+		if ok && paged && body != "" {
+			var rows []json.RawMessage
+			if err := json.Unmarshal([]byte(body), &rows); err != nil {
+				t.Errorf("bad fixture %s: %v", key, err)
+			}
+			end := start + limit
+			if start > len(rows) {
+				start = len(rows)
+			}
+			if end > len(rows) {
+				end = len(rows)
+			}
+			b, _ := json.Marshal(rows[start:end])
+			body = string(b)
+		}
 		switch {
 		case !ok:
 			http.NotFound(w, r)
@@ -77,6 +106,16 @@ func runClusterCheck(t *testing.T, f clusterFixture, errMsg string, args ...stri
 		t.Fatalf("output is not a json object (err=%v): %v\n%s", err, jerr, out)
 	}
 	return rep, ExitCodeFor(err)
+}
+
+// runClusterCheckErr runs the check against f and returns raw stdout and the
+// exit code, for runs that print no report.
+func runClusterCheckErr(t *testing.T, f clusterFixture, errMsg string, args ...string) (string, int) {
+	t.Helper()
+	srv := f.server(t, errMsg)
+	defer srv.Close()
+	out, err := runCLI(t, withCreds(srv, append([]string{"cluster", "check", "-o", "json"}, args...)...)...)
+	return out, ExitCodeFor(err)
 }
 
 func checkByName(t *testing.T, rep clusterReport, name string) checkResult {
@@ -227,18 +266,21 @@ func TestClusterCheckAPIErrorIsBestEffort(t *testing.T) {
 		t.Fatalf("error check: overall %q exit %d, want warn/%d", rep.Status, code, ExitCheckWarn)
 	}
 
-	// A Ceph failure that isn't "not installed" is an error, not a silent skip.
-	f = healthyCluster()
-	f["/cluster/ceph/status"] = ""
-	rep, _ = runClusterCheck(t, f, "got timeout", "--check", "ceph")
-	if c := checkByName(t, rep, "ceph"); c.Status != checkError {
-		t.Errorf("ceph timeout: %+v, want error", c)
+	// A Ceph failure that isn't "not installed" is an error, not a silent skip,
+	// and an errored check exits 7 even with --fail-on crit.
+	for _, msg := range []string{"got timeout", "rados_connect failed - No such file or directory"} {
+		f = healthyCluster()
+		f["/cluster/ceph/status"] = ""
+		rep, code = runClusterCheck(t, f, msg, "--check", "quorum,ceph", "--fail-on", "crit")
+		if c := checkByName(t, rep, "ceph"); c.Status != checkError || code != ExitCheckWarn {
+			t.Errorf("ceph %q: %+v exit %d, want error/%d", msg, c, code, ExitCheckWarn)
+		}
 	}
 
-	// Every read failing still yields a full report, not a crash.
-	rep, code = runClusterCheck(t, clusterFixture{}, "")
-	if len(rep.Checks) != len(clusterCheckNames) || code != ExitCheckWarn {
-		t.Fatalf("all reads failing: %d checks exit %d", len(rep.Checks), code)
+	// Every check erroring: no verdict, the underlying error's exit code.
+	out, code := runClusterCheckErr(t, clusterFixture{}, "")
+	if out != "" || code != ExitNotFound {
+		t.Fatalf("all reads failing: exit %d, out %q; want %d and no report", code, out, ExitNotFound)
 	}
 
 	// One node's task list failing: the others are still checked, the check warns.
@@ -281,6 +323,10 @@ func TestClusterCheckValidation(t *testing.T) {
 		{"--fail-on", "never"},
 		{"--storage-warn", "95", "--storage-crit", "90"},
 		{"--since", "0s"},
+		{"--cpu-warn", "NaN"},
+		{"--mem-crit", "Inf"},
+		{"--storage-warn", "-Inf"},
+		{"--storage-crit", "NaN"},
 	} {
 		_, err := runCLI(t, withCreds(srv, append([]string{"cluster", "check"}, args...)...)...)
 		if err == nil {
@@ -314,5 +360,187 @@ func TestClusterCheckTable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("table missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestClusterCheckBooleanFlags: the schema declares online/quorate/shared as
+// booleans; real JSON true/false (and numeric strings) must grade like 0/1.
+func TestClusterCheckBooleanFlags(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/status"] = `[{"type":"cluster","name":"lab","quorate":true},{"type":"node","name":"pve-01","online":true},{"type":"node","name":"pve-02","online":"1"},{"type":"node","name":"pve-03","online":false}]`
+	f["/cluster/resources?type=storage"] = `[{"storage":"local","node":"pve-01","status":"available","shared":false,"disk":10,"maxdisk":100},` +
+		`{"storage":"nfs","node":"pve-01","status":"available","shared":true,"disk":50,"maxdisk":100},` +
+		`{"storage":"nfs","node":"pve-02","status":"available","shared":true,"disk":50,"maxdisk":100}]`
+	f["/storage"] = `[{"storage":"old","disable":true}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "quorum,storage")
+	q := checkByName(t, rep, "quorum")
+	if q.Status != checkWarn || len(q.Items) != 1 || q.Items[0].Name != "pve-03" || !strings.Contains(q.Detail, " quorate, 2/3") {
+		t.Errorf("quorum with booleans: %+v", q)
+	}
+	if s := checkByName(t, rep, "storage"); s.Status != checkOK || !strings.HasPrefix(s.Detail, "2 storages") {
+		t.Errorf("storage with shared:true: %+v, want 2 graded", s)
+	}
+	f["/cluster/status"] = `[{"type":"cluster","name":"lab","quorate":false},{"type":"node","name":"pve-01","online":true}]`
+	if rep, code := runClusterCheck(t, f, "", "--check", "quorum"); checkByName(t, rep, "quorum").Status != checkCrit || code != ExitCheckCrit {
+		t.Errorf("quorate:false must be crit, got %+v exit %d", rep, code)
+	}
+}
+
+const clusterFixtureCutoff = clusterFixtureNow - 24*3600
+
+// TestClusterCheckTaskSpanningCutoff: the window applies to the end time, so a
+// long task that started before it but failed inside it counts.
+func TestClusterCheckTaskSpanningCutoff(t *testing.T) {
+	f := healthyCluster()
+	f["/nodes/pve-01/tasks"] = fmt.Sprintf(`[{"type":"vzdump","id":"100","status":"job errors","starttime":%d,"endtime":%d,"upid":"UPID:span"},`+
+		`{"type":"vzdump","id":"101","status":"old","starttime":%d,"endtime":%d,"upid":"UPID:old"}]`,
+		clusterFixtureCutoff-3600, clusterFixtureCutoff+600, clusterFixtureCutoff-7200, clusterFixtureCutoff-60)
+	rep, code := runClusterCheck(t, f, "", "--check", "tasks")
+	c := checkByName(t, rep, "tasks")
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].ID != "UPID:span" || code != ExitCheckWarn {
+		t.Fatalf("spanning task: %+v exit %d", c, code)
+	}
+}
+
+func warningRows(n int) string {
+	rows := make([]string, n)
+	for i := range rows {
+		rows[i] = fmt.Sprintf(`{"type":"qmstart","id":"%d","status":"WARNINGS: 1","starttime":%d,"upid":"UPID:w%d"}`, i, clusterFixtureNow-60, i)
+	}
+	return strings.Join(rows, ",")
+}
+
+// TestClusterCheckTaskPagination: a page full of WARNINGS rows must not hide a
+// failure on the next page; hitting the page cap marks the check incomplete.
+func TestClusterCheckTaskPagination(t *testing.T) {
+	f := healthyCluster()
+	f["/nodes/pve-01/tasks"] = `[` + warningRows(taskPageSize) + `,{"type":"vzdump","id":"100","status":"job errors","starttime":1795003000,"upid":"UPID:p2"}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "tasks")
+	if c := checkByName(t, rep, "tasks"); len(c.Items) != 1 || c.Items[0].ID != "UPID:p2" {
+		t.Errorf("failure on page 2: %+v", c)
+	}
+
+	f["/nodes/pve-01/tasks"] = `[` + warningRows(taskPageSize*taskMaxPages) + `]`
+	rep, code := runClusterCheck(t, f, "", "--check", "tasks")
+	c := checkByName(t, rep, "tasks")
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkError ||
+		!strings.Contains(c.Items[0].Detail, "truncated") || !strings.Contains(c.Detail, "incomplete") || code != ExitCheckWarn {
+		t.Fatalf("page cap: %+v exit %d", c, code)
+	}
+}
+
+// TestClusterCheckTaskStatusfilterFallback: servers without statusfilter get errors=1.
+func TestClusterCheckTaskStatusfilterFallback(t *testing.T) {
+	f := healthyCluster()
+	f["!nostatusfilter"] = "x"
+	f["/nodes/pve-01/tasks"] = `[{"type":"vzdump","id":"100","status":"job errors","starttime":1795003000,"upid":"UPID:f"}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "tasks")
+	if c := checkByName(t, rep, "tasks"); len(c.Items) != 1 || c.Items[0].ID != "UPID:f" {
+		t.Fatalf("errors=1 fallback: %+v", c)
+	}
+}
+
+// TestClusterCheckMissingPrivileges: without Sys.Audit, PVE hides other users'
+// tasks and node metrics; both are flagged instead of reported healthy.
+func TestClusterCheckMissingPrivileges(t *testing.T) {
+	f := healthyCluster()
+	f["/access/permissions?path=%2Fnodes%2Fpve-02"] = `{"/nodes/pve-02":{"VM.Audit":1}}`
+	f["/access/permissions?path=%2Fnodes%2Fpve-01"] = `{"/nodes/pve-01":{"Sys.Audit":1}}`
+	f["/cluster/resources?type=node"] = `[{"node":"pve-01","status":"online","cpu":0.1,"mem":10,"maxmem":100},{"node":"pve-02","status":"online"},{"node":"pve-03","status":"online","cpu":0.1,"mem":10,"maxmem":100}]`
+	rep, code := runClusterCheck(t, f, "", "--check", "tasks,pressure", "--fail-on", "crit")
+	tk := checkByName(t, rep, "tasks")
+	if tk.Status != checkWarn || len(tk.Items) != 1 || tk.Items[0].Node != "pve-02" || !strings.Contains(tk.Items[0].Detail, "Sys.Audit") {
+		t.Errorf("tasks without Sys.Audit: %+v", tk)
+	}
+	pr := checkByName(t, rep, "pressure")
+	if pr.Status != checkWarn || len(pr.Items) != 1 || pr.Items[0].Node != "pve-02" || !strings.Contains(pr.Items[0].Detail, "metrics unavailable") {
+		t.Errorf("pressure without metrics: %+v", pr)
+	}
+	// Incomplete data is a warning, which --fail-on crit tolerates.
+	if code != ExitOK {
+		t.Errorf("exit %d, want 0 with --fail-on crit", code)
+	}
+}
+
+// TestClusterCheckAuthAndTransportFailures: a rejected token or an unreachable
+// API is not a health verdict — no report, the usual exit code, and no
+// further reads after the first fatal one.
+func TestClusterCheckAuthAndTransportFailures(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"data":null}`))
+	}))
+	defer srv.Close()
+	for _, failOn := range []string{"warn", "crit"} {
+		hits = 0
+		out, err := runCLI(t, withCreds(srv, "cluster", "check", "--fail-on", failOn)...)
+		if code := ExitCodeFor(err); code != ExitAuthConfig || out != "" {
+			t.Errorf("401 --fail-on %s: exit %d out %q, want %d and no report", failOn, code, out, ExitAuthConfig)
+		}
+		if hits > 1 {
+			t.Errorf("401: %d requests, want reads to stop after the first", hits)
+		}
+	}
+
+	dead := httptest.NewServer(http.NotFoundHandler())
+	url := dead.URL
+	dead.Close()
+	out, err := runCLI(t, "--server", url, "--token-id", "u@pam!c", "--token-secret", "secret", "cluster", "check", "--fail-on", "crit")
+	if code := ExitCodeFor(err); code != ExitAPIServer || out != "" {
+		t.Errorf("refused connection: exit %d out %q, want %d and no report", code, out, ExitAPIServer)
+	}
+}
+
+func TestClusterCheckCephDetection(t *testing.T) {
+	// 404 everywhere: skip, naming the nodes that were tried.
+	f := healthyCluster()
+	delete(f, "/cluster/ceph/status")
+	rep, _ := runClusterCheck(t, f, "", "--check", "ceph")
+	if c := checkByName(t, rep, "ceph"); c.Status != checkSkip || !strings.Contains(c.Detail, "pve-01, pve-02, pve-03") {
+		t.Errorf("ceph 404: %+v", c)
+	}
+
+	// Not initialized on the API node: skip too.
+	f = healthyCluster()
+	f["/cluster/ceph/status"] = ""
+	rep, _ = runClusterCheck(t, f, "pveceph configuration not initialized", "--check", "ceph")
+	if c := checkByName(t, rep, "ceph"); c.Status != checkSkip {
+		t.Errorf("ceph not initialized: %+v", c)
+	}
+
+	// Ceph only on another node: found via /nodes/{node}/ceph/status.
+	f = healthyCluster()
+	f["/cluster/ceph/status"] = ""
+	f["/nodes/pve-02/ceph/status"] = `{"health":{"status":"HEALTH_WARN","checks":{"OSD_DOWN":{"severity":"HEALTH_WARN","summary":{"message":"1 osds down"}}}}}`
+	rep, _ = runClusterCheck(t, f, "binary not installed: /usr/bin/ceph-mon", "--check", "ceph")
+	if c := checkByName(t, rep, "ceph"); c.Status != checkWarn || len(c.Items) != 1 {
+		t.Errorf("ceph on another node: %+v", c)
+	}
+}
+
+func TestClusterCheckHAStates(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/ha/status/current"] = `[` +
+		`{"type":"master","node":"pve-01","status":"pve-01 (active, Wed Nov 25 10:00:00 2026)"},` +
+		`{"type":"lrm","node":"pve-02","status":"pve-02 (old timestamp - dead?, Wed Nov 25 09:00:00 2026)"},` +
+		`{"type":"service","sid":"vm:100","state":"started","crm_state":"fence","node":"pve-02"},` +
+		`{"type":"service","sid":"vm:101","crm_state":"recovery","node":"pve-02"},` +
+		`{"type":"service","sid":"vm:102","state":"started","node":"pve-01"}]`
+	rep, code := runClusterCheck(t, f, "", "--check", "ha")
+	c := checkByName(t, rep, "ha")
+	got := map[string]string{}
+	for _, it := range c.Items {
+		got[it.Name] = it.Status
+	}
+	if c.Status != checkCrit || code != ExitCheckCrit || got["vm:100"] != checkCrit || got["vm:101"] != checkWarn || got["lrm"] != checkWarn || len(c.Items) != 3 {
+		t.Fatalf("HA states: %+v exit %d", c, code)
+	}
+
+	// A dead LRM without HA resources isn't a problem.
+	f["/cluster/ha/status/current"] = `[{"type":"lrm","node":"pve-02","status":"pve-02 (old timestamp - dead?, x)"}]`
+	if rep, _ := runClusterCheck(t, f, "", "--check", "ha"); checkByName(t, rep, "ha").Status != checkOK {
+		t.Errorf("dead lrm without services: %+v", rep)
 	}
 }

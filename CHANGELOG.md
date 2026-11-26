@@ -9,14 +9,19 @@ surface may change between minor releases.
 - **Added**: `pc cluster check` — one health verdict for a PVE cluster or
   standalone node: quorum and offline nodes (standalone is ok), storage usage
   (`--storage-warn`/`--storage-crit`, default 80/90%; disabled storages ignored,
-  shared storage counted once, unavailable storage warns), tasks failed within
-  `--since` (default 24h), HA resources in error/fence/freeze/recovery, Ceph
-  health (skipped when Ceph isn't installed), and per-node CPU/memory pressure.
-  Each check is ok/warn/crit/skip/error; a failed API read degrades only its
-  own check. `-o json` emits `{"status", "checks": [{"name", "status",
-  "detail", "items"}]}`. New exit codes for monitoring: `7` warn (or a read
-  error), `8` crit; `--fail-on crit` ignores warnings. `--check`/`--skip`
-  select checks. PVE-only; refused on PDM with the provider named (#22).
+  shared storage counted once, unavailable storage warns), tasks that ended
+  with a failure within `--since` (default 24h, every online node's task list,
+  paged), HA resources in error/fence/freeze/recovery plus a dead HA
+  manager/LRM, Ceph health (skipped only when no online node has Ceph), and
+  per-node CPU/memory pressure. Each check is ok/warn/crit/skip/error; a failed
+  API read degrades only its own check, and missing data (no `Sys.Audit`,
+  truncated task list, missing node metrics) is flagged, not reported healthy.
+  `-o json` emits `{"status", "checks": [{"name", "status", "detail",
+  "items"}]}`. New exit codes for monitoring: `7` warn or any errored check,
+  `8` crit; `--fail-on crit` ignores warnings but never an errored check. A
+  rejected token or unreachable API prints no report and exits with the usual
+  code (2/4). `--check`/`--skip` select checks. Needs `Sys.Audit` (e.g.
+  PVEAuditor). PVE-only; refused on PDM with the provider named (#22).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
