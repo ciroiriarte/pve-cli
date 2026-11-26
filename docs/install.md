@@ -249,15 +249,29 @@ context, `--server`/`--context` flags and `PVE_CLI_*` env vars the command
 would use) for live values:
 
 - guest vmids (shown with their name) and guest names for `vm`/`ct`/`guest`
-  verbs, filtered to the command's kind and narrowed by `--node`/`--remote`;
-- online node names for `--node`, `--target-node` and `<node>` arguments;
+  verbs, filtered to the command's kind and narrowed by `--node` and the
+  effective remote (`--remote`, else the context's `remote:` on PDM);
+- online node names for every `--node` and `--target-node` flag (including
+  group-level ones such as `pc vm snapshot … --node`) and `<node>` arguments;
 - PDM remote ids for `--remote` and `pc remote … <id>`;
-- storage ids for `--storage` and `<storage>` arguments (PVE).
+- storage ids for `--storage` and `<storage>` arguments (PVE);
+- existing tag names for the tag commands.
 
-It is best-effort and never blocks the shell: each lookup gives up after 1.5s
-(`PVE_CLI_COMPLETION_TIMEOUT`, e.g. `3s` on a slow link) and an unreachable or
-untrusted server simply yields no suggestions — completion never prompts (an
-unpinned self-signed cert needs `pc auth login` first). Results are cached for
-45s in `$XDG_CACHE_HOME/pve-cli/completion-<hash>.json` (mode 0600; keyed by
-provider, server and auth identity, never the secret), so repeated tabs are
-instant; delete the file to refresh sooner.
+Arguments it doesn't know about keep the shell's default (file) completion.
+
+It is best-effort and never blocks the shell: everything — reading the
+config, resolving the secret (keyring), the cache and the API call — is bounded
+by 1.5s (`PVE_CLI_COMPLETION_TIMEOUT`, e.g. `3s` on a slow link). An
+unreachable or untrusted server simply yields no suggestions, and completion
+never prompts or prints: an unpinned self-signed cert needs `pc auth login`
+first. A backend with TLS verification disabled (`--insecure`, `tls.verify:
+false` or `PVE_CLI_INSECURE`) and no pinned fingerprint is **never contacted**
+by completion — it couldn't show the insecure-credentials warning, so it
+doesn't send credentials; pin the cert to get live suggestions.
+
+Results are cached for 45s in the user cache dir (`$XDG_CACHE_HOME`, default
+`~/.cache`; `~/Library/Caches` on macOS) as
+`pve-cli/completion-<hash>.json`, keyed by provider, server, auth identity and
+TLS pin/CA — never the secret. Only a regular 0600 file owned by you, in a
+0700 directory you own, is trusted; anything else is ignored. Delete the file
+to refresh sooner.

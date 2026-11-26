@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strconv"
@@ -32,11 +33,18 @@ type PDM struct {
 	// defaultRemote is the context's pinned remote (config `remote:`), applied
 	// by single-guest resolution when --remote isn't given.
 	defaultRemote string
+	// warn receives failed-remote inventory warnings; nil means os.Stderr.
+	warn io.Writer
 }
 
 // SetDefaultRemote pins the remote used by single-guest resolution when no
 // --remote flag is given (the context's `remote:`).
 func (p *PDM) SetDefaultRemote(r string) { p.defaultRemote = r }
+
+// SetWarnWriter redirects this provider's non-fatal warnings (failed-remote
+// inventory). Shell completion passes io.Discard so nothing reaches the
+// terminal mid-completion.
+func (p *PDM) SetWarnWriter(w io.Writer) { p.warn = w }
 
 // DefaultRemote returns the pinned remote ("" = none).
 func (p *PDM) DefaultRemote() string { return p.defaultRemote }
@@ -144,11 +152,15 @@ func joinFailed(fs []failedRemote) string {
 	return strings.Join(parts, ", ")
 }
 
-// warnFailed surfaces failed remotes on stderr so a list never silently drops
+// warnFailed surfaces failed remotes on stderr (or the warn writer) so a list never silently drops
 // a cluster's inventory.
-func warnFailed(fs []failedRemote) {
+func (p *PDM) warnFailed(fs []failedRemote) {
+	w := p.warn
+	if w == nil {
+		w = os.Stderr
+	}
 	for _, f := range fs {
-		fmt.Fprintf(os.Stderr, "warning: inventory for remote %s unavailable: %s\n", f.remote, f.err)
+		fmt.Fprintf(w, "warning: inventory for remote %s unavailable: %s\n", f.remote, f.err)
 	}
 }
 
@@ -159,7 +171,7 @@ func (p *PDM) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	warnFailed(failedRemotes(entries))
+	p.warnFailed(failedRemotes(entries))
 	var out []domain.Node
 	for _, e := range entries {
 		for _, r := range e.Resources {
@@ -179,7 +191,7 @@ func (p *PDM) ListGuests(ctx context.Context, f provider.GuestFilter) ([]domain.
 	if err != nil {
 		return nil, err
 	}
-	warnFailed(failed)
+	p.warnFailed(failed)
 	return guests, nil
 }
 

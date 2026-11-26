@@ -8,13 +8,18 @@ surface may change between minor releases.
 
 - **Added**: live-API tab completion. Shell completion now suggests guest
   vmids (described by name) and names for `pc vm|ct|guest <verb>` (filtered by
-  kind, `--node` and `--remote`), online node names for `--node`/
-  `--target-node`/`<node>`, PDM remote ids for `--remote` and `pc remote …
-  <id>`, and PVE storage ids for `--storage`/`<storage>`. It is wired centrally
-  from argument/flag names, bounded by a 1.5s timeout
-  (`PVE_CLI_COMPLETION_TIMEOUT`), never prompts or prints, yields nothing when
-  the backend is unreachable, and caches results for 45s per backend identity
-  under `$XDG_CACHE_HOME/pve-cli/` (0600). See *Shell completion* in
+  kind, `--node` and the effective remote: `--remote`, else the context's
+  `remote:`), online node names for `--node`/`--target-node` (local or
+  group-level flags) and `<node>`, PDM remote ids for `--remote` and
+  `pc remote … <id>`, and PVE storage ids for `--storage`/`<storage>`. It is
+  wired centrally from argument/flag names; unknown arguments keep file
+  completion. Config, keyring, cache and API access are all bounded by a 1.5s
+  timeout (`PVE_CLI_COMPLETION_TIMEOUT`); it never prompts or prints, yields
+  nothing when the backend is unreachable, and never contacts an insecure
+  (unverified, unpinned) backend. Results are cached for 45s per backend
+  identity in the user cache dir (`$XDG_CACHE_HOME` or `~/.cache`;
+  `~/Library/Caches` on macOS), trusting only 0600 files you own. Tag-name
+  completion now uses the same bounded, cached path. See *Shell completion* in
   `docs/install.md` (#23).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening

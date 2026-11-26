@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -45,6 +46,9 @@ type Overrides struct {
 	Output      string
 	Insecure    *bool
 	Fingerprint string
+	// Warn receives non-fatal warnings (e.g. a plaintext secret in config);
+	// nil means os.Stderr. Shell completion passes io.Discard.
+	Warn io.Writer
 }
 
 // Resolve computes effective Settings using precedence:
@@ -111,7 +115,7 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 		s.Secret, s.SecretSource = os.Getenv("PVE_CLI_TOKEN_SECRET"), "env PVE_CLI_TOKEN_SECRET"
 	case profName != "":
 		a := f.Profiles[profName].Auth
-		v, err := resolveSecret(a)
+		v, err := resolveSecret(a, ov.Warn)
 		if err != nil {
 			return nil, err
 		}
@@ -198,12 +202,15 @@ func ResolveSecretRef(ref string) (string, error) {
 
 // resolveSecret dereferences a secret_ref (keyring://service/key or env:NAME),
 // or returns the inline secret. Inline plaintext secrets emit a warning.
-func resolveSecret(a AuthConfig) (string, error) {
+func resolveSecret(a AuthConfig, warn io.Writer) (string, error) {
 	if a.SecretRef != "" {
 		return ResolveSecretRef(a.SecretRef)
 	}
 	if a.Secret != "" {
-		fmt.Fprintln(os.Stderr, "[pc] warning: plaintext secret in config; prefer secret_ref: keyring://… or an env var")
+		if warn == nil {
+			warn = os.Stderr
+		}
+		fmt.Fprintln(warn, "[pc] warning: plaintext secret in config; prefer secret_ref: keyring://… or an env var")
 	}
 	return a.Secret, nil
 }

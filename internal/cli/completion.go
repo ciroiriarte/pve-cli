@@ -1,23 +1,29 @@
 package cli
 
 // Live-API shell completion (#23). Guest vmids/names, node names, PDM remote
-// ids and storage ids are suggested from the configured backend. Completion
-// runs on every <TAB>, so it must never hang, prompt or print:
+// ids, storage ids and tag names are suggested from the configured backend.
+// Completion runs on every <TAB>, so it must never hang, prompt or print:
 //
-//   - one fetch is bounded by a short timeout (PVE_CLI_COMPLETION_TIMEOUT,
-//     default 1.5s), including config/keyring resolution;
+//   - everything that can block — config load, settings/keyring resolution,
+//     cache I/O and the API call — runs in one worker bounded by a short
+//     timeout (PVE_CLI_COMPLETION_TIMEOUT, default 1.5s);
 //   - the provider never prompts (TLS is a pin or system trust; an untrusted
 //     cert is just an error), and every error yields no suggestions;
-//   - stderr diagnostics (insecure/plaintext warnings, PDM inventory warnings,
-//     --debug) are muted for the duration so the shell's line stays clean;
-//   - results are cached on disk per server+identity for a short TTL, so
-//     repeated tabs are instant and different clusters never mix.
+//   - an insecure backend (verification off, no pin) is never contacted:
+//     completion can't show the insecure-credentials warning (§4), so it
+//     doesn't send credentials;
+//   - nothing global is redirected: the provider is built locally with debug
+//     off, and config/PDM warnings go to io.Discard via per-call sinks;
+//   - results are cached on disk per backend identity for a short TTL, so
+//     repeated tabs are instant and different clusters never mix. Only cache
+//     files we own (regular, 0600, in a 0700 dir we own) are trusted.
 //
 // Wiring is central: wireLiveCompletion walks the tree once and attaches
 // completers by the argument names in each command's Use line (<vmid>, <node>,
 // <storage>, and <id> under `pc remote`) and by flag name (--node,
-// --target-node, --remote, --vmid, --storage). A new command gets completion
-// by naming its arguments/flags the usual way.
+// --target-node, --remote, --vmid, --storage), local or persistent. A new
+// command gets completion by naming its arguments/flags the usual way.
+// Positional slots it doesn't own keep cobra's default (file) completion.
 
 import (
 	"context"
@@ -39,22 +45,23 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/domain"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
 	"github.com/ciroiriarte/pve-cli/internal/provider"
-	"github.com/ciroiriarte/pve-cli/internal/transport"
 )
 
 const (
 	defaultCompletionTimeout = 1500 * time.Millisecond
 	completionCacheTTL       = 45 * time.Second
+	maxCompCacheBytes        = 8 << 20
 
 	compGuests   = "guests"
 	compNodes    = "nodes"
 	compRemotes  = "remotes"
 	compStorages = "storages"
+	compTags     = "tags"
 )
 
 type completer = func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective)
 
-// compEntry is one cached completion candidate (guest, node, remote, storage).
+// compEntry is one cached completion candidate (guest, node, remote, storage, tag).
 type compEntry struct {
 	ID     string `json:"id"`
 	Name   string `json:"name,omitempty"`
@@ -69,6 +76,17 @@ type compCacheEntry struct {
 	Items []compEntry `json:"items"`
 }
 
+// compResult is a data set plus the context's pinned remote (PDM), which
+// scopes guest suggestions the way resolveGuest scopes execution (§13).
+type compResult struct {
+	items         []compEntry
+	defaultRemote string
+}
+
+// completionResolve resolves settings; a seam so tests can simulate a secret
+// lookup (keyring) that blocks.
+var completionResolve = config.Resolve
+
 func completionTimeout() time.Duration {
 	if d, err := time.ParseDuration(os.Getenv("PVE_CLI_COMPLETION_TIMEOUT")); err == nil && d > 0 {
 		return d
@@ -76,36 +94,38 @@ func completionTimeout() time.Duration {
 	return defaultCompletionTimeout
 }
 
-// completionCachePath names the cache file for the active backend identity
-// (provider, server, auth identity). The secret is never resolved here — a
-// placeholder short-circuits keyring/inline lookups — and never hashed in.
-func (a *app) completionCachePath() string {
-	ov := a.overrides()
-	if ov.Secret == "" && ov.SecretRef == "" {
-		ov.Secret = "-"
-	}
-	f, err := config.Load(config.DefaultPath())
-	if err != nil {
-		return ""
-	}
-	s, err := config.Resolve(f, ov)
-	if err != nil || s.Server == "" {
-		return ""
-	}
+// completionCachePath names the cache file for a backend identity: provider,
+// server, auth identity and TLS identity (pin/CA, so two tunnels behind the
+// same URL don't mix). Never the secret.
+func completionCachePath(s *config.Settings) string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return ""
 	}
-	h := sha256.Sum256([]byte(strings.Join([]string{s.Provider, s.Server, s.AuthType, s.TokenID, s.User}, "\x00")))
+	h := sha256.Sum256([]byte(strings.Join([]string{s.Provider, s.Server, s.AuthType, s.TokenID, s.User, s.TLSFinger, s.TLSCAFile}, "\x00")))
 	return filepath.Join(dir, "pve-cli", "completion-"+hex.EncodeToString(h[:8])+".json")
 }
 
+// readCompCache loads the cache file, ignoring anything we don't trust: a
+// symlink, a non-regular file, or one not owned by us with mode 0600.
 func readCompCache(path string) map[string]compCacheEntry {
 	m := map[string]compCacheEntry{}
 	if path == "" {
 		return m
 	}
-	b, err := os.ReadFile(path)
+	li, err := os.Lstat(path)
+	if err != nil || !cacheFileTrusted(li) {
+		return m
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return m
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !os.SameFile(li, fi) { // swapped since Lstat
+		return m
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxCompCacheBytes))
 	if err != nil {
 		return m
 	}
@@ -113,19 +133,20 @@ func readCompCache(path string) map[string]compCacheEntry {
 	return m
 }
 
-// writeCompCache stores one data set, atomically (temp file + rename), 0600.
+// writeCompCache stores one data set atomically (0600 temp file + rename) in a
+// directory we own with mode 0700; otherwise it doesn't cache.
 func writeCompCache(path, set string, items []compEntry) {
 	if path == "" {
+		return
+	}
+	dir := filepath.Dir(path)
+	if os.MkdirAll(dir, 0o700) != nil || !cacheDirUsable(dir) {
 		return
 	}
 	m := readCompCache(path)
 	m[set] = compCacheEntry{At: time.Now(), Items: items}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return
-	}
-	dir := filepath.Dir(path)
-	if os.MkdirAll(dir, 0o700) != nil {
 		return
 	}
 	tmp, err := os.CreateTemp(dir, ".completion-*")
@@ -139,24 +160,14 @@ func writeCompCache(path, set string, items []compEntry) {
 	}
 }
 
+var errCompletionSkip = errors.New("live completion skipped")
+
 // completionData returns a data set from the fresh cache or the live API. Any
-// failure (unreachable, TLS, auth, timeout) returns nil.
-func (a *app) completionData(cmd *cobra.Command, set string) []compEntry {
-	path := a.completionCachePath()
-	if e, ok := readCompCache(path)[set]; ok && time.Since(e.At) < completionCacheTTL && time.Since(e.At) >= 0 {
-		return e.Items
-	}
-
-	// Mute everything that could write to the terminal mid-completion.
-	restoreTransport := transport.SetStderr(io.Discard)
-	defer restoreTransport()
-	if devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
-		old := os.Stderr
-		os.Stderr = devnull
-		defer func() { os.Stderr = old; devnull.Close() }()
-	}
-	a.debug = false
-
+// failure (unreadable config, unreachable, TLS, auth, insecure, timeout)
+// returns an empty result. Only flag values are read on this goroutine; all
+// I/O happens in the bounded worker.
+func (a *app) completionData(cmd *cobra.Command, set string) compResult {
+	ov := a.overrides()
 	timeout := completionTimeout()
 	parent := cmd.Context()
 	if parent == nil {
@@ -165,46 +176,94 @@ func (a *app) completionData(cmd *cobra.Command, set string) []compEntry {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	type result struct {
-		items []compEntry
-		err   error
-	}
-	ch := make(chan result, 1)
+	ch := make(chan compResult, 1)
 	go func() {
-		items, err := fetchCompletion(ctx, a, set)
-		ch <- result{items, err}
+		r, err := loadCompletion(ctx, ov, set)
+		if err != nil {
+			r = compResult{}
+		}
+		ch <- r
 	}()
-	// The fetch honors ctx; the extra timer only guards work that doesn't
-	// (e.g. a keyring call stuck on D-Bus). Small grace so a ctx-bounded fetch
-	// reports its own error first.
+	// Network calls honor ctx; the timer also covers work that doesn't (a
+	// FIFO config, a keyring stuck on D-Bus). The small grace lets a
+	// ctx-bounded fetch report first. A stuck worker is abandoned; the
+	// completion process exits right after.
 	timer := time.NewTimer(timeout + 250*time.Millisecond)
 	defer timer.Stop()
 	select {
 	case r := <-ch:
-		if r.err != nil {
-			return nil
-		}
-		writeCompCache(path, set, r.items)
-		return r.items
+		return r
 	case <-timer.C:
-		return nil
+		return compResult{}
 	}
 }
 
-func fetchCompletion(ctx context.Context, a *app, set string) ([]compEntry, error) {
-	p, err := a.Provider()
+func loadCompletion(ctx context.Context, ov config.Overrides, set string) (compResult, error) {
+	f, err := config.Load(config.DefaultPath())
 	if err != nil {
-		return nil, err
+		return compResult{}, err
 	}
+	// Identity for the cache key and the insecure check: a placeholder secret
+	// short-circuits every secret source (flag ref, env, keyring, inline).
+	keyOv := ov
+	keyOv.Secret, keyOv.SecretRef, keyOv.Warn = "-", "", io.Discard
+	id, err := completionResolve(f, keyOv)
+	if err != nil {
+		return compResult{}, err
+	}
+	if id.Server == "" || (id.TLSInsecure && id.TLSFinger == "") {
+		return compResult{}, errCompletionSkip
+	}
+	res := compResult{defaultRemote: id.Remote}
+	path := completionCachePath(id)
+	if e, ok := readCompCache(path)[set]; ok {
+		if age := time.Since(e.At); age >= 0 && age < completionCacheTTL {
+			res.items = e.Items
+			return res, nil
+		}
+	}
+
+	ov.Warn = io.Discard
+	s, err := completionResolve(f, ov)
+	if err != nil {
+		return compResult{}, err
+	}
+	p, err := provider.New(s, false)
+	if err != nil {
+		return compResult{}, err
+	}
+	if w, ok := p.(interface{ SetWarnWriter(io.Writer) }); ok {
+		w.SetWarnWriter(io.Discard)
+	}
+	items, err := fetchCompletion(ctx, p, set)
+	if err != nil {
+		return compResult{}, err
+	}
+	writeCompCache(path, set, items)
+	res.items = items
+	return res, nil
+}
+
+func fetchCompletion(ctx context.Context, p provider.Provider, set string) ([]compEntry, error) {
 	out := []compEntry{}
 	switch set {
-	case compGuests:
+	case compGuests, compTags:
 		gs, err := p.ListGuests(ctx, provider.GuestFilter{})
 		if err != nil {
 			return nil, err
 		}
+		seen := map[string]bool{}
 		for _, g := range gs {
-			out = append(out, compEntry{ID: strconv.Itoa(g.VMID), Name: g.Name, Kind: string(g.Kind), Node: g.Node, Remote: g.Remote, Status: g.Status})
+			if set == compGuests {
+				out = append(out, compEntry{ID: strconv.Itoa(g.VMID), Name: g.Name, Kind: string(g.Kind), Node: g.Node, Remote: g.Remote, Status: g.Status})
+				continue
+			}
+			for _, t := range splitTags(g.Tags) {
+				if !seen[t] {
+					seen[t] = true
+					out = append(out, compEntry{ID: t})
+				}
+			}
 		}
 	case compNodes:
 		ns, err := p.ListNodes(ctx)
@@ -247,16 +306,17 @@ func fetchCompletion(ctx context.Context, a *app, set string) ([]compEntry, erro
 	return out, nil
 }
 
-// flagValue reads a local flag's string value, "" when absent.
+// flagValue reads a flag's string value (local or inherited), "" when absent.
 func flagValue(cmd *cobra.Command, name string) string {
-	if f := cmd.Flags().Lookup(name); f != nil {
+	if f := cmd.Flag(name); f != nil {
 		return f.Value.String()
 	}
 	return ""
 }
 
 // completeGuests suggests vmids (described by name) and names (described by
-// vmid) of the given kind ("" = both), narrowed by --node/--remote when set.
+// vmid) of the given kind ("" = both), narrowed by --node and by the
+// effective remote (--remote > context `remote:`, as in resolveGuest) on PDM.
 func completeGuests(a *app, kind domain.GuestKind) completer {
 	return func(cmd *cobra.Command, _ []string, tc string) ([]string, cobra.ShellCompDirective) {
 		// Comma-list flags (e.g. `tag add --vmid 100,10<TAB>`): complete the
@@ -265,12 +325,17 @@ func completeGuests(a *app, kind domain.GuestKind) completer {
 		if i := strings.LastIndex(tc, ","); i >= 0 {
 			lead, tc = tc[:i+1], tc[i+1:]
 		}
+		data := a.completionData(cmd, compGuests)
 		node, remote := flagValue(cmd, "node"), flagValue(cmd, "remote")
+		if remote == "" {
+			remote = data.defaultRemote
+		}
 		var ids []compEntry
 		names := map[string]string{}
-		for _, g := range a.completionData(cmd, compGuests) {
+		for _, g := range data.items {
+			// Remote scoping applies to PDM data only (PVE guests carry none).
 			if (kind != "" && g.Kind != string(kind)) || (node != "" && g.Node != node) ||
-				(remote != "" && !strings.EqualFold(g.Remote, remote)) {
+				(remote != "" && g.Remote != "" && !strings.EqualFold(g.Remote, remote)) {
 				continue
 			}
 			if strings.HasPrefix(g.ID, tc) {
@@ -325,7 +390,7 @@ func completeNodes(a *app) completer {
 		remote := flagValue(cmd, "remote")
 		seen := map[string]bool{}
 		var out []string
-		for _, n := range a.completionData(cmd, compNodes) {
+		for _, n := range a.completionData(cmd, compNodes).items {
 			if n.Status != "" && n.Status != "online" {
 				continue
 			}
@@ -347,7 +412,7 @@ func completeNodes(a *app) completer {
 func completeIDs(a *app, set string) completer {
 	return func(cmd *cobra.Command, _ []string, tc string) ([]string, cobra.ShellCompDirective) {
 		var out []string
-		for _, e := range a.completionData(cmd, set) {
+		for _, e := range a.completionData(cmd, set).items {
 			if strings.HasPrefix(e.ID, tc) {
 				s := e.ID
 				if e.Kind != "" {
@@ -428,7 +493,7 @@ func wireLiveCompletion(a *app, c *cobra.Command) {
 				if len(args) < len(comps) && comps[len(args)] != nil {
 					return comps[len(args)](cmd, args, tc)
 				}
-				return nil, cobra.ShellCompDirectiveNoFileComp
+				return nil, cobra.ShellCompDirectiveDefault // e.g. upload's <file>
 			}
 		}
 	}
@@ -444,7 +509,10 @@ func wireLiveCompletion(a *app, c *cobra.Command) {
 		delete(flags, "node") // `remote add/update --node` is an endpoint address
 	}
 	for name, fn := range flags {
-		if c.Flags().Lookup(name) != nil {
+		// c.Flag also finds the command's own (and inherited) persistent
+		// flags; the completion registry is keyed by the *pflag.Flag, so the
+		// declaring command registers once and its children skip.
+		if c.Flag(name) != nil {
 			if _, exists := c.GetFlagCompletionFunc(name); !exists {
 				_ = c.RegisterFlagCompletionFunc(name, fn)
 			}

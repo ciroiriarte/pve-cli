@@ -124,26 +124,13 @@ func writeGuestTags(ctx context.Context, a *app, p provider.Provider, g domain.G
 	return rawMutate(ctx, a, p, "PUT", path, params, label, true, 0)
 }
 
-// completeTagNames offers existing cluster tag names for shell completion.
+// completeTagNames offers existing cluster tag names for shell completion,
+// through the bounded, cached live-completion path (completion.go).
 func completeTagNames(a *app) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		p, err := a.Provider()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		guests, err := p.ListGuests(cmd.Context(), provider.GuestFilter{})
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		seen := map[string]bool{}
 		var out []string
-		for _, g := range guests {
-			for _, t := range splitTags(g.Tags) {
-				if !seen[t] {
-					seen[t] = true
-					out = append(out, t)
-				}
-			}
+		for _, t := range a.completionData(cmd, compTags).items {
+			out = append(out, t.ID)
 		}
 		sort.Strings(out)
 		return out, cobra.ShellCompDirectiveNoFileComp
