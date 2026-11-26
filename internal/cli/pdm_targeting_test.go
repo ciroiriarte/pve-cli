@@ -6,15 +6,58 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
+
+type mutationLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (l *mutationLog) add(c string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, c)
+}
+
+func (l *mutationLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.calls...)
+}
 
 // pdmTargetServer serves a PDM where dc-east's inventory errored and vmid 100
 // lives only on dc-west (so it looks unique on the incomplete listing), and
 // vmid 300 collides across dc-west and dc-north.
 func pdmTargetServer(t *testing.T) *httptest.Server {
+	srv, _ := pdmTargetServerCounting(t)
+	return srv
+}
+
+// pdmTargetServerCounting also counts proxied mutation (POST/DELETE) requests,
+// so a test can assert a refused command never sent one, and records their
+// paths. Every proxied guest has one old snapshot ("old").
+func pdmTargetServerCounting(t *testing.T) (*httptest.Server, *mutationLog) {
 	t.Helper()
+	log := &mutationLog{}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/pve/remotes/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodDelete {
+			log.add(r.Method + " " + r.URL.Path)
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/snapshot") {
+			w.Write([]byte(`{"data":[{"name":"current"},{"name":"old","snaptime":1000}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/tasks/") {
+			w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+			return
+		}
+		// PDM returns proxied task ids prefixed with the remote.
+		remote := strings.Split(r.URL.Path, "/")[5]
+		w.Write([]byte(`{"data":"pve:` + remote + `!UPID:n3:0001:0002:6A00:qmstop:100:root@pam:"}`))
+	})
 	mux.HandleFunc("/api2/json/resources/list", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"data":[
 			{"remote":"dc-east","error":"connection refused","resources":[]},
@@ -36,7 +79,7 @@ func pdmTargetServer(t *testing.T) *httptest.Server {
 			w.Write([]byte(`{"data":{"name":"cfg-` + name + `","cores":2}}`))
 		})
 	}
-	return httptest.NewServer(mux)
+	return httptest.NewServer(mux), log
 }
 
 // writeContextConfig writes a config whose current context pins `remote`.
@@ -147,5 +190,134 @@ func TestPVEIgnoresContextRemote(t *testing.T) {
 		if err != nil || !strings.Contains(out, "cores") {
 			t.Fatalf("%v on PVE with context remote: out=%q err=%v", args, out, err)
 		}
+	}
+}
+
+// #37 review: on PDM, --node never skips resolution. The guest is resolved
+// (scoped when a remote is known, failing closed on an errored remote) and
+// --node must match; otherwise no mutation is sent.
+func TestPDMNodeFlagStillResolves(t *testing.T) {
+	withTempConfig(t)
+	srv, log := pdmTargetServerCounting(t)
+	defer srv.Close()
+
+	refused := []struct {
+		args []string
+		want string
+		code int
+	}{
+		// explicit remote whose inventory errored
+		{[]string{"vm", "stop", "100", "--node", "n1", "--remote", "dc-east", "--yes", "--no-wait"}, "connection refused", ExitAPIServer},
+		// explicit healthy remote, node belongs elsewhere
+		{[]string{"vm", "stop", "100", "--node", "n1", "--remote", "dc-west", "--yes", "--no-wait"}, `not "n1"`, ExitValidation},
+		// no remote: fails closed on the errored dc-east
+		{[]string{"vm", "stop", "100", "--node", "n3", "--yes", "--no-wait"}, "dc-east", ExitAPIServer},
+	}
+	for _, c := range refused {
+		_, err := runCLI(t, withPDMCreds(srv, c.args...)...)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: expected error containing %q, got %v", c.args, c.want, err)
+		} else if code := ExitCodeFor(err); code != c.code {
+			t.Errorf("%v: exit code = %d, want %d", c.args, code, c.code)
+		}
+	}
+	if calls := log.snapshot(); len(calls) != 0 {
+		t.Fatalf("refused commands sent mutations: %v", calls)
+	}
+
+	// A matching --node on a healthy remote goes through to that remote.
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "stop", "100", "--node", "n3", "--remote", "dc-west", "--yes", "--no-wait")...); err != nil {
+		t.Fatalf("matching node: %v", err)
+	}
+	if calls := log.snapshot(); len(calls) != 1 || calls[0] != "POST /api2/json/pve/remotes/dc-west/qemu/100/stop" {
+		t.Fatalf("expected one stop on dc-west, got %v", calls)
+	}
+}
+
+func TestPDMNodeFlagWithContextRemote(t *testing.T) {
+	srv, log := pdmTargetServerCounting(t)
+	defer srv.Close()
+
+	// Context remote is the errored remote: refused (exit 4), with or without --node.
+	writeContextConfig(t, "pdm", "dc-east")
+	for _, args := range [][]string{
+		{"vm", "stop", "100", "--yes", "--no-wait"},
+		{"vm", "stop", "100", "--node", "n1", "--yes", "--no-wait"},
+		{"vm", "show", "west-web"},
+	} {
+		_, err := runCLI(t, withPDMCreds(srv, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "connection refused") || ExitCodeFor(err) != ExitAPIServer {
+			t.Errorf("%v with errored context remote: expected exit 4 inventory error, got %v", args, err)
+		}
+	}
+
+	// Context remote dc-north hosts 300 on n9; --node n3 is a mismatch.
+	writeContextConfig(t, "pdm", "dc-north")
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "stop", "300", "--node", "n3", "--yes", "--no-wait")...); err == nil || !strings.Contains(err.Error(), `not "n3"`) {
+		t.Errorf("node mismatch on context remote: got %v", err)
+	}
+	if calls := log.snapshot(); len(calls) != 0 {
+		t.Fatalf("refused commands sent mutations: %v", calls)
+	}
+}
+
+// Commands that build PVE /nodes/... paths from a resolved guest are refused on
+// PDM up front, naming the provider, instead of resolving across remotes.
+func TestPDMNodePathGuestCommandsRefused(t *testing.T) {
+	withTempConfig(t)
+	srv, log := pdmTargetServerCounting(t)
+	defer srv.Close()
+	for _, args := range [][]string{
+		{"backup", "create", "300", "--storage", "s", "--no-wait"},
+		{"firewall", "rules", "--vmid", "300"},
+	} {
+		_, err := runCLI(t, withPDMCreds(srv, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "current provider: pdm") {
+			t.Errorf("%v: expected PVE-only refusal naming the provider, got %v", args, err)
+		}
+	}
+	if calls := log.snapshot(); len(calls) != 0 {
+		t.Fatalf("refused commands sent mutations: %v", calls)
+	}
+}
+
+// A name lookup is scoped by the context remote too.
+func TestPDMContextRemoteByName(t *testing.T) {
+	srv := pdmTargetServer(t)
+	defer srv.Close()
+	writeContextConfig(t, "pdm", "dc-north")
+
+	out, err := runCLI(t, withPDMCreds(srv, "vm", "show", "north-db")...)
+	if err != nil || !strings.Contains(out, "cfg-dc-north") {
+		t.Fatalf("name on context remote: out=%q err=%v", out, err)
+	}
+	if _, err := runCLI(t, withPDMCreds(srv, "vm", "show", "west-db")...); err == nil || !strings.Contains(err.Error(), `on remote "dc-north"`) {
+		t.Fatalf("name off the context remote: expected not-found on dc-north, got %v", err)
+	}
+}
+
+// Bulk snapshot commands honor the pinned remote, so a pinned prune can't
+// delete snapshots on other remotes; --remote still overrides.
+func TestPDMSnapshotPruneHonorsContextRemote(t *testing.T) {
+	srv, log := pdmTargetServerCounting(t)
+	defer srv.Close()
+	writeContextConfig(t, "pdm", "dc-north")
+
+	if _, err := runCLI(t, withPDMCreds(srv, "snapshot", "prune", "--older-than", "1d", "--yes")...); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	calls := log.snapshot()
+	if len(calls) == 0 {
+		t.Fatal("pinned prune deleted nothing on dc-north")
+	}
+	for _, c := range calls {
+		if !strings.Contains(c, "/remotes/dc-north/") {
+			t.Errorf("pinned prune touched another remote: %s", c)
+		}
+	}
+
+	out, err := runCLI(t, withPDMCreds(srv, "snapshot", "list", "--remote", "dc-west", "-o", "value", "-c", "remote")...)
+	if err != nil || !strings.Contains(out, "dc-west") || strings.Contains(out, "dc-north") {
+		t.Fatalf("snapshot list --remote override: out=%q err=%v", out, err)
 	}
 }

@@ -156,7 +156,12 @@ resolution only fails if the selected remote errored. Lists (`guest list`,
 context's `remote:` is the default scope: `resolveGuest` applies `--remote` >
 context `remote:` > none (the PDM provider carries it via
 `SetDefaultRemote`/`DefaultRemote`; PVE has neither, so it's ignored there).
-Lists are never filtered by the context remote.
+`guest list` / `node list` are never filtered by the context remote; bulk
+snapshot commands (`collectSnapshots`) are. On PDM the typed `--node` shortcut
+is disabled — the guest is always resolved and `--node` must match. Commands
+that build PVE `/nodes/...` paths from a guest (`backup create`, `firewall
+--vmid`) are refused on PDM via `ensurePVE`; don't call `p.ResolveGuest`
+directly from new commands.
 
 ## UX roadmap
 

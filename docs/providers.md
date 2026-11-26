@@ -61,8 +61,10 @@ contexts:
 ```
 
 Single-guest commands then target `dc-west` without `--remote` (an explicit
-`--remote` still wins). Lists (`guest list`, `node list`) stay cross-remote.
-On `provider: pve` the context `remote:` is ignored.
+`--remote` still wins). Bulk snapshot commands (`snapshot list`/`prune`) honor
+the pinned remote too; `guest list` and `node list` stay cross-remote. On PDM,
+`--node` doesn't skip the lookup: the guest is still resolved and `--node` must
+match its node. On `provider: pve` the context `remote:` is ignored.
 
 If a remote's inventory can't be fetched, lists still show the healthy remotes
 and print a warning on stderr, but a single-guest command without a remote

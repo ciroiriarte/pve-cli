@@ -15,8 +15,14 @@ surface may change between minor releases.
   - `guest list` / `node list` keep working but warn about failed remotes on
     stderr instead of silently dropping them.
   - The context's `remote:` is now honored as the default for single-guest
-    commands (`--remote` > context `remote:` > none); it was documented but
-    ignored. It is ignored on `provider: pve`, and lists are not filtered by it.
+    commands (`--remote` > context `remote:` > none) and for `snapshot
+    list`/`prune`; it was documented but ignored. It is ignored on `provider:
+    pve`, and `guest list` / `node list` are not filtered by it.
+  - On PDM, `--node` no longer skips guest resolution: the guest is resolved
+    (scoped to the remote when one is known) and `--node` must match its node,
+    so a mutation can't be sent to an unverified or wrong remote.
+  - `backup create` and `firewall --vmid` build PVE node paths and are now
+    refused up front on PDM instead of resolving the guest across remotes.
 
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 

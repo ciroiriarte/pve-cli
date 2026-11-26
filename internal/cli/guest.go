@@ -211,13 +211,26 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 		// A non-numeric argument is a guest name — look it up.
 		return resolveGuestByName(ctx, p, spec, idArg, node, remote)
 	}
-	// Typed commands (vm/ct) with an explicit --node skip auto-resolution. The
-	// unified `guest` command has no kind, so it must resolve to learn whether
-	// the vmid is a VM or CT — it falls through and applies --node as an override.
-	if node != "" && spec.kind != "" {
-		// Explicit node skips auto-resolution; carry remote too so PDM proxied
-		// calls (which are remote-scoped, not node-scoped) still work.
+	// On PVE, typed commands (vm/ct) with an explicit --node skip
+	// auto-resolution. The unified `guest` command has no kind, so it must
+	// resolve to learn whether the vmid is a VM or CT — it falls through and
+	// applies --node as an override. PDM never takes the shortcut: proxied calls
+	// are remote-scoped, so the guest must be resolved (failing closed on
+	// incomplete inventory) and --node only verifies the result (#37).
+	pdm := p.Capabilities().Remotes
+	if node != "" && spec.kind != "" && !pdm {
 		return domain.Guest{VMID: vmid, Kind: spec.kind, Node: node, Remote: remote}, nil
+	}
+	applyNode := func(g domain.Guest) (domain.Guest, error) {
+		if node == "" {
+			return g, nil
+		}
+		if pdm && !strings.EqualFold(g.Node, node) {
+			return domain.Guest{}, &protocol.APIError{Kind: protocol.KindValidation,
+				Message: fmt.Sprintf("guest %d is on node %q (remote %s), not %q", g.VMID, g.Node, g.Remote, node)}
+		}
+		g.Node = node
+		return g, nil
 	}
 	if remote != "" {
 		gr, ok := p.(interface {
@@ -233,10 +246,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 		if err := enforceKind(spec, g); err != nil {
 			return domain.Guest{}, err
 		}
-		if node != "" {
-			g.Node = node
-		}
-		return g, nil
+		return applyNode(g)
 	}
 	g, err := p.ResolveGuest(ctx, vmid)
 	if err != nil {
@@ -245,10 +255,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 	if err := enforceKind(spec, g); err != nil {
 		return domain.Guest{}, err
 	}
-	if node != "" {
-		g.Node = node
-	}
-	return g, nil
+	return applyNode(g)
 }
 
 // enforceKind rejects a guest whose kind doesn't match a typed spec. The unified

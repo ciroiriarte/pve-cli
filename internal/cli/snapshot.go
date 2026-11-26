@@ -186,6 +186,13 @@ func collectSnapshots(ctx context.Context, p provider.Provider, f snapshotFilter
 		}
 	}
 
+	// Bulk snapshot commands honor the context's pinned remote (PDM) when
+	// --remote isn't given, so a pinned prune can't reach other remotes.
+	if f.remote == "" {
+		if d, ok := p.(interface{ DefaultRemote() string }); ok {
+			f.remote = d.DefaultRemote()
+		}
+	}
 	guests, err := p.ListGuests(ctx, provider.GuestFilter{Node: f.node})
 	if err != nil {
 		return nil, err
