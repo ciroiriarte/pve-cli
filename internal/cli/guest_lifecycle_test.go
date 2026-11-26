@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func lifecycleServer(t *testing.T) *httptest.Server {
@@ -44,6 +47,37 @@ func TestVMCloneReturnsTask(t *testing.T) {
 	}
 	if !strings.Contains(out, "UPID:pve-01") || !strings.Contains(out, "qmclone") {
 		t.Errorf("clone output missing task id:\n%s", out)
+	}
+}
+
+// #47: the task handle a non-waiting mutation prints is part of the json/yaml
+// contract — lowercase keys matching TaskStatus, so `jq -r .upid` works and
+// json/yaml agree. Empty remote (PVE) is omitted.
+func TestMutationTaskHandleJSONKeys(t *testing.T) {
+	srv := lifecycleServer(t)
+	defer srv.Close()
+	for _, format := range []string{"json", "yaml"} {
+		out, err := runCLI(t, withCreds(srv, "vm", "clone", "100", "200", "--no-wait", "-o", format)...)
+		if err != nil {
+			t.Fatalf("vm clone -o %s: %v", format, err)
+		}
+		var got map[string]any
+		if format == "json" {
+			err = json.Unmarshal([]byte(out), &got)
+		} else {
+			err = yaml.Unmarshal([]byte(out), &got)
+		}
+		if err != nil {
+			t.Fatalf("-o %s: not a single object: %v\n%s", format, err, out)
+		}
+		if got["upid"] != "UPID:pve-01:0001:0002:6A00:qmclone:100:root@pam!t:" || got["node"] != "pve-01" || got["backend"] != "pve" {
+			t.Errorf("-o %s: want lowercase upid/node/backend keys, got %v", format, got)
+		}
+		for _, k := range []string{"UPID", "Node", "Backend", "Remote", "Display", "remote"} {
+			if _, ok := got[k]; ok {
+				t.Errorf("-o %s: unexpected key %q in %v", format, k, got)
+			}
+		}
 	}
 }
 

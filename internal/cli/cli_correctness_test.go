@@ -379,6 +379,7 @@ func TestRawStructsYAMLKeysMatchJSON(t *testing.T) {
 		snapshotRow{VMID: 100, AgeSeconds: 60},
 		tagStyle{CaseSensitive: &tr, ColorMap: []tagColor{{Tag: "a", Background: "fff"}}},
 		protocol.TaskStatus{UPID: "UPID:x", ExitStatus: "OK"},
+		protocol.TaskHandle{Backend: "pdm", Node: "n1", UPID: "UPID:x", Remote: "dc-east", Display: "start VM 100"},
 	} {
 		js, _ := json.Marshal(v)
 		var jm map[string]any

@@ -7,12 +7,17 @@ import (
 
 // TaskHandle identifies a long-running Proxmox operation. Proxmox encodes all
 // the routing information inside the UPID string itself.
+//
+// It is also the json/yaml payload a task-producing mutation prints when it
+// doesn't wait (--no-wait, or -o json/yaml), so its tags are part of the
+// scripting contract: keys match TaskStatus (`upid`, `node`) so the output can
+// be piped straight into `pc task wait`.
 type TaskHandle struct {
-	Backend string // "pve" | "pdm"
-	Node    string
-	UPID    string
-	Remote  string // PDM only
-	Display string // human label, e.g. "start VM 100"
+	Backend string `json:"backend" yaml:"backend"` // "pve" | "pdm"
+	Node    string `json:"node" yaml:"node"`
+	UPID    string `json:"upid" yaml:"upid"`
+	Remote  string `json:"remote,omitempty" yaml:"remote,omitempty"`   // PDM only
+	Display string `json:"display,omitempty" yaml:"display,omitempty"` // human label, e.g. "start VM 100"
 }
 
 // TaskStatus is the polled state of a task.

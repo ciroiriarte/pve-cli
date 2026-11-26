@@ -16,6 +16,13 @@ surface may change between minor releases.
   `age_seconds`, tag style `casesensitive`→`case_sensitive` and
   `colormap`→`color_map`. Zero-valued fields are now omitted in yaml, matching
   json's `omitempty`.
+- **Changed (json output)**: the task handle that task-producing mutations
+  (`vm/ct start|stop|clone|migrate|delete|…`, snapshot ops, etc.) print with
+  `--no-wait` or `-o json|yaml` now uses lowercase keys — `backend`, `node`,
+  `upid`, `remote` (PDM only, omitted when empty), `display` — matching
+  `pc task show`. They were the Go field names (`Backend`, `Node`, `UPID`, …)
+  in json (#47). Scripts must read `.upid` instead of `.UPID`, e.g.
+  `pc vm start 100 --no-wait -o json | jq -r .upid | xargs pc task wait`.
 - **Fixed**: `pc <vm> cloudinit --dump` and the `pc storage prune-backups`
   preview sent their query string inside the request path (escaped to `%3F`),
   so they hit a non-existent endpoint; the query is now sent as real query
