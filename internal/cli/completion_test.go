@@ -225,7 +225,13 @@ func TestCompleteCacheHit(t *testing.T) {
 		t.Fatalf("cached completion wrong: first=%q second=%q", first, second)
 	}
 
-	files, _ := filepath.Glob(filepath.Join(cacheDir, "pve-cli", "completion-*.json"))
+	var files []string
+	entries, _ := os.ReadDir(filepath.Join(cacheDir, "pve-cli"))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "completion-") && strings.HasSuffix(e.Name(), ".json") {
+			files = append(files, filepath.Join(cacheDir, "pve-cli", e.Name()))
+		}
+	}
 	if len(files) != 1 {
 		t.Fatalf("cache files = %v, want one", files)
 	}

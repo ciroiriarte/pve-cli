@@ -149,7 +149,18 @@ func TestCompletePoisonedCacheModeIgnored(t *testing.T) {
 // open, backend A's valid 0600 file could have been renamed over backend B's
 // key. Refreshing A must not leave that file trusted for B.
 func TestCompleteUnsafeDirRepairPurgesAllBackends(t *testing.T) {
-	isolateCache(t)
+	// The second root has glob metacharacters: the purge must match entry
+	// names, not glob the full path (#54 review).
+	for _, name := range []string{"plain", "we[ird]*cache"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(isolateCache(t), name)
+			cacheRootOverride.Store(root) // isolateCache's cleanup restores
+			purgeAllBackendsCase(t)
+		})
+	}
+}
+
+func purgeAllBackendsCase(t *testing.T) {
 	var hitsA, hitsB int32
 	srvA := completionServer(t, &hitsA)
 	srvB := completionServer(t, &hitsB)

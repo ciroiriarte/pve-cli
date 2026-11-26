@@ -175,10 +175,12 @@ func writeCompCache(path, set string, items []compEntry) {
 		// Repairing an unsafe dir (now 0700, so no one else can add files):
 		// drop every cache file in it — any could have been planted or
 		// renamed over another backend's key while it was open.
-		for _, pat := range []string{"completion-*.json", ".completion-*"} {
-			old, _ := filepath.Glob(filepath.Join(dir, pat))
-			for _, f := range old {
-				_ = os.Remove(f)
+		// Match entry names only: the dir path may contain glob metacharacters.
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			n := e.Name()
+			if (strings.HasPrefix(n, "completion-") && strings.HasSuffix(n, ".json")) || strings.HasPrefix(n, ".completion-") {
+				_ = os.Remove(filepath.Join(dir, n))
 			}
 		}
 	}
