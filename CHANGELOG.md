@@ -6,6 +6,10 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Security**: build CI and release binaries with Go **1.26.11** (was 1.26.6),
+  which fixes standard-library advisory GO-2026-6859 (`net/http`) flagged by
+  the `govulncheck` CI gate.
+
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
 - **Security**: fixes from a static security assessment (govulncheck + gosec +
