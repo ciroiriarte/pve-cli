@@ -217,6 +217,10 @@ func init() {
 	reg("pool show", "GET", "/pools/{poolid}")
 	reg("pool update", "PUT", "/pools/{poolid}")
 	reg("pool delete", "DELETE", "/pools/{poolid}")
+	// cluster health (also reads /cluster/resources, /nodes/{node}/tasks and
+	// /cluster/ha/status/current)
+	reg("cluster check", "GET", "/cluster/status")
+	reg("cluster check", "GET", "/cluster/ceph/status")
 	// HA
 	reg("ha status", "GET", "/cluster/ha/status/current")
 	reg("ha resource list", "GET", "/cluster/ha/resources")

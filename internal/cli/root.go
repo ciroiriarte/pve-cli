@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -244,6 +245,7 @@ func NewRootCmd() *cobra.Command {
 		newTagCmd(a),
 		newPoolCmd(a),
 		newHACmd(a),
+		newClusterCmd(a),
 		newFirewallCmd(a),
 		newRemoteCmd(a),
 		newCephCmd(a),
@@ -301,7 +303,11 @@ func Execute() int {
 		return code
 	}
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// A health verdict (cluster check) is already reported on stdout.
+		var chk *checkExit
+		if !errors.As(err, &chk) {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		return ExitCodeFor(err)
 	}
 	return 0

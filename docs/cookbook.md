@@ -8,7 +8,8 @@ exact endpoint coverage see [coverage.md](coverage.md).
 > Conventions: `json` is the stable scripting contract (table layout is not).
 > `-o value` strips headers/borders for `awk`/`xargs`. Exit codes are
 > deterministic (`0` ok · `2` auth/config · `3` not-found · `4` API/5xx ·
-> `5` task-failed · `6` validation) — script against them.
+> `5` task-failed · `6` validation · `7`/`8` `cluster check` warn/crit) —
+> script against them.
 
 ## Contexts & providers
 
@@ -18,6 +19,19 @@ pc context use corp                   # switch default
 pc --context homelab node list        # one-off override
 pc --provider pdm remote list         # talk to PDM instead of a cluster
 ```
+
+## Cluster health
+
+```bash
+pc cluster check                      # quorum, storage, failed tasks, HA, Ceph, node CPU/mem
+pc cluster check -o json | jq '.checks[] | select(.status != "ok")'
+pc cluster check --storage-warn 85 --storage-crit 95 --since 6h
+pc cluster check --skip tasks --fail-on crit   # monitoring: exit 8 only on crit
+```
+
+Exit `0` = healthy, `7` = warn (or a check's API read failed), `8` = crit.
+The json schema is `{"status", "checks": [{"name", "status", "detail", "items": [...]}]}`;
+`items` lists only the offending nodes/storages/tasks/HA resources/Ceph checks.
 
 ## Find things fast
 
