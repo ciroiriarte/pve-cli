@@ -35,6 +35,50 @@ surface may change between minor releases.
 - **Fixed**: key/value and generic list tables printed large integers in
   exponent notation (`1.4420443136e+10`); they now print plain integers, as
   column-projected lists already did (table output only; json unchanged) (#19).
+- **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login
+  --user` takes `--otp <code>`, `--otp-ref env:NAME|keyring://…`, or
+  `PVE_CLI_OTP`, and prompts for the code on a terminal when the server answers
+  with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
+  given or on a terminal, `auth login` now verifies the ticket login, so a wrong
+  password or code fails (exit 2) without saving the profile. The TFA-confirmed
+  ticket is cached in the OS keyring and renewed once it is an hour old (by
+  later commands, and in memory by a long-running one), so commands don't need
+  a code until it lapses (~2h idle); then they prompt on a terminal, use
+  `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.
+  A server error during renewal keeps the still-valid ticket. A cached ticket
+  the server rejects on first use is dropped and the command logs in again once
+  (not for 401s from the auth endpoints themselves, e.g. `pc raw` on
+  `/access/ticket`). `pc config test-auth` reports the cached-ticket state.
+  `auth login` now refuses a non-loopback `http://` server before sending
+  anything, and warns when a recovery key is passed on argv. A rejected ticket
+  login is now an auth error (exit 2) and is not retried; a 5xx during login is
+  retried for read (GET) requests only, like other transient errors. Its
+  message no longer includes server-provided text.
+- **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
+  create <id> --keep N [--label L]` takes a pc-managed snapshot named
+  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`) with the ownership
+  marker `[pc-rotate:<label>]` appended to its description, waits for it, then
+  deletes that label's managed snapshots beyond the newest N, oldest first. The
+  new snapshot counts toward N and is never pruned. `pc vm|ct|guest snapshot
+  rotate <id> --keep N` is the cron-friendly verb (create + prune;
+  `--no-create` prunes only, `--dry-run` changes nothing and never prompts).
+  A snapshot is managed only if it has both the label's exact name pattern and
+  the marker as the last token of its description; snapshots without the
+  marker (hand-made ones, even if named like `pc-auto-…`, snapshots made
+  without `--keep`, other labels) are never touched, and removing the marker
+  unmanages a snapshot. Deletions are planned first and confirm-gated, naming
+  the guest and node, before anything is created (`-y/--yes` for cron; no
+  prompt when nothing is to be deleted). Each deletion is reported on stderr,
+  and `-o json` emits a summary object (`created`, `kept`, `deleted`, `failed`,
+  `not_attempted`). A failed create, including a task ending with `WARNINGS`,
+  prunes nothing; a delete that hits `--wait-timeout` (which does not cancel
+  the PVE task) stops the remaining deletions, also when the final task-status
+  poll fails after the deadline (e.g. exhausted transport retries). Task waits
+  in general now report such a failure as a timeout (the error wraps the
+  context deadline as well as the poll error, so exit codes are unchanged).
+  `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
+  `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
+  …` is now available (type-agnostic, like the other `guest` verbs).
 - **Docs**: `packaging/obs/README.md` records why the `go 1.22.0` floor and the
   `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which Go
   floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,

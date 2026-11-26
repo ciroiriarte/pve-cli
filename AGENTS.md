@@ -138,6 +138,15 @@ secret/password goes to the keyring (inline fallback), the profile records
 `auth.type` accordingly, and the TOFU fingerprint probe runs for both. Verify a
 login with `pc config test-auth`.
 
+TFA (#18) lives in `auth.TicketProvider`, so `auth login` and runtime ticket
+acquisition share it: a `NeedTFA` / `…:!tfa!` challenge is answered with
+`tfa-challenge` + `password=totp:<code>` (code from `--otp`/`PVE_CLI_OTP`, else
+the `otpPrompter` TTY seam, else a KindAuth error, exit 2). The TFA-confirmed
+ticket is cached in the keyring (`ticket:<user>@<server>`) and renewed with the
+ticket as password (no re-prompt); it is never written to the config file.
+Login failures are `*protocol.APIError`s, which the transport returns without
+retrying, so a bad code is never re-sent or re-prompted.
+
 ### 12. Promote hot keys to flags; keep `--set` as the escape hatch
 Create commands expose the common fields as first-class flags (e.g. `backup job
 create --storage --schedule --all`, `sdn vnet create --tag`) for completion and
