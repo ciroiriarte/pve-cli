@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -94,11 +95,25 @@ func completionTimeout() time.Duration {
 	return defaultCompletionTimeout
 }
 
+// cacheRootOverride, when holding a non-empty string, replaces
+// os.UserCacheDir as the cache root. Test-only seam: os.UserCacheDir ignores
+// XDG_CACHE_HOME on macOS/Windows, so tests set this to stay off the real
+// user cache on every OS. Atomic so abandoned completion workers never race
+// a test swapping it.
+var cacheRootOverride atomic.Value
+
+func completionCacheRoot() (string, error) {
+	if s, _ := cacheRootOverride.Load().(string); s != "" {
+		return s, nil
+	}
+	return os.UserCacheDir()
+}
+
 // completionCachePath names the cache file for a backend identity: provider,
 // server, auth identity and TLS identity (pin/CA, so two tunnels behind the
 // same URL don't mix). Never the secret.
 func completionCachePath(s *config.Settings) string {
-	dir, err := os.UserCacheDir()
+	dir, err := completionCacheRoot()
 	if err != nil {
 		return ""
 	}
@@ -137,16 +152,26 @@ func readCompCache(path string) map[string]compCacheEntry {
 }
 
 // writeCompCache stores one data set atomically (0600 temp file + rename) in a
-// directory we own with mode 0700; otherwise it doesn't cache.
+// directory we own with mode 0700; otherwise it doesn't cache. If the
+// directory was unsafe when found, existing entries are discarded rather than
+// merged: tightening it must not launder entries planted (or renamed over
+// another key) while it was open.
 func writeCompCache(path, set string, items []compEntry) {
 	if path == "" {
 		return
 	}
 	dir := filepath.Dir(path)
-	if os.MkdirAll(dir, 0o700) != nil || !cacheDirUsable(dir) {
+	if os.MkdirAll(dir, 0o700) != nil {
 		return
 	}
-	m := readCompCache(path)
+	wasSafe := cacheDirSafe(dir)
+	if !cacheDirUsable(dir) {
+		return
+	}
+	m := map[string]compCacheEntry{}
+	if wasSafe {
+		m = readCompCache(path)
+	}
 	m[set] = compCacheEntry{At: time.Now(), Items: items}
 	b, err := json.Marshal(m)
 	if err != nil {

@@ -53,6 +53,40 @@ func TestCompleteCacheUnsafeDirIgnored(t *testing.T) {
 	}
 }
 
+// When the cache dir was unsafe, the next write keeps only the freshly fetched
+// data set: entries for other keys (possibly planted or renamed in while the
+// dir was open) must not become trusted just because the write tightened it.
+func TestCompleteCacheUnsafeDirDiscardsOtherKeys(t *testing.T) {
+	isolateCache(t)
+	var hits int32
+	srv := completionServer(t, &hits)
+	_ = complete(t, withCreds(srv, "vm", "start", "")...)  // guests
+	_ = complete(t, withCreds(srv, "node", "show", "")...) // nodes
+	if n := atomic.LoadInt32(&hits); n != 2 {
+		t.Fatalf("setup requests = %d, want 2", n)
+	}
+	s, err := config.Resolve(&config.File{}, config.Overrides{Server: srv.URL, TokenID: "u@pam!c", Secret: "-"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := completionCachePath(s)
+	if err := os.Chmod(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = complete(t, withCreds(srv, "vm", "start", "")...) // unsafe: refetch guests, rewrite
+	m := readCompCache(path)
+	if _, ok := m[compNodes]; ok {
+		t.Errorf("nodes entry survived the unsafe-dir rewrite: %v", m)
+	}
+	if _, ok := m[compGuests]; !ok {
+		t.Errorf("fresh guests entry missing: %v", m)
+	}
+	_ = complete(t, withCreds(srv, "node", "show", "")...)
+	if n := atomic.LoadInt32(&hits); n != 4 {
+		t.Errorf("requests = %d, want 4 (nodes refetched, not served from the laundered cache)", n)
+	}
+}
+
 // --vmid takes numeric ids, so its completion offers ids only (also inside a
 // comma list); positional guest args still offer names.
 func TestCompleteVMIDFlagIDsOnly(t *testing.T) {

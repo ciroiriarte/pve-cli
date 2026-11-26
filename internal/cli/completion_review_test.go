@@ -190,7 +190,7 @@ func TestCompleteNeverPrints(t *testing.T) {
 	// Plaintext secret in config warns on stderr during normal runs.
 	writeConfig(t, "current_context: c\ncontexts:\n  c: {profile: p}\nprofiles:\n  p:\n    server: "+tlsSrv.URL+
 		"\n    tls: {fingerprint: \""+fingerprintOf(tlsSrv)+"\"}\n    auth: {type: token, token_id: \"u@pam!c\", secret: plain}\n")
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateCache(t)
 	cfgGot, _ := completeDirective(t, "vm", "start", "")
 
 	stillW := os.Stderr == w

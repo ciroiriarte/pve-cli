@@ -59,10 +59,14 @@ func complete(t *testing.T, args ...string) []string {
 	return got
 }
 
+// isolateCache points the completion cache root at a fresh temp dir for this
+// test (and restores the package default afterwards).
 func isolateCache(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", dir)
+	old, _ := cacheRootOverride.Load().(string)
+	cacheRootOverride.Store(dir)
+	t.Cleanup(func() { cacheRootOverride.Store(old) })
 	return dir
 }
 
