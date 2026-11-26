@@ -6,6 +6,8 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
+
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a
   JSON/YAML **object** instead of a one-element array, matching the documented
   contract for singular reads (#35). Scripts using `jq '.[0]…'` must drop the
