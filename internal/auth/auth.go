@@ -26,6 +26,10 @@ type TokenProvider struct {
 	TokenID string
 	// Secret is the token's UUID secret.
 	Secret string
+	// Prefix and Sep select the header format. Empty means the PVE form
+	// "PVEAPIToken=<id>=<secret>"; PDM uses "PDMAPIToken=<id>:<secret>".
+	Prefix string
+	Sep    string
 }
 
 // NewToken builds a TokenProvider, validating the inputs.
@@ -39,9 +43,13 @@ func NewToken(tokenID, secret string) (*TokenProvider, error) {
 	return &TokenProvider{TokenID: tokenID, Secret: secret}, nil
 }
 
-// Apply sets the PVEAPIToken Authorization header.
+// Apply sets the API-token Authorization header (PVEAPIToken by default).
 func (t *TokenProvider) Apply(req *http.Request, _ bool) error {
-	req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", t.TokenID, t.Secret))
+	prefix, sep := t.Prefix, t.Sep
+	if prefix == "" {
+		prefix, sep = "PVEAPIToken", "="
+	}
+	req.Header.Set("Authorization", prefix+"="+t.TokenID+sep+t.Secret)
 	return nil
 }
 

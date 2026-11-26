@@ -35,6 +35,7 @@ type app struct {
 	fingerprint string
 	debug       bool
 	assumeYes   bool
+	insecureSet func() bool // --insecure given explicitly (so =false overrides profile/env)
 
 	settings *config.Settings
 	prov     provider.Provider
@@ -78,7 +79,7 @@ func (a *app) overrides() config.Overrides {
 		Output:      a.format,
 		Fingerprint: a.fingerprint,
 	}
-	if a.insecure {
+	if a.insecure || (a.insecureSet != nil && a.insecureSet()) {
 		ov.Insecure = &a.insecure
 	}
 	return ov
@@ -222,6 +223,7 @@ func NewRootCmd() *cobra.Command {
 	pf.BoolVar(&a.noHeaders, "no-headers", false, "omit table/csv headers")
 	pf.StringVar(&a.sortBy, "sort", "", "sort by column (NAME[:asc|desc])")
 	pf.BoolVar(&a.insecure, "insecure", false, "skip TLS verification (footgun)")
+	a.insecureSet = func() bool { return pf.Changed("insecure") }
 	pf.StringVar(&a.fingerprint, "tls-fingerprint", "", "pin the server cert SHA-256 fingerprint")
 	pf.BoolVar(&a.debug, "debug", false, "log request/response metadata to stderr")
 	pf.BoolVarP(&a.assumeYes, "yes", "y", false, "assume yes for destructive confirmations")

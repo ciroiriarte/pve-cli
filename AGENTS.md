@@ -74,6 +74,11 @@ Non-interactive runs never auto-pin (they print the fingerprint to re-run with
 `--fingerprint`). `InsecureSkipVerify` is used **only** to fetch a cert for
 display/pinning, never to carry credentials — keep it that way. Fingerprint
 format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha256`.
+`--insecure` is an explicit opt-in that warns once on stderr whenever
+credentials cross an unverified connection; `--insecure=false` overrides a
+profile/env `insecure: true`. A configured pin always wins over insecure. The
+API and ticket-login clients refuse redirects (`CheckRedirect`) — PVE/PDM never
+redirect, and following one could downgrade to http or replay the password.
 
 ### 5. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
