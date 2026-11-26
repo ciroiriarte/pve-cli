@@ -29,10 +29,23 @@ pc cluster check --storage-warn 85 --storage-crit 95 --since 6h
 pc cluster check --skip tasks --fail-on crit   # monitoring: exit 8 only on crit
 ```
 
-Exit `0` = healthy, `7` = warn or any check errored (even with `--fail-on crit`),
-`8` = crit. A rejected token or unreachable API prints no report and exits `2`/`4`.
-The token needs `Sys.Audit` (e.g. PVEAuditor on `/`); without it PVE hides
-other users' tasks and node metrics, which the check flags as incomplete.
+Statuses: `ok`; `warn` = degraded or partially observed (items with an
+`incomplete: …` detail mark gaps such as an unreadable node task list, the task
+page cap, missing `Sys.Audit` or missing node metrics); `crit` = a real problem
+(outage); `error` = the check could not grade anything (nothing gradable, every
+read failed, or a required inventory read failed); `skip` = not applicable.
+
+Exit `0` = healthy, `7` = warn (unless `--fail-on crit`, which lets warnings and
+incomplete data pass by design) or any check in `error` (always), `8` = crit.
+No report is printed and the usual codes apply (`2` auth, `4` API/transport)
+when the token is rejected at any point, the API is unreachable before any read
+succeeds, or every check failed; a later connection drop only errors the
+affected checks.
+
+The task window is on end time, but PVE filters task lists by start time, so
+only tasks started within `--since` + 7 days are scanned. The token needs
+`Sys.Audit` and `Datastore.Audit` (e.g. PVEAuditor on `/`); without them PVE
+hides other users' tasks, node metrics and storages, which the check flags.
 The json schema is `{"status", "checks": [{"name", "status", "detail", "items": [...]}]}`;
 `items` lists only the offending nodes/storages/tasks/HA resources/Ceph checks.
 

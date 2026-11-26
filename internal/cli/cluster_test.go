@@ -65,7 +65,7 @@ func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 			key += "?" + q
 		}
 		body, ok := f[key]
-		if ok && paged && body != "" {
+		if ok && paged && body != "" && !strings.HasPrefix(body, "!") {
 			var rows []json.RawMessage
 			if err := json.Unmarshal([]byte(body), &rows); err != nil {
 				t.Errorf("bad fixture %s: %v", key, err)
@@ -83,6 +83,12 @@ func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 		switch {
 		case !ok:
 			http.NotFound(w, r)
+		case body == "!401":
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"data":null}`))
+		case body == "!drop": // connection dropped mid-request: a transport error
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
 		case body == "":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -288,7 +294,7 @@ func TestClusterCheckAPIErrorIsBestEffort(t *testing.T) {
 	f["/nodes/pve-02/tasks"] = ""
 	rep, code = runClusterCheck(t, f, "boom", "--check", "tasks")
 	c := checkByName(t, rep, "tasks")
-	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkError || c.Items[0].Node != "pve-02" || code != ExitCheckWarn {
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkWarn || !strings.HasPrefix(c.Items[0].Detail, "incomplete: ") || c.Items[0].Node != "pve-02" || code != ExitCheckWarn {
 		t.Fatalf("partial task read failure: %+v exit %d", c, code)
 	}
 }
@@ -423,7 +429,7 @@ func TestClusterCheckTaskPagination(t *testing.T) {
 	f["/nodes/pve-01/tasks"] = `[` + warningRows(taskPageSize*taskMaxPages) + `]`
 	rep, code := runClusterCheck(t, f, "", "--check", "tasks")
 	c := checkByName(t, rep, "tasks")
-	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkError ||
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkWarn || !strings.HasPrefix(c.Items[0].Detail, "incomplete: ") ||
 		!strings.Contains(c.Items[0].Detail, "truncated") || !strings.Contains(c.Detail, "incomplete") || code != ExitCheckWarn {
 		t.Fatalf("page cap: %+v exit %d", c, code)
 	}
@@ -542,5 +548,125 @@ func TestClusterCheckHAStates(t *testing.T) {
 	f["/cluster/ha/status/current"] = `[{"type":"lrm","node":"pve-02","status":"pve-02 (old timestamp - dead?, x)"}]`
 	if rep, _ := runClusterCheck(t, f, "", "--check", "ha"); checkByName(t, rep, "ha").Status != checkOK {
 		t.Errorf("dead lrm without services: %+v", rep)
+	}
+}
+
+// TestClusterCheckAuthAfterSuccess: a 401 is fatal at any point, even after
+// earlier reads succeeded (it must not be lost in a best-effort read).
+func TestClusterCheckAuthAfterSuccess(t *testing.T) {
+	f := healthyCluster()
+	f["/storage"] = "!401"
+	out, code := runClusterCheckErr(t, f, "", "--check", "storage")
+	if code != ExitAuthConfig || out != "" {
+		t.Fatalf("401 after success: exit %d out %q, want %d and no report", code, out, ExitAuthConfig)
+	}
+}
+
+// TestClusterCheckTransportDropAfterSuccess: a connection drop after reads
+// succeeded only errors the affected check; a crit seen earlier still exits 8.
+func TestClusterCheckTransportDropAfterSuccess(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/status"] = `[{"type":"cluster","name":"lab","quorate":0},{"type":"node","name":"pve-01","online":1},{"type":"node","name":"pve-02","online":0},{"type":"node","name":"pve-03","online":0}]`
+	f["/cluster/ceph/status"] = "!drop"
+	rep, code := runClusterCheck(t, f, "", "--check", "quorum,ceph")
+	if q := checkByName(t, rep, "quorum"); q.Status != checkCrit {
+		t.Errorf("quorum: %+v, want crit", q)
+	}
+	if c := checkByName(t, rep, "ceph"); c.Status != checkError {
+		t.Errorf("ceph after drop: %+v, want error", c)
+	}
+	if code != ExitCheckCrit {
+		t.Fatalf("exit %d, want %d", code, ExitCheckCrit)
+	}
+}
+
+// TestClusterCheckNothingGradable: zero gradable storages or node metrics is
+// error (no verdict), which exits 7 even with --fail-on crit.
+func TestClusterCheckNothingGradable(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/resources?type=storage"] = `[]`
+	f["/cluster/resources?type=node"] = `[{"node":"pve-01","status":"online"},{"node":"pve-02","status":"online"},{"node":"pve-03","status":"online"}]`
+	rep, code := runClusterCheck(t, f, "", "--check", "quorum,storage,pressure", "--fail-on", "crit")
+	if s := checkByName(t, rep, "storage"); s.Status != checkError || !strings.Contains(s.Detail, "Datastore.Audit") {
+		t.Errorf("0 storages: %+v, want error", s)
+	}
+	if p := checkByName(t, rep, "pressure"); p.Status != checkError || len(p.Items) != 0 {
+		t.Errorf("all metrics missing: %+v, want error", p)
+	}
+	if code != ExitCheckWarn {
+		t.Fatalf("exit %d, want %d despite --fail-on crit", code, ExitCheckWarn)
+	}
+}
+
+// TestClusterCheckPartialGapsAreWarnItems: gaps in an otherwise graded check
+// are warn items with an "incomplete: " detail, never error items.
+func TestClusterCheckPartialGapsAreWarnItems(t *testing.T) {
+	f := healthyCluster()
+	f["/access/permissions?path=%2Fnodes%2Fpve-01"] = `{"/nodes/pve-01":{"VM.Audit":1}}`
+	f["/nodes/pve-03/tasks"] = ""
+	f["/cluster/resources?type=node"] = `[{"node":"pve-01","status":"online","cpu":0.1,"mem":10,"maxmem":100},{"node":"pve-02","status":"online"},{"node":"pve-03","status":"online","cpu":0.1,"mem":10,"maxmem":100}]`
+	rep, _ := runClusterCheck(t, f, "boom", "--check", "tasks,pressure")
+	for _, c := range rep.Checks {
+		if c.Status != checkWarn || len(c.Items) == 0 {
+			t.Errorf("%s: %+v, want warn with items", c.Name, c)
+		}
+		for _, it := range c.Items {
+			if it.Status != checkWarn || !strings.HasPrefix(it.Detail, "incomplete: ") {
+				t.Errorf("%s item %+v: want warn \"incomplete: …\"", c.Name, it)
+			}
+		}
+	}
+}
+
+func TestClusterCheckHALivenessMatching(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/ha/status/current"] = `[` +
+		`{"type":"master","node":"deadpool01","status":"deadpool01 (active, Wed Nov 25 10:00:00 2026)"},` +
+		`{"type":"lrm","node":"deadpool01","status":"deadpool01 (active, Wed Nov 25 10:00:00 2026)"},` +
+		`{"type":"lrm","node":"pve-02","status":"pve-02 (unable to read lrm status)"},` +
+		`{"type":"lrm","node":"pve-03","status":"pve-03 (active, detected time drift!)"},` +
+		`{"type":"service","sid":"vm:100","crm_state":"started","node":"deadpool01"}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "ha")
+	c := checkByName(t, rep, "ha")
+	nodes := map[string]bool{}
+	for _, it := range c.Items {
+		nodes[it.Node] = true
+	}
+	if c.Status != checkWarn || len(c.Items) != 2 || !nodes["pve-02"] || !nodes["pve-03"] || nodes["deadpool01"] {
+		t.Fatalf("HA liveness: %+v", c)
+	}
+}
+
+func TestClusterCheckTaskDedupe(t *testing.T) {
+	f := healthyCluster()
+	row := `{"type":"vzdump","id":"100","status":"job errors","starttime":1795003000,"upid":"UPID:dup"}`
+	f["/nodes/pve-01/tasks"] = `[` + row + `,` + row + `]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "tasks")
+	if c := checkByName(t, rep, "tasks"); len(c.Items) != 1 || !strings.HasPrefix(c.Detail, "1 task failed") {
+		t.Fatalf("dedupe: %+v", c)
+	}
+}
+
+func TestClusterCheckCephFallback(t *testing.T) {
+	// Node inventory unavailable: peers can't be searched, so error, not skip.
+	f := healthyCluster()
+	f["/cluster/resources?type=node"] = ""
+	f["/cluster/ceph/status"] = ""
+	rep, _ := runClusterCheck(t, f, "binary not installed: /usr/bin/ceph-mon", "--check", "quorum,ceph")
+	if c := checkByName(t, rep, "ceph"); c.Status != checkError {
+		t.Errorf("ceph without inventory: %+v, want error", c)
+	}
+
+	// The API node (local:1) isn't asked twice; an unexpected per-node failure
+	// doesn't stop the search; the first node reporting a health wins.
+	f = healthyCluster()
+	f["/cluster/status"] = `[{"type":"cluster","name":"lab","quorate":1},{"type":"node","name":"pve-01","online":1,"local":1},{"type":"node","name":"pve-02","online":1},{"type":"node","name":"pve-03","online":1}]`
+	f["/cluster/ceph/status"] = ""
+	f["/nodes/pve-01/ceph/status"] = "!401" // would be fatal if re-queried
+	f["/nodes/pve-02/ceph/status"] = "!drop"
+	f["/nodes/pve-03/ceph/status"] = healthyCeph
+	rep, code := runClusterCheck(t, f, "binary not installed: /usr/bin/ceph-mon", "--check", "quorum,ceph")
+	if c := checkByName(t, rep, "ceph"); c.Status != checkOK || code != ExitOK {
+		t.Fatalf("ceph fallback: %+v exit %d, want ok/0", c, code)
 	}
 }

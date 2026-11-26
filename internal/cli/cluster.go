@@ -97,24 +97,37 @@ func newClusterCheckCmd(a *app) *cobra.Command {
 			"            storages warn; disabled storages and offline nodes are ignored;\n" +
 			"            shared storage is counted once\n" +
 			"  tasks     tasks that ended with a failure within --since (status not\n" +
-			"            OK/WARNINGS), read from every online node's task list\n" +
+			"            OK/WARNINGS), read from every online node's task list. The\n" +
+			"            window is on end time, but PVE filters by start time, so only\n" +
+			"            tasks started within --since + 7 days are scanned\n" +
 			"  ha        HA resources in error/fence (crit) or freeze/recovery (warn);\n" +
-			"            a dead HA manager/LRM warns when HA resources exist\n" +
-			"  ceph      Ceph health (skip when no online node has Ceph installed)\n" +
+			"            a dead/stale HA manager or LRM warns when HA resources exist\n" +
+			"  ceph      Ceph health from the first node that reports one (skip when\n" +
+			"            every online node says Ceph is not installed/initialized)\n" +
 			"  pressure  per-node CPU/memory vs --cpu-*/--mem-* thresholds\n\n" +
-			"Each check is ok, warn, crit, skip (not applicable) or error (its API read\n" +
-			"failed; counted as warn). A failed read never aborts the other checks.\n\n" +
-			"Privileges: Sys.Audit on /nodes (e.g. the PVEAuditor role on /). Without it\n" +
-			"PVE lists only the caller's own tasks and omits node CPU/memory; the check\n" +
-			"flags both instead of reporting them healthy.\n\n" +
+			"Statuses:\n" +
+			"  ok     nothing wrong observed\n" +
+			"  warn   degraded, or only partially observed: items with an\n" +
+			"         \"incomplete: …\" detail mark gaps (a node's tasks unreadable, the\n" +
+			"         task page cap hit, missing Sys.Audit, missing node metrics)\n" +
+			"  crit   a real problem was observed (outage)\n" +
+			"  error  the check could not grade anything (nothing gradable, every read\n" +
+			"         failed, or a required inventory read failed)\n" +
+			"  skip   not applicable (e.g. no Ceph)\n" +
+			"A failed read never aborts the other checks.\n\n" +
+			"Privileges: Sys.Audit on /nodes and Datastore.Audit on /storage (e.g. the\n" +
+			"PVEAuditor role on /). Without them PVE hides other users' tasks, node\n" +
+			"CPU/memory and storages; the check flags that instead of reporting healthy.\n\n" +
 			"json/yaml schema: {\"status\": ok|warn|crit, \"checks\": [{\"name\", \"status\",\n" +
 			"\"detail\", \"items\": [{\"name\", \"node\"?, \"id\"?, \"status\", \"detail\"}]}]}.\n" +
-			"items lists only the offending entries.\n\n" +
-			"Exit codes: 0 healthy; 7 warn, or any check errored (even with --fail-on\n" +
-			"crit, so an unreadable cluster never passes); 8 crit. --fail-on crit exits 0\n" +
-			"on warnings only. If the credentials are rejected or the API is unreachable\n" +
-			"(or every check failed), no report is printed and the usual codes apply\n" +
-			"(2 auth/config, 4 API/transport, ...).",
+			"items lists only the offending entries (item status is warn or crit).\n\n" +
+			"Exit codes: 0 healthy; 7 warn (unless --fail-on crit) or any check in\n" +
+			"error (always, whatever --fail-on); 8 crit. With --fail-on crit, warnings\n" +
+			"(incomplete data included) exit 0 by design. No report is printed and the\n" +
+			"usual codes apply (2 auth/config, 4 API/transport, ...) when the credentials\n" +
+			"are rejected at any point, the API is unreachable before any read succeeds,\n" +
+			"or every check failed. A connection drop after that only errors the\n" +
+			"affected checks.",
 		Example: "  pc cluster check\n" +
 			"  pc cluster check -o json | jq '.checks[] | select(.status != \"ok\")'\n" +
 			"  pc cluster check --skip tasks --storage-warn 85 --storage-crit 95\n" +
@@ -147,8 +160,11 @@ func newClusterCheckCmd(a *app) *cobra.Command {
 			if err := ensurePVE(p, "cluster check", "or inspect a remote with `pc remote cluster status <remote>`"); err != nil {
 				return err
 			}
-			rep := runClusterChecks(cmd.Context(), p, o, sel)
-			if err := fatalCheckError(rep); err != nil {
+			rep, fatal := runClusterChecks(cmd.Context(), p, o, sel)
+			if fatal != nil {
+				return fatal
+			}
+			if err := allErrored(rep); err != nil {
 				return err
 			}
 			if err := a.render(clusterReportTable(rep)); err != nil {
@@ -197,18 +213,26 @@ func selectChecks(only, skip []string) (map[string]bool, error) {
 }
 
 // runClusterChecks runs the selected checks. Every API read is best-effort: a
-// failure turns into that check's error status, never an abort.
-func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOpts, sel map[string]bool) clusterReport {
-	// Once the credentials are rejected or the API is unreachable, every later
-	// read would fail the same way (after its retries), so short-circuit them.
+// failure turns into that check's error status, never an abort. The returned
+// fatal error (kept apart from the per-check results so it can't be lost) is
+// set when the run as a whole is untrustworthy: a rejected credential at any
+// point, or a transport failure before any request succeeded. Later reads
+// short-circuit with it.
+func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOpts, sel map[string]bool) (clusterReport, error) {
 	var fatal error
+	succeeded := false
 	raw := func(path string, q url.Values) ([]byte, error) {
 		if fatal != nil {
 			return nil, fatal
 		}
 		body, err := p.Raw(ctx, "GET", path, q)
 		var apiErr *protocol.APIError
-		if errors.As(err, &apiErr) && (apiErr.Kind == protocol.KindAuth || apiErr.Kind == protocol.KindTransport) {
+		switch {
+		case err == nil:
+			succeeded = true
+		case errors.As(err, &apiErr) && apiErr.Kind == protocol.KindAuth:
+			fatal = err
+		case errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTransport && !succeeded:
 			fatal = err
 		}
 		return body, err
@@ -228,6 +252,12 @@ func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOp
 	if sel["storage"] || sel["pressure"] || sel["tasks"] || sel["ceph"] {
 		nodes, nodesErr = get("/cluster/resources", url.Values{"type": {"node"}})
 	}
+	// /cluster/status feeds quorum and names the API node for the Ceph fallback.
+	var status []map[string]any
+	var statusErr error
+	if sel["quorum"] || sel["ceph"] {
+		status, statusErr = get("/cluster/status", nil)
+	}
 
 	rep := clusterReport{Checks: []checkResult{}}
 	for _, name := range clusterCheckNames {
@@ -237,8 +267,7 @@ func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOp
 		var r checkResult
 		switch name {
 		case "quorum":
-			rows, err := get("/cluster/status", nil)
-			r = errOr(err, func() checkResult { return checkQuorum(rows) })
+			r = errOr(statusErr, func() checkResult { return checkQuorum(status) })
 		case "storage":
 			rows, err := get("/cluster/resources", url.Values{"type": {"storage"}})
 			if err == nil {
@@ -253,7 +282,13 @@ func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOp
 			rows, err := get("/cluster/ha/status/current", nil)
 			r = errOr(err, func() checkResult { return checkHA(rows) })
 		case "ceph":
-			r = checkCeph(raw, nodes)
+			apiNode := ""
+			for _, s := range status {
+				if str(s["type"]) == "node" && num(s["local"]) == 1 {
+					apiNode = str(s["name"])
+				}
+			}
+			r = checkCeph(raw, nodes, nodesErr, apiNode)
 		case "pressure":
 			r = errOr(nodesErr, func() checkResult { return checkPressure(nodes, o) })
 		}
@@ -264,7 +299,7 @@ func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOp
 		rep.Checks = append(rep.Checks, r)
 	}
 	rep.Status = overallStatus(rep.Checks)
-	return rep
+	return rep, fatal
 }
 
 func errOr(err error, fn func() checkResult) checkResult {
@@ -274,28 +309,23 @@ func errOr(err error, fn func() checkResult) checkResult {
 	return fn()
 }
 
-// fatalCheckError returns the underlying error when the report can't be
-// trusted at all: the credentials were rejected or the API was unreachable on
-// any read, or every check that ran errored. The caller then exits with the
-// usual code (2 auth/config, 4 API/transport) instead of a health verdict.
-func fatalCheckError(rep clusterReport) error {
+// allErrored returns the first underlying read error when every check that
+// ran failed on an API read: such a report carries no health information, so
+// the caller exits with that error's usual code instead of a verdict.
+func allErrored(rep clusterReport) error {
 	var first error
 	ran, errored := 0, 0
 	for _, c := range rep.Checks {
-		if c.Status == checkSkip && c.err == nil {
+		if c.Status == checkSkip {
 			continue
 		}
 		ran++
-		if c.err == nil {
+		if c.Status != checkError || c.err == nil {
 			continue
 		}
 		errored++
 		if first == nil {
 			first = c.err
-		}
-		var apiErr *protocol.APIError
-		if errors.As(c.err, &apiErr) && (apiErr.Kind == protocol.KindAuth || apiErr.Kind == protocol.KindTransport) {
-			return c.err
 		}
 	}
 	if ran > 0 && errored == ran {
@@ -511,6 +541,15 @@ func checkStorage(rows, nodes, cfg []map[string]any, o clusterCheckOpts) checkRe
 			r.Items = append(r.Items, it)
 		}
 	}
+	if len(graded) == 0 {
+		// Nothing gradable: no storages listed (e.g. a token without
+		// Datastore.Audit) or none reporting usage. That's no verdict, not ok.
+		r.Status, r.Detail = checkError, "no storage could be graded (needs Datastore.Audit)"
+		if len(r.Items) > 0 {
+			r.Detail += fmt.Sprintf("; %s unavailable", plural(len(r.Items), "storage"))
+		}
+		return r
+	}
 	return summarize(r,
 		fmt.Sprintf("%s below %g%%", plural(len(graded), "storage"), o.storageWarn),
 		func(n int) string {
@@ -538,8 +577,9 @@ const (
 // tasks (no status yet) and "WARNINGS: N" completions are not failures.
 //
 // A node whose task list can't be read, hits the page cap, or is read without
-// Sys.Audit (PVE then lists only the caller's own tasks) yields an error item,
-// which makes the check warn; every node failing to read is an error check.
+// Sys.Audit (PVE then lists only the caller's own tasks) yields a warn item
+// "incomplete: …"; no online node, or every node failing to read, is an error
+// check.
 func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, url.Values) ([]map[string]any, error), nodes []map[string]any, since time.Duration, now time.Time) checkResult {
 	cutoff := now.Add(-since).Unix()
 	serverSince := strconv.FormatInt(now.Add(-since-taskSpanSlack).Unix(), 10)
@@ -585,18 +625,18 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 			if firstErr == nil {
 				firstErr = err
 			}
-			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkError, Detail: "task list read failed: " + err.Error()})
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn, Detail: "incomplete: task list read failed: " + err.Error()})
 			continue
 		}
 		if truncated {
 			incomplete++
-			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkError,
-				Detail: fmt.Sprintf("task list truncated after %d failed tasks; results incomplete", len(nodeRows))})
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
+				Detail: fmt.Sprintf("incomplete: task list truncated after %d failed tasks", len(nodeRows))})
 		}
 		if missingPriv(raw, "/nodes/"+name, "Sys.Audit") {
 			incomplete++
-			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkError,
-				Detail: "no Sys.Audit on /nodes/" + name + ": only the caller's own tasks are listed"})
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
+				Detail: "incomplete: no Sys.Audit on /nodes/" + name + ", only the caller's own tasks are listed"})
 		}
 		for _, t := range nodeRows {
 			if str(t["node"]) == "" {
@@ -605,7 +645,10 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 		}
 		rows = append(rows, nodeRows...)
 	}
-	if online > 0 && failedReads == online {
+	if online == 0 {
+		return checkResult{Status: checkError, Detail: "no online node to read tasks from"}
+	}
+	if failedReads == online {
 		return checkResult{Status: checkError, Detail: "API read failed on every node", Items: r.Items, err: firstErr}
 	}
 	ended := func(t map[string]any) int64 {
@@ -616,10 +659,17 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return ended(rows[i]) > ended(rows[j]) })
 	failed := 0
+	seen := map[string]bool{} // a task can shift across pages while paging
 	for _, t := range rows {
 		st := str(t["status"])
 		if ended(t) < cutoff || st == "" || st == "OK" || strings.HasPrefix(st, "WARNINGS") {
 			continue
+		}
+		if id := str(t["upid"]); id != "" {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
 		}
 		failed++
 		name := strings.TrimSpace(str(t["type"]) + " " + str(t["id"]))
@@ -696,7 +746,7 @@ func checkHA(rows []map[string]any) checkResult {
 				Detail: "HA state " + state})
 		case "master", "lrm":
 			status := str(s["status"])
-			if services > 0 && (strings.Contains(status, "old timestamp") || strings.Contains(status, "dead")) {
+			if services > 0 && haLivenessProblem(status) {
 				r.Items = append(r.Items, checkItem{Name: str(s["type"]), Node: str(s["node"]), Status: checkWarn,
 					Detail: "HA " + str(s["type"]) + " " + status})
 			}
@@ -711,6 +761,24 @@ func checkHA(rows []map[string]any) checkResult {
 	})
 }
 
+// haLivenessProblem matches the parenthesized state of an HA master/LRM status
+// line ("<node> (<state>, <time>)") against PVE's stale/dead markers. Only the
+// parenthesized part is inspected, so a node named e.g. "deadpool01" can't
+// trigger it.
+func haLivenessProblem(status string) bool {
+	open, closing := strings.Index(status, "("), strings.LastIndex(status, ")")
+	if open < 0 || closing <= open {
+		return false
+	}
+	state := status[open+1 : closing]
+	for _, marker := range []string{"old timestamp", "dead", "unable to read lrm status", "detected time drift!"} {
+		if strings.Contains(state, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // cephAbsent reports whether a Ceph status error means "Ceph isn't set up on
 // that node" rather than "Ceph is unhealthy/unreachable".
 func cephAbsent(err error) bool {
@@ -723,39 +791,54 @@ func cephAbsent(err error) bool {
 }
 
 // checkCeph grades Ceph health. /cluster/ceph/status only answers for the API
-// node's local Ceph, so when that node has none, every other online node is
-// tried via /nodes/{node}/ceph/status before reporting skip. Any error other
-// than "not installed/initialized" is an error, not a silent skip.
-func checkCeph(raw func(string, url.Values) ([]byte, error), nodes []map[string]any) checkResult {
+// node's local Ceph, so when it fails, every other online node (apiNode, the
+// one already asked, is skipped) is tried via /nodes/{node}/ceph/status. The
+// first node that reports a health wins. Otherwise: skip when every node said
+// "not installed/initialized" (or 404); error when some node failed in any
+// other way, or when the node inventory needed to find peers is unavailable.
+func checkCeph(raw func(string, url.Values) ([]byte, error), nodes []map[string]any, nodesErr error, apiNode string) checkResult {
 	body, err := raw("/cluster/ceph/status", nil)
-	if err != nil && cephAbsent(err) {
+	if err != nil {
+		if nodesErr != nil {
+			if cephAbsent(err) {
+				err = nodesErr
+			}
+			return checkResult{Status: checkError, Detail: "can't look for Ceph on other nodes: node inventory read failed: " + nodesErr.Error() + "; API node: " + err.Error(), err: err}
+		}
 		var checked []string
+		var unexpected error
+		if !cephAbsent(err) {
+			unexpected = err
+		}
+		if apiNode != "" {
+			checked = append(checked, apiNode)
+		}
+		found := false
 		for _, n := range nodes {
-			if str(n["status"]) != "online" {
+			name := str(n["node"])
+			if str(n["status"]) != "online" || name == apiNode {
 				continue
 			}
-			name := str(n["node"])
 			b, nerr := raw("/nodes/"+url.PathEscape(name)+"/ceph/status", nil)
 			if nerr == nil {
-				body, err = b, nil
+				body, found = b, true
 				break
 			}
-			if !cephAbsent(nerr) {
-				err = fmt.Errorf("node %s: %w", name, nerr)
-				break
+			if !cephAbsent(nerr) && unexpected == nil {
+				unexpected = fmt.Errorf("node %s: %w", name, nerr)
 			}
 			checked = append(checked, name)
 		}
-		if err != nil && cephAbsent(err) {
+		if !found {
+			if unexpected != nil {
+				return checkResult{Status: checkError, Detail: "API read failed: " + unexpected.Error(), err: unexpected}
+			}
 			detail := "Ceph not installed/configured on the API node"
 			if len(checked) > 0 {
 				detail = "Ceph not installed/configured (checked " + strings.Join(checked, ", ") + ")"
 			}
 			return checkResult{Status: checkSkip, Detail: detail}
 		}
-	}
-	if err != nil {
-		return checkResult{Status: checkError, Detail: "API read failed: " + err.Error(), err: err}
 	}
 	var st struct {
 		Health struct {
@@ -802,7 +885,7 @@ func checkCeph(raw func(string, url.Values) ([]byte, error), nodes []map[string]
 func checkPressure(nodes []map[string]any, o clusterCheckOpts) checkResult {
 	sort.SliceStable(nodes, func(i, j int) bool { return str(nodes[i]["node"]) < str(nodes[j]["node"]) })
 	var r checkResult
-	online := 0
+	online, graded := 0, 0
 	for _, n := range nodes {
 		if str(n["status"]) != "online" {
 			continue
@@ -812,10 +895,11 @@ func checkPressure(nodes []map[string]any, o clusterCheckOpts) checkResult {
 		_, hasCPU := n["cpu"]
 		max := num(n["maxmem"])
 		if !hasCPU || max <= 0 {
-			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkError,
-				Detail: "metrics unavailable (cpu/memory not reported; needs Sys.Audit)"})
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
+				Detail: "incomplete: metrics unavailable (cpu/memory not reported; needs Sys.Audit)"})
 			continue
 		}
+		graded++
 		cpu := num(n["cpu"]) * 100
 		if st := grade(cpu, o.cpuWarn, o.cpuCrit); st != checkOK {
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: st, Detail: "cpu " + pct1(cpu)})
@@ -825,6 +909,14 @@ func checkPressure(nodes []map[string]any, o clusterCheckOpts) checkResult {
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: st,
 				Detail: fmt.Sprintf("mem %s (%s of %s)", pct1(mem), humanBytes(int64(num(n["mem"]))), humanBytes(int64(max)))})
 		}
+	}
+	if graded == 0 {
+		r.Status, r.Detail = checkError, "no node metrics to grade"
+		if online > 0 {
+			r.Detail = fmt.Sprintf("no node metrics to grade (%s online, none reporting cpu/memory; needs Sys.Audit)", plural(online, "node"))
+		}
+		r.Items = nil
+		return r
 	}
 	return summarize(r,
 		fmt.Sprintf("%s within cpu %g%% / mem %g%%", plural(online, "online node"), o.cpuWarn, o.memWarn),

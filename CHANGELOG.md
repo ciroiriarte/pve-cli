@@ -13,15 +13,18 @@ surface may change between minor releases.
   with a failure within `--since` (default 24h, every online node's task list,
   paged), HA resources in error/fence/freeze/recovery plus a dead HA
   manager/LRM, Ceph health (skipped only when no online node has Ceph), and
-  per-node CPU/memory pressure. Each check is ok/warn/crit/skip/error; a failed
-  API read degrades only its own check, and missing data (no `Sys.Audit`,
-  truncated task list, missing node metrics) is flagged, not reported healthy.
-  `-o json` emits `{"status", "checks": [{"name", "status", "detail",
-  "items"}]}`. New exit codes for monitoring: `7` warn or any errored check,
-  `8` crit; `--fail-on crit` ignores warnings but never an errored check. A
-  rejected token or unreachable API prints no report and exits with the usual
-  code (2/4). `--check`/`--skip` select checks. Needs `Sys.Audit` (e.g.
-  PVEAuditor). PVE-only; refused on PDM with the provider named (#22).
+  per-node CPU/memory pressure. Each check is ok/warn/crit/skip/error: crit is
+  an observed problem, warn is degraded or partially observed (gaps such as
+  missing `Sys.Audit` or a truncated task list are `incomplete: …` warn
+  items), error means the check could not grade anything. A failed API read
+  degrades only its own check. `-o json` emits `{"status", "checks":
+  [{"name", "status", "detail", "items"}]}`. New exit codes for monitoring:
+  `7` warn or any errored check, `8` crit; `--fail-on crit` ignores warnings
+  but never an errored check. A rejected token (at any point) or an API
+  unreachable from the start prints no report and exits with the usual code
+  (2/4). `--check`/`--skip` select checks. Needs `Sys.Audit` and
+  `Datastore.Audit` (e.g. PVEAuditor). PVE-only; refused on PDM with the
+  provider named (#22).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
