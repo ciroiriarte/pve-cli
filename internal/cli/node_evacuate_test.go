@@ -25,8 +25,8 @@ type evacFixture struct {
 	repl    string           // /cluster/replication entries (JSON, comma-separated)
 	postErr map[int]bool     // vmid → migrate POST fails synchronously
 	// vmid → migrate POST outcome is unknown to the client: "drop" closes the
-	// connection after reading the request, "502" answers that status, any
-	// other value is sent as a 200 body.
+	// connection after reading the request, a 3-digit status ("502") answers
+	// that status, any other value is sent as a 200 body.
 	postOdd map[int]string
 	hang    map[int]bool // vmid → migration task never finishes
 	slow    map[int]bool // vmid → status poll takes longer than --wait-timeout
@@ -182,8 +182,9 @@ func (f *evacFixture) start() *httptest.Server {
 				case "drop":
 					conn, _, _ := w.(http.Hijacker).Hijack()
 					conn.Close()
-				case "502":
-					http.Error(w, "bad gateway", http.StatusBadGateway)
+				case "502", "503", "504", "595", "596":
+					code, _ := strconv.Atoi(odd)
+					http.Error(w, "gateway error", code)
 				default:
 					w.Write([]byte(odd))
 				}

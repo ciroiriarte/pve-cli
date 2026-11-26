@@ -1046,14 +1046,15 @@ var (
 // refusal (an HTTP error answer), so no task was started. Anything else may
 // follow a request PVE already acted on: a transport error (POSTs are never
 // retried, and the connection can drop after the request was sent), a
-// cancelled request, or a gateway status (502/504, pveproxy's 595/596).
+// cancelled request, or a gateway status (502/503/504, pveproxy's 595/596;
+// the transport also treats 503 as transient).
 func migratePostRejected(err error) bool {
 	var apiErr *protocol.APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode == 0 {
 		return false
 	}
 	switch apiErr.StatusCode {
-	case http.StatusBadGateway, http.StatusGatewayTimeout, 595, 596:
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 595, 596:
 		return false
 	}
 	return true

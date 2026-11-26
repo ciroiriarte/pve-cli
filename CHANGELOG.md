@@ -8,7 +8,7 @@ surface may change between minor releases.
 
 - **Fixed**: `pc node evacuate` now stops starting migrations when a migrate
   request gets no usable answer: the connection drops after the request was
-  sent, a gateway answers 502/504 (or pveproxy 595/596), or PVE answers success
+  sent, a gateway answers 502/503/504 (or pveproxy 595/596), or PVE answers success
   without a readable task id. PVE may already be migrating that guest, so it is
   reported `unknown` (with a `pc task list --node <node>` hint) and the guests
   not yet started are reported `not-attempted`, as for a migration whose task
@@ -19,7 +19,7 @@ surface may change between minor releases.
   plan never exceeds `--max-mem-pct`/`--vcpu-ratio` and that `--target` is
   always capacity-checked. Those limits apply to running guests only; stopped
   guests moved with `--all` use no RAM until started and are placed without a
-  capacity check. The help now says so.
+  capacity check. The help and the 0.16.0 entry now say so.
 
 ## [0.16.0] - 2026-11-26 — PBS provider, TOTP, node evacuate & cluster check
 
@@ -38,10 +38,12 @@ surface may change between minor releases.
 - **Added**: `pc node evacuate <node>` migrates the guests off a node for
   maintenance (#21). It moves running guests by default, or all guests with
   `--all`. Destinations are planned greedily, largest guest first, onto the
-  online node with the most memory headroom. The plan never exceeds
-  `--max-mem-pct` (default 90) of a node's RAM, or `--vcpu-ratio` allocated
-  vCPUs per logical CPU (thread) when that flag is set. `--target` forces a
-  single destination, still capacity-checked unless `--force`. Running VMs are
+  online node with the most memory headroom. A running guest is never placed
+  past `--max-mem-pct` (default 90) of a node's RAM, or `--vcpu-ratio`
+  allocated vCPUs per logical CPU (thread) when that flag is set; stopped
+  guests (`--all`) are placed after them without a capacity check (corrected
+  after release). `--target` forces a single destination, with running guests
+  still capacity-checked unless `--force`. Running VMs are
   live-migrated (with `--with-local-disks` when they have attached local disks)
   and running containers use restart migration (`--restart-timeout`).
   Migrations run one at a time, or up to 8 at once with `--parallel`, and each

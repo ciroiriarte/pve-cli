@@ -135,7 +135,11 @@ func TestNodeEvacuateSyncPostFailure(t *testing.T) {
 func TestNodeEvacuateUnknownPostHalts(t *testing.T) {
 	for name, odd := range map[string]string{
 		"connection dropped": "drop",
-		"gateway error":      "502",
+		"bad gateway":        "502",
+		"unavailable":        "503",
+		"gateway timeout":    "504",
+		"pveproxy 595":       "595",
+		"pveproxy 596":       "596",
 		"not json":           "<html>ok</html>",
 		"no task id":         `{"data":null}`,
 	} {
