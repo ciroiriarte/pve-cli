@@ -6,6 +6,8 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-11-26 — node evacuate halt and capacity docs fixes
+
 - **Fixed**: `pc node evacuate` now stops starting migrations when a migrate
   request gets no usable answer: the connection drops after the request was
   sent, a gateway answers 502/503/504 (or pveproxy 595/596), or PVE answers success
