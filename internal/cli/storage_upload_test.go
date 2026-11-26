@@ -71,6 +71,55 @@ func TestStorageUploadSendsMultipart(t *testing.T) {
 	}
 }
 
+// #28: pveproxy parses the pre-file multipart parts in a fixed order (content,
+// checksum-algorithm, checksum) and dies on any other order, so the order —
+// not just the presence — of the fields is part of the wire contract.
+func TestStorageUploadChecksumFieldOrder(t *testing.T) {
+	var order []string
+	vals := map[string]string{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/nodes/pve-01/storage/local/upload", func(w http.ResponseWriter, r *http.Request) {
+		mr, err := r.MultipartReader()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			data, _ := io.ReadAll(part)
+			order = append(order, part.FormName())
+			vals[part.FormName()] = string(data)
+		}
+		w.Write([]byte(`{"data":"UPID:pve-01:0001:0002:6A00:imgcopy::root@pam:"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	iso := filepath.Join(t.TempDir(), "test.iso")
+	if err := os.WriteFile(iso, []byte("ISO-DATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := "0b1f6ea6b4ec4fa1e0e7a7a6b0f43c2e5f4c4a0b1f6ea6b4ec4fa1e0e7a7a6b0"
+	if _, err := runCLI(t, withCreds(srv, "storage", "content", "upload", "local", iso, "--node", "pve-01",
+		"--checksum-algorithm", "sha256", "--checksum", sum, "--no-wait")...); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	want := []string{"content", "checksum-algorithm", "checksum", "filename"}
+	if strings.Join(order, ",") != strings.Join(want, ",") {
+		t.Errorf("multipart part order = %v, want %v (pveproxy rejects any other order)", order, want)
+	}
+	if vals["checksum-algorithm"] != "sha256" || vals["checksum"] != sum {
+		t.Errorf("checksum fields = %q/%q", vals["checksum-algorithm"], vals["checksum"])
+	}
+}
+
 // Unknown extension without --content is a clear up-front error (no request made).
 func TestStorageUploadRequiresContentTypeForUnknownExt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
