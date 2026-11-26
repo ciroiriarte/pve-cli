@@ -26,6 +26,10 @@ func newFirewallCmd(a *app) *cobra.Command {
 			return nil, "", err
 		}
 		if vmid != "" {
+			// Guest firewall paths are PVE node paths; PDM doesn't proxy them.
+			if err := ensurePVE(p, "firewall --vmid", "or use `pc raw` against the remote"); err != nil {
+				return nil, "", err
+			}
 			id, err := strconv.Atoi(vmid)
 			if err != nil {
 				return nil, "", fmt.Errorf("invalid --vmid %q", vmid)

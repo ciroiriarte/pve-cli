@@ -60,6 +60,18 @@ contexts:
   corp: { profile: corp-pdm, remote: dc-west }
 ```
 
+Single-guest commands then target `dc-west` without `--remote` (an explicit
+`--remote` still wins). Bulk snapshot commands (`snapshot list`/`prune`) honor
+the pinned remote too (and fail with exit 4 if that remote's inventory is
+unavailable); `guest list` and `node list` stay cross-remote. On PDM,
+`--node` doesn't skip the lookup: the guest is still resolved and `--node` must
+match its node. On `provider: pve` the context `remote:` is ignored.
+
+If a remote's inventory can't be fetched, lists still show the healthy remotes
+and print a warning on stderr, but a single-guest command without a remote
+scope refuses (exit 4) — the vmid might also live on the unreachable remote.
+Pass `--remote` (or pin one in the context) to target a healthy remote.
+
 Curated per-remote operations (use `--remote` when a vmid exists on more than
 one remote):
 

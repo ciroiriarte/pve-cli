@@ -67,11 +67,21 @@ func DefaultPath() string {
 	if p := os.Getenv("PVE_CLI_CONFIG"); p != "" {
 		return p
 	}
+	if p := managedPath(); p != "" {
+		return p
+	}
+	return "pve-cli-config.yaml"
+}
+
+// managedPath is the default, app-managed config location
+// ($XDG_CONFIG_HOME/pve-cli/config.yaml or ~/.config/pve-cli/config.yaml), or
+// "" when no home directory is known.
+func managedPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "pve-cli-config.yaml"
+			return ""
 		}
 		base = filepath.Join(home, ".config")
 	}
@@ -95,16 +105,79 @@ func Load(path string) (*File, error) {
 	return &f, nil
 }
 
-// Save writes the config file to path, creating parent directories. The
-// directory is created 0700 because it holds the credential file (config.yaml,
-// which may contain an inline plaintext secret); the file itself is 0600.
+// Save writes the config file to path, creating parent directories.
 func Save(path string, f *File) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := yaml.Marshal(f)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return writeConfigFile(path, b)
+}
+
+// writeConfigFile writes the credential-bearing config file (it may hold an
+// inline plaintext secret when no keyring is available) with mode 0600.
+//
+// MkdirAll/WriteFile never change the mode of a path that already exists, so
+// pre-existing permissive modes left by older versions are tightened here:
+//   - the directory is chmod'ed 0700 only when it is the default app-managed
+//     location; a PVE_CLI_CONFIG override may live in a user-managed directory
+//     (dotfiles repo, $HOME) whose mode isn't ours to change.
+//   - the file is written to a 0600 temp file in the same directory, fsynced,
+//     and renamed over the symlink-resolved target. That keeps a symlinked
+//     config a symlink, replaces a 0644 inode (cutting off readers holding an
+//     fd on the old one), and is crash-atomic. A dangling symlink is an error.
+//
+// Because the file is replaced (not rewritten in place), the config directory
+// must be writable, and the new file does not keep the old one's hardlinks,
+// owner, ACLs or xattrs — e.g. `sudo pc config set` on a user's config leaves
+// it root-owned.
+func writeConfigFile(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if mp := managedPath(); os.Getenv("PVE_CLI_CONFIG") == "" && mp != "" &&
+		filepath.Clean(path) == filepath.Clean(mp) {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	} else if !os.IsNotExist(err) {
+		return err
+	} else if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+		// A dangling symlink: neither replace the link with a regular file
+		// nor follow it to create a file somewhere unexpected.
+		dest, _ := os.Readlink(path)
+		if dest != "" && !filepath.IsAbs(dest) {
+			dest = filepath.Join(dir, dest)
+		}
+		return fmt.Errorf("config path %s is a symlink to %s, which does not exist; create the target or remove the link", path, dest)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, target)
 }

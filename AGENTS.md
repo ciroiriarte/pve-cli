@@ -74,6 +74,11 @@ Non-interactive runs never auto-pin (they print the fingerprint to re-run with
 `--fingerprint`). `InsecureSkipVerify` is used **only** to fetch a cert for
 display/pinning, never to carry credentials — keep it that way. Fingerprint
 format is `sha256:` + uppercase colon-separated hex, matching `openssl … -sha256`.
+`--insecure` is an explicit opt-in that warns once on stderr whenever
+credentials cross an unverified connection; `--insecure=false` overrides a
+profile/env `insecure: true`. A configured pin always wins over insecure. The
+API and ticket-login clients refuse redirects (`CheckRedirect`) — PVE/PDM never
+redirect, and following one could downgrade to http or replay the password.
 
 ### 5. Remote-first: hide node-centric API plumbing
 The tool's promise is `pc <resource> <action>` with the hosting node resolved
@@ -97,7 +102,9 @@ PVE node-scoped mgmt command, so it can't nest) and `resources top-entities` /
 ### 7. Onboarding nudges go to stderr, TTY-gated
 Interactive hints (e.g. the shell-completion tip after `pc auth login`) print to
 **stderr** and are gated on `isTTY()` so scripted/CI output stays clean. Never
-emit advisory text on stdout for machine-consumed commands.
+emit advisory text on stdout for machine-consumed commands. Security warnings
+(plaintext secrets on argv or in config, insecure TLS) also go to stderr but are
+**not** TTY-gated — scripts are exactly where they matter.
 
 ### 8. Guest commands route by resolved kind, not the command's spec
 `pc guest <verb>` is type-agnostic: `resolveGuest` looks the vmid up in
@@ -147,6 +154,21 @@ a `KindConflict` (exit 4) listing the remotes and pointing at `--remote`; with
 `--remote` it routes via `ResolveGuestInRemote` (bad remote → not-found/exit 3).
 Because every verb shares this path, the guard is uniform across reads and writes
 — keep new single-guest commands on `resolveGuest` so they inherit it.
+
+The guard fails closed on incomplete inventory (#37): if any remote's
+`/resources/list` entry carries an `error`, unscoped resolution (by vmid or
+name) refuses with a `KindConflict` (exit 4) naming the failed remotes; scoped
+resolution only fails if the selected remote errored. Lists (`guest list`,
+`node list`) still succeed but warn about failed remotes on stderr. The
+context's `remote:` is the default scope: `resolveGuest` applies `--remote` >
+context `remote:` > none (the PDM provider carries it via
+`SetDefaultRemote`/`DefaultRemote`; PVE has neither, so it's ignored there).
+`guest list` / `node list` are never filtered by the context remote; bulk
+snapshot commands (`collectSnapshots`) are. On PDM the typed `--node` shortcut
+is disabled — the guest is always resolved and `--node` must match. Commands
+that build PVE `/nodes/...` paths from a guest (`backup create`, `firewall
+--vmid`) are refused on PDM via `ensurePVE`; don't call `p.ResolveGuest`
+directly from new commands.
 
 ## UX roadmap
 

@@ -21,7 +21,7 @@ type guestBaseFn = func(*cobra.Command, string) (provider.Provider, domain.Guest
 func newGuestExtraCmds(a *app, spec guestSpec) []*cobra.Command {
 	var node, remote string
 	scope := func(c *cobra.Command) {
-		c.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+		c.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 		c.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
 	}
 	var base guestBaseFn = func(cmd *cobra.Command, idArg string) (provider.Provider, domain.Guest, string, error) {

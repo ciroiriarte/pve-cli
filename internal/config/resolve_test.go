@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/zalando/go-keyring"
+)
 
 func baseFile() *File {
 	return &File{
@@ -76,5 +82,105 @@ func TestValidateRequiresServerAndCreds(t *testing.T) {
 	}
 	if err := (&Settings{Server: "https://h:8006", AuthType: "token", TokenID: "x", Secret: "y"}).Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// keyringRefFile is baseFile with the secret behind a keyring reference.
+func keyringRefFile() *File {
+	f := baseFile()
+	p := f.Profiles["homelab"]
+	p.Auth.Secret = ""
+	p.Auth.SecretRef = "keyring://pve-cli/homelab"
+	f.Profiles["homelab"] = p
+	return f
+}
+
+// #34: a locked/unavailable keyring must not block a valid env or flag secret —
+// the profile reference is only dereferenced when nothing higher is set.
+func TestUnavailableKeyringDoesNotBlockOverrides(t *testing.T) {
+	keyring.MockInitWithError(errors.New("keyring locked"))
+	t.Cleanup(keyring.MockInit)
+
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("PVE_CLI_TOKEN_SECRET", "envsecret")
+		s, err := Resolve(keyringRefFile(), Overrides{})
+		if err != nil {
+			t.Fatalf("env secret should bypass the keyring: %v", err)
+		}
+		if s.Secret != "envsecret" {
+			t.Errorf("secret = %q, want envsecret", s.Secret)
+		}
+	})
+	t.Run("flag", func(t *testing.T) {
+		s, err := Resolve(keyringRefFile(), Overrides{Secret: "flagsecret"})
+		if err != nil {
+			t.Fatalf("flag secret should bypass the keyring: %v", err)
+		}
+		if s.Secret != "flagsecret" {
+			t.Errorf("secret = %q, want flagsecret", s.Secret)
+		}
+	})
+	t.Run("flag ref", func(t *testing.T) {
+		t.Setenv("PC_TEST_SECRET", "refsecret")
+		t.Setenv("PVE_CLI_TOKEN_SECRET", "envsecret")
+		s, err := Resolve(keyringRefFile(), Overrides{SecretRef: "env:PC_TEST_SECRET"})
+		if err != nil {
+			t.Fatalf("flag ref should bypass the keyring: %v", err)
+		}
+		if s.Secret != "refsecret" {
+			t.Errorf("secret = %q, want refsecret (flag ref beats env)", s.Secret)
+		}
+	})
+	t.Run("nothing else", func(t *testing.T) {
+		_, err := Resolve(keyringRefFile(), Overrides{})
+		if err == nil || !strings.Contains(err.Error(), "keyring") {
+			t.Fatalf("expected a clear keyring error, got %v", err)
+		}
+	})
+}
+
+// #34: SecretSource names the source that actually won, not the profile's.
+func TestSecretSourceReportsWinner(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("PC_TEST_SECRET", "x")
+	cases := []struct {
+		name, env string
+		f         *File
+		ov        Overrides
+		want      string
+	}{
+		{"flag", "e", keyringRefFile(), Overrides{Secret: "f"}, "flag --token-secret"},
+		{"flag ref", "e", keyringRefFile(), Overrides{SecretRef: "env:PC_TEST_SECRET"}, "flag --token-secret-ref env:PC_TEST_SECRET"},
+		{"env", "e", keyringRefFile(), Overrides{}, "env PVE_CLI_TOKEN_SECRET"},
+		{"inline", "", baseFile(), Overrides{}, "inline (plaintext in config)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PVE_CLI_TOKEN_SECRET", c.env)
+			s, err := Resolve(c.f, c.ov)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.SecretSource != c.want {
+				t.Errorf("SecretSource = %q, want %q", s.SecretSource, c.want)
+			}
+		})
+	}
+	if err := keyring.Set("pve-cli", "homelab", "kr"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Resolve(keyringRefFile(), Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.SecretSource != "profile keyring://pve-cli/homelab" || s.Secret != "kr" {
+		t.Errorf("profile ref: source=%q secret=%q", s.SecretSource, s.Secret)
+	}
+}
+
+func TestSecretRefOverrideEmptyErrors(t *testing.T) {
+	t.Setenv("PC_TEST_EMPTY", "")
+	if _, err := Resolve(baseFile(), Overrides{SecretRef: "env:PC_TEST_EMPTY"}); err == nil {
+		t.Fatal("expected error for a ref that resolves to an empty secret")
 	}
 }

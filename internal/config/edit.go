@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -70,15 +69,11 @@ func SetValue(path, dotted, value string) error {
 	}
 	cur[keys[len(keys)-1]] = coerceScalar(value)
 
-	// 0700: this directory holds the credential file (see config.Save).
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := yaml.Marshal(m)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return writeConfigFile(path, b)
 }
 
 // loadMap loads the config file as a generic map (empty if the file is absent).
