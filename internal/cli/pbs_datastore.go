@@ -597,12 +597,17 @@ func newDatastoreJobListCmd(a *app) *cobra.Command {
 				}
 				kinds = types
 			}
-			q := url.Values{}
-			if store != "" {
-				q.Set("store", store)
-			}
 			all := []map[string]any{}
 			for _, k := range kinds {
+				q := url.Values{}
+				if store != "" {
+					q.Set("store", store)
+				}
+				if k == "sync" {
+					// PBS defaults sync-direction to pull; push jobs would be
+					// silently missing without "all".
+					q.Set("sync-direction", "all")
+				}
 				body, err := p.Raw(cmd.Context(), "GET", "/admin/"+k, q)
 				if err != nil {
 					return fmt.Errorf("list %s jobs: %w", k, err)

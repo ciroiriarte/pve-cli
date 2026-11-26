@@ -89,9 +89,6 @@ func providerGate(c *cobra.Command, current string) error {
 		return nil
 	}
 	supported := orElse(top.Annotations[providersAnnotation], defaultProviders)
-	if supported == allProviders {
-		return nil
-	}
 	for _, p := range strings.Split(supported, ",") {
 		if p == current {
 			return nil

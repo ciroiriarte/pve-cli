@@ -37,7 +37,7 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
 
 ## Status
 
-Active development (`v0.10.x`, SemVer). **All three backends are
+Active development (`v0.x`, SemVer). **All three backends are
 live-verified**: direct PVE against PVE 9.1/9.2 (token *and* ticket auth), the
 PDM backend against a live PDM 1.x fleet, and the PBS backend against a PBS 4.2
 server (token and ticket auth, fingerprint pinning, every `pc datastore` read,

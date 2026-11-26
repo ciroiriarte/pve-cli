@@ -12,8 +12,11 @@ Select the backend with `provider:` in the profile or `--provider pve|pdm|pbs`.
 Commands that a backend doesn't support fail fast with a clear message naming
 the current provider, before any request is sent, rather than guessing.
 
-> **Status:** both backends are live-verified — PVE against PVE 9.1/9.2 (token
-> *and* ticket auth) and PDM against a live PDM 1.x fleet. Note PDM's proxy only
+> **Status:** all three backends are live-verified — PVE against PVE 9.1/9.2
+> (token *and* ticket auth), PDM against a live PDM 1.x fleet, and PBS against a
+> PBS 4.2 server (token and ticket auth, TOFU fingerprint pinning, every
+> `pc datastore` read and its json shape, a GC run, a verify run, prune dry runs,
+> `job list` incl. push/pull sync jobs, and `pc task` on PBS UPIDs). Note PDM's proxy only
 > exposes a subset of per-guest operations (status/config/snapshot/migrate/
 > pending/rrddata/firewall/power); the **guest agent, cloud-init, disk ops,
 > console, and provisioning are not proxied** and are refused on PDM — target

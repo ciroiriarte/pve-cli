@@ -24,8 +24,10 @@ surface may change between minor releases.
   `--set` refuses keys that have a dedicated flag (`dry-run`, `ns`,
   `backup-type`/`backup-id`, `keep-*`, …), so the confirmation always matches
   the request. Provider names are now case-insensitive (`provider: PBS`), and
-  backend-agnostic commands (`version`, `config`, `context`, `auth`, `task`,
-  `raw`, `api`) are never refused by the provider gate.
+  backend-agnostic commands (`version`, `config`, `context`, `auth`, `plugin`,
+  `task`, `raw`, `api`) are never refused by the provider gate. `datastore job
+  list` requests `sync-direction=all`, so push sync jobs are listed too (PBS
+  defaults to pull).
 - **Changed (json output)**: a task handle printed for a plain UPID now reports
   the provider that returned it in `backend` (`pbs` on PBS; `pdm` for a PDM
   task without a remote, where it used to say `pve`). PDM-proxied

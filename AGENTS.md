@@ -185,7 +185,9 @@ found" surfaces. Provider names are lower-cased in `config` (one shared
 selection helper for `Resolve`/`ResolveProvider`). Confirm-gated PBS
 mutations refuse `--set` for keys that have a flag (`refuseFlaggedSet`), so
 the prompt and the dry-run decision always match the request — apply the same
-rule to new confirm-gated commands with `--set`. The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
+rule to new confirm-gated commands with `--set`.
+
+The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
 older `pc pbs` stays the PDM-through-remotes view and is refused on pbs with a
 pointer to `pc datastore` — don't merge the two, their arities differ. PBS
 node-scoped endpoints use the node `localhost`. PBS UPIDs have an extra hex

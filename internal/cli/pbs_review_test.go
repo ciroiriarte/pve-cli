@@ -35,6 +35,46 @@ func pbsLongLog(q url.Values) string {
 	return `{"data":[` + strings.Join(lines, ",") + `]}`
 }
 
+// pbsSyncJobs emulates GET /admin/sync: sync-direction defaults to pull, so
+// push jobs only appear with push or all.
+func pbsSyncJobs(dir string) string {
+	pull := `{"id":"s-pull","store":"store1","remote":"r1","remote-store":"rs","sync-direction":"pull"}`
+	push := `{"id":"s-push","store":"store1","remote":"r1","remote-store":"rs","sync-direction":"push"}`
+	switch dir {
+	case "all":
+		return `{"data":[` + pull + `,` + push + `]}`
+	case "push":
+		return `{"data":[` + push + `]}`
+	default:
+		return `{"data":[` + pull + `]}`
+	}
+}
+
+// #19 re-review: job list must request sync-direction=all, or push sync jobs
+// (PBS defaults to pull) are silently missing.
+func TestPBSJobListIncludesPushAndPullSync(t *testing.T) {
+	srv := pbsServer(t)
+	var jobs []map[string]any
+	runJSON(t, &jobs, withPBSCreds(srv, "datastore", "job", "list", "--type", "sync")...)
+	dirs := map[any]bool{}
+	for _, j := range jobs {
+		dirs[j["sync-direction"]] = true
+	}
+	if !dirs["pull"] || !dirs["push"] || len(jobs) != 2 {
+		t.Errorf("sync jobs = %v, want both pull and push", jobs)
+	}
+	if c, _ := srv.last("GET", "/admin/sync"); c.Query.Get("sync-direction") != "all" {
+		t.Errorf("sync query = %v, want sync-direction=all", c.Query)
+	}
+	// Only the sync endpoint gets the parameter (prune/verify reject unknown keys).
+	runJSON(t, &jobs, withPBSCreds(srv, "datastore", "job", "list")...)
+	for _, p := range []string{"/admin/prune", "/admin/verify"} {
+		if c, _ := srv.last("GET", p); c.Query.Has("sync-direction") {
+			t.Errorf("%s got sync-direction: %v", p, c.Query)
+		}
+	}
+}
+
 // #19 review: --set must not override keys that have a flag — `--dry-run
 // --set dry-run=0` would otherwise prune for real with no prompt, and
 // --set ns/backup-* could change the scope behind the confirmation.

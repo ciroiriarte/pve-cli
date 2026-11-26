@@ -73,7 +73,6 @@ func pbsServer(t *testing.T) *pbsFake {
 		"POST /admin/datastore/store1/verify":          `{"data":"` + pbsVerifyUPID + `"}`,
 		"GET /admin/prune":                             `{"data":[{"id":"p1","store":"store1","schedule":"daily","keep-last":3}]}`,
 		"GET /admin/verify":                            `{"data":[{"id":"v1","store":"store1","schedule":"weekly"}]}`,
-		"GET /admin/sync":                              `{"data":[]}`,
 		"GET /nodes/localhost/tasks": `{"data":[` +
 			`{"upid":"` + pbsGCUPID + `","node":"localhost","pid":1000,"starttime":1732000002,"endtime":1732000010,"worker_type":"garbage_collection","worker_id":"store1","user":"root@pam","status":"OK"},` +
 			`{"upid":"` + pbsVerifyUPID + `","node":"localhost","pid":1000,"starttime":1732000004,"worker_type":"verify","worker_id":"store1","user":"root@pam"}]}`,
@@ -87,6 +86,10 @@ func pbsServer(t *testing.T) *pbsFake {
 		f.mu.Lock()
 		f.calls = append(f.calls, pbsCall{Method: r.Method, Path: path, Auth: r.Header.Get("Authorization"), Query: r.URL.Query(), Form: r.PostForm})
 		f.mu.Unlock()
+		if r.Method == "GET" && path == "/admin/sync" {
+			w.Write([]byte(pbsSyncJobs(r.URL.Query().Get("sync-direction"))))
+			return
+		}
 		if r.Method == "GET" && path == "/nodes/localhost/tasks/"+pbsPruneUPID+"/log" {
 			w.Write([]byte(pbsLongLog(r.URL.Query())))
 			return
@@ -200,7 +203,7 @@ func TestPBSJobListMergesKindsAndFilters(t *testing.T) {
 	for _, j := range all {
 		kinds[j["job-type"]]++
 	}
-	if kinds["prune"] != 1 || kinds["verify"] != 1 || len(all) != 2 {
+	if kinds["prune"] != 1 || kinds["verify"] != 1 || kinds["sync"] != 2 || len(all) != 4 {
 		t.Errorf("job list = %v", all)
 	}
 	var verify []map[string]any
