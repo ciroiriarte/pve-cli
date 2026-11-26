@@ -33,6 +33,15 @@ surface may change between minor releases.
 - **Fixed**: key/value and generic list tables printed large integers in
   exponent notation (`1.4420443136e+10`); they now print plain integers, as
   column-projected lists already did (table output only; json unchanged) (#19).
+- **Docs**: `packaging/obs/README.md` records why the `go 1.22.0` floor and the
+  `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which Go
+  floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,
+  19 module-level, none reaching `pc`), the OBS steps to raise the floor, and the
+  re-check rule (#46).
+- **Security**: GitHub Actions in `ci.yml` and `release.yml` (`actions/checkout`,
+  `actions/setup-go`, `goreleaser/goreleaser-action`) are pinned to full commit
+  SHAs instead of mutable tags, and Dependabot (`github-actions`, weekly) keeps
+  the pins current (#45).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
