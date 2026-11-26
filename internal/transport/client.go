@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -149,12 +150,27 @@ func (c *Client) DoRaw(ctx context.Context, req *Request) ([]byte, error) {
 func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 	body, err := c.doAttempts(ctx, req)
 	var ae *protocol.APIError
-	if err != nil && req.Body == nil && errors.As(err, &ae) && ae.StatusCode == http.StatusUnauthorized {
+	if err != nil && req.Body == nil && !authEndpoint(req.Path) &&
+		errors.As(err, &ae) && ae.StatusCode == http.StatusUnauthorized {
 		if inv, ok := c.auth.(auth.Invalidator); ok && inv.Invalidate() {
 			return c.doAttempts(ctx, req)
 		}
 	}
 	return body, err
+}
+
+// authEndpoint reports whether path is a public authentication endpoint whose
+// handler itself answers 401 for bad credentials or a rejected TFA code (e.g.
+// `pc raw` / `pc api` POST /access/ticket). Such a 401 says nothing about the
+// client's ticket, so it must not invalidate it or replay the request.
+func authEndpoint(p string) bool {
+	p = strings.ToLower(path.Clean("/" + strings.TrimSpace(p)))
+	for _, pre := range []string{"/access/ticket", "/access/tfa", "/access/password", "/access/vncticket", "/access/openid"} {
+		if p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) doAttempts(ctx context.Context, req *Request) ([]byte, error) {
@@ -201,6 +217,9 @@ func (c *Client) doAttempts(ctx context.Context, req *Request) ([]byte, error) {
 			continue // transport errors are always retryable for idempotent reqs
 		}
 		if status >= 200 && status < 300 {
+			if v, ok := c.auth.(auth.Verifier); ok {
+				v.Verified()
+			}
 			return body, nil
 		}
 		apiErr := protocol.DecodeError(status, body)

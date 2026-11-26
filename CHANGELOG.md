@@ -16,12 +16,15 @@ surface may change between minor releases.
   later commands, and in memory by a long-running one), so commands don't need
   a code until it lapses (~2h idle); then they prompt on a terminal, use
   `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.
-  A cached ticket the server rejects is dropped and the command logs in again
-  once. `pc config test-auth` reports the cached-ticket state. `auth login` now
-  refuses a non-loopback `http://` server before sending anything, and warns
-  when a recovery key is passed on argv. A rejected ticket login is now an auth
-  error (exit 2) and is not retried (a 5xx still is); its message no longer
-  includes server-provided text.
+  A server error during renewal keeps the still-valid ticket. A cached ticket
+  the server rejects on first use is dropped and the command logs in again once
+  (not for 401s from the auth endpoints themselves, e.g. `pc raw` on
+  `/access/ticket`). `pc config test-auth` reports the cached-ticket state.
+  `auth login` now refuses a non-loopback `http://` server before sending
+  anything, and warns when a recovery key is passed on argv. A rejected ticket
+  login is now an auth error (exit 2) and is not retried; a 5xx during login is
+  retried for read (GET) requests only, like other transient errors. Its
+  message no longer includes server-provided text.
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 

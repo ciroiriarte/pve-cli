@@ -112,8 +112,10 @@ ticket is cached in the OS keyring (entry `ticket:<user>@<server>` under the
 `pve-cli` service) and reused by later commands. A ticket older than 1 h is
 renewed by passing it as the password, which keeps the TFA state and does not
 ask for a code; a long-running command renews its in-memory ticket the same
-way and updates the cache. If the server rejects a cached ticket (e.g. its
-auth key changed), the entry is dropped and the command logs in again once.
+way and updates the cache; if renewal hits a server error, the still-valid
+ticket stays in use. If the server rejects a cached ticket on first use (e.g.
+its auth key changed), the entry is dropped and the command logs in again
+once.
 `auth login` refuses a non-loopback `http://` server, and warns when a
 recovery key is given on the command line. Proxmox tickets expire after 2 h, so after ~2 h without any
 command the next one needs a new code: it prompts on a terminal, takes

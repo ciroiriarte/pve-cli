@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,6 +32,13 @@ const (
 // retry with fresh credentials makes sense.
 type Invalidator interface {
 	Invalidate() bool
+}
+
+// Verifier is implemented by auth providers that want to know a request
+// authenticated successfully (a 2xx), e.g. to stop treating a persisted
+// credential as unverified.
+type Verifier interface {
+	Verified()
 }
 
 // EnsureSecureURL rejects sending credentials over plaintext http to a
@@ -91,6 +99,7 @@ type TicketProvider struct {
 	ticket    string    // raw ticket string, the password for renewal
 	issued    time.Time // when the current ticket was obtained
 	fromCache bool      // current ticket was adopted from Cache, unverified
+	skipCache bool      // a cached ticket was rejected: never load from Cache again
 	tfaChain  bool      // current ticket descends from a TFA login: persist renewals
 	tfa       bool      // the last password login answered a TFA challenge
 }
@@ -156,20 +165,35 @@ func (t *TicketProvider) Refresh(ctx context.Context) error {
 }
 
 // Invalidate handles a 401: if the ticket in use was adopted from the
-// persisted cache without being verified, it is stale (e.g. the server's auth
-// key changed). Drop it from memory and the cache so the next request logs in
-// afresh, and report true so the caller retries once.
+// persisted cache and no request has succeeded with it yet, it is stale (e.g.
+// the server's auth key changed). Drop it from memory, stop consulting the
+// cache for this provider (so a failed keyring delete can't hand the same
+// ticket back), delete the cache entry only if it still holds that ticket
+// (another process may have stored a fresh one), and report true so the
+// caller retries once.
 func (t *TicketProvider) Invalidate() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.fromCache {
 		return false
 	}
+	used := t.ticket
 	t.clear()
+	t.skipCache = true
 	if t.Cache != nil {
-		t.Cache.Delete()
+		if c, ok := t.Cache.Load(); ok && c.Ticket == used {
+			t.Cache.Delete()
+		}
 	}
 	return true
+}
+
+// Verified records that a request succeeded with the current ticket, so a
+// later 401 is a real authorization failure, not a stale cached ticket.
+func (t *TicketProvider) Verified() {
+	t.mu.Lock()
+	t.fromCache = false
+	t.mu.Unlock()
 }
 
 // Kind returns the mechanism name.
@@ -210,25 +234,39 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 		if age >= 0 && age < ticketRenewAfter {
 			return nil
 		}
-		if age >= 0 && age < ticketLifetime && t.renew(ctx, t.ticket) == nil {
-			return nil
+		if age >= 0 && age < ticketLifetime {
+			err := t.renew(ctx, t.ticket)
+			if err == nil || !rejected(err) {
+				// Renewed, or a transient failure (5xx, network): the
+				// current ticket is still valid, keep using it and try
+				// renewing again on the next request.
+				return nil
+			}
 		}
 		t.clear()
 	}
 
 	// A persisted TFA-confirmed ticket: reuse it while fresh, renew it once
 	// older. Any failure falls through to a password login.
-	if useCache && t.Cache != nil {
+	if useCache && !t.skipCache && t.Cache != nil {
 		if c, ok := t.Cache.Load(); ok && c.User == t.user && c.Ticket != "" {
 			age := now.Sub(c.Issued)
-			switch {
-			case age >= 0 && age < ticketRenewAfter:
+			adopt := func() {
 				t.set(c.cookieList(), c.CSRF, c.Ticket, c.Issued)
 				t.fromCache, t.tfaChain = true, true
+			}
+			switch {
+			case age >= 0 && age < ticketRenewAfter:
+				adopt()
 				return nil
 			case age >= 0 && age < ticketLifetime:
 				t.tfaChain = true
-				if t.renew(ctx, c.Ticket) == nil {
+				err := t.renew(ctx, c.Ticket)
+				if err == nil {
+					return nil
+				}
+				if !rejected(err) {
+					adopt() // transient failure: the cached ticket is still valid
 					return nil
 				}
 				t.tfaChain = false
@@ -277,18 +315,34 @@ func (t *TicketProvider) login(ctx context.Context, useCache bool) error {
 	return nil
 }
 
+// rejected reports whether a renewal failure means the ticket itself is no
+// good (an auth/permission rejection, or a TFA challenge instead of a
+// ticket), as opposed to a transient server or network problem.
+func rejected(err error) bool {
+	if errors.Is(err, errRenewChallenge) {
+		return true
+	}
+	var ae *protocol.APIError
+	if errors.As(err, &ae) {
+		return ae.Kind == protocol.KindAuth || ae.Kind == protocol.KindPermission
+	}
+	return false
+}
+
+var errRenewChallenge = errors.New("renewal answered with a TFA challenge")
+
 // renew trades a still-valid ticket for a fresh one (no TFA involved) and,
 // for a TFA-derived ticket, persists the result. Caller holds t.mu.
 func (t *TicketProvider) renew(ctx context.Context, ticket string) error {
 	if ticket == "" {
-		return fmt.Errorf("no ticket to renew")
+		return errRenewChallenge // nothing to renew with: treat as rejected
 	}
 	res, err := t.post(ctx, url.Values{"username": {t.user}, "password": {ticket}})
 	if err != nil {
 		return err
 	}
 	if res.challenge {
-		return fmt.Errorf("renewal answered with a TFA challenge")
+		return errRenewChallenge
 	}
 	t.set(res.cookies, res.csrf, res.ticket, t.clock())
 	if t.tfaChain {
