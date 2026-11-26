@@ -279,6 +279,10 @@ func newStorageUploadCmd(a *app) *cobra.Command {
 			if checksum != "" && checksumAlgo == "" {
 				return fmt.Errorf("--checksum-algorithm is required with --checksum (md5|sha1|sha256|sha512)")
 			}
+			if checksumAlgo != "" && checksum == "" {
+				// Otherwise the algorithm is silently dropped and nothing is verified.
+				return fmt.Errorf("--checksum is required with --checksum-algorithm")
+			}
 
 			f, err := os.Open(srcPath)
 			if err != nil {
@@ -306,11 +310,17 @@ func newStorageUploadCmd(a *app) *cobra.Command {
 			if err := mw.WriteField("content", ctype); err != nil {
 				return err
 			}
+			// Field order is load-bearing (#28): pveproxy's streaming parser
+			// (PVE::APIServer::AnyEvent::file_upload_multipart) extracts the
+			// pre-file parts in a fixed sequence — content, checksum-algorithm,
+			// checksum — with a regex that spans parts when they're out of
+			// order, dies on the bad Content-Disposition, and drops the
+			// connection mid-upload (client sees "broken pipe").
 			if checksum != "" {
-				if err := mw.WriteField("checksum", checksum); err != nil {
+				if err := mw.WriteField("checksum-algorithm", checksumAlgo); err != nil {
 					return err
 				}
-				if err := mw.WriteField("checksum-algorithm", checksumAlgo); err != nil {
+				if err := mw.WriteField("checksum", checksum); err != nil {
 					return err
 				}
 			}

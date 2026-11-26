@@ -24,6 +24,12 @@ surface may change between minor releases.
   `pc task show`. They were the Go field names (`Backend`, `Node`, `UPID`, …)
   in json (#47). Scripts must read `.upid` instead of `.UPID`, e.g.
   `pc vm start 100 --no-wait -o json | jq -r .upid | xargs pc task wait`.
+- **Fixed**: `pc storage content upload --checksum` always failed against a real
+  PVE (`broken pipe`, nothing uploaded): the multipart body sent `checksum`
+  before `checksum-algorithm`, and pveproxy's parser requires the opposite
+  order. The fields are now sent in PVE's order (#28, reported by @inistor).
+  `--checksum-algorithm` without `--checksum` is now rejected instead of being
+  silently ignored.
 - **Fixed**: `pc <vm> cloudinit --dump` and the `pc storage prune-backups`
   preview sent their query string inside the request path (escaped to `%3F`),
   so they hit a non-existent endpoint; the query is now sent as real query
