@@ -170,6 +170,56 @@ func TestNodeEvacuateUnknownPostHalts(t *testing.T) {
 	}
 }
 
+// The halt for an unknown POST outcome is recorded before the gate is
+// released (--parallel > 1): a worker ready to POST while that answer is
+// being read must find the gate halted.
+func TestNodeEvacuateParallelUnknownPostHaltsAtomically(t *testing.T) {
+	f := newEvacFixture(defaultEvacGuests())
+	f.postOdd[100] = "drop"
+	srv := f.start()
+	defer srv.Close()
+
+	inGate, ready := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	evacBeforePost = func(vmid int) {
+		if vmid == 100 {
+			return
+		}
+		select { // the second worker waits until 100's answer is in the gate
+		case <-inGate:
+		case <-time.After(10 * time.Second):
+		}
+		once.Do(func() { close(ready) })
+	}
+	evacAfterPost = func(vmid int) {
+		if vmid != 100 {
+			return
+		}
+		close(inGate)
+		select { // hold 100's answer until the second worker is about to POST
+		case <-ready:
+		case <-time.After(10 * time.Second):
+		}
+		time.Sleep(100 * time.Millisecond) // let it reach the gate
+	}
+	defer func() { evacBeforePost, evacAfterPost = nil, nil }()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "2", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) != ExitTaskFailed {
+		t.Fatalf("want exit %d, got %v", ExitTaskFailed, err)
+	}
+	f.mu.Lock()
+	order := fmt.Sprint(f.order)
+	f.mu.Unlock()
+	if order != "[100]" {
+		t.Fatalf("no POST may follow an unknown POST outcome, got %v", order)
+	}
+	plan := evacPlan(t, out)
+	if plan[100]["result"] != "unknown" || plan[101]["result"] != "not-attempted" || plan[102]["result"] != "not-attempted" {
+		t.Errorf("results: 100=%v 101=%v 102=%v", plan[100]["result"], plan[101]["result"], plan[102]["result"])
+	}
+}
+
 func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
 	f := newEvacFixture([]map[string]any{
 		ctGuest(150, "running"), ctGuest(151, "running"), ctGuest(152, "running"), ctGuest(153, "running"),

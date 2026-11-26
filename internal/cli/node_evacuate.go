@@ -972,10 +972,9 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 				// outcome is unknown (no answer, or an unreadable success).
 				var apiErr *protocol.APIError
 				switch {
-				case startUnknown:
+				case startUnknown: // the gate was halted with the POST
 					it.Result = "unknown"
 					it.Error = fmt.Sprintf("no usable answer to the migrate request; the migration may have started in PVE (check `pc task list --node %s`): %v", it.From, err)
-					gate.halt()
 				case upid != "" && !(errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTaskFailed):
 					it.Result = "unknown"
 					it.Error = "no final task status; the migration may still be running in PVE (check `pc task show " + upid + "`): " + err.Error()
@@ -1015,20 +1014,31 @@ func (g *evacGate) halt() {
 }
 
 // post runs fn unless halted; ran reports whether it did.
-func (g *evacGate) post(fn func() ([]byte, error)) (body []byte, ran bool, err error) {
+// post runs fn unless halted; ran reports whether it did. fn returns whether
+// its POST's outcome is unknown; if so the halt is recorded before the lock is
+// released, so no other worker can POST between that answer and the halt.
+func (g *evacGate) post(fn func() (unknown bool)) (ran bool) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if g.halted {
-		return nil, false, nil
+		g.mu.Unlock()
+		return false
 	}
-	body, err = fn()
-	return body, true, err
+	halt := fn()
+	if halt {
+		g.halted = true
+	}
+	g.mu.Unlock()
+	if halt && evacHalted != nil {
+		evacHalted()
+	}
+	return true
 }
 
 // Test seams for deterministic concurrency tests (nil in production). They
 // are package globals: tests that set them must not use t.Parallel().
 var (
 	evacBeforePost func(vmid int)
+	evacAfterPost  func(vmid int) // inside the gate, after the POST answer
 	evacHalted     func()
 )
 
@@ -1070,26 +1080,42 @@ func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, gate *ev
 		params.Set("with-local-disks", "1")
 	}
 	path := fmt.Sprintf("/nodes/%s/%s/%d/migrate", it.From, kindEndpoint(it.Kind), it.VMID)
-	body, posted, err := gate.post(func() ([]byte, error) { return p.Raw(ctx, "POST", path, params) })
+	var h protocol.TaskHandle
+	posted = gate.post(func() bool {
+		body, perr := p.Raw(ctx, "POST", path, params)
+		if evacAfterPost != nil {
+			evacAfterPost(it.VMID)
+		}
+		upid, h, startUnknown, err = readMigratePost(body, perr, label)
+		return startUnknown
+	})
 	if !posted {
 		return "", false, false, nil
 	}
 	if err != nil {
-		return "", true, !migratePostRejected(err), err
-	}
-	// A success answer means PVE accepted the request; if its task id can't
-	// be read, the migration may be running untracked.
-	data, err := mutationData(body, label)
-	if err != nil {
-		return "", true, true, err
-	}
-	s, _ := data.(string)
-	h, err := parseTaskArg(s)
-	if err != nil {
-		return "", true, true, fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
+		return "", true, startUnknown, err
 	}
 	_, err = task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{Timeout: secs(timeout), Out: stderrWriter(), Label: label})
-	return s, true, false, err
+	return upid, true, false, err
+}
+
+// readMigratePost classifies a migrate POST answer. A PVE error answer is a
+// refusal (no task). Any other error, or a success answer (PVE accepted the
+// request) whose task id can't be read, leaves the outcome unknown.
+func readMigratePost(body []byte, err error, label string) (upid string, h protocol.TaskHandle, unknown bool, _ error) {
+	if err != nil {
+		return "", h, !migratePostRejected(err), err
+	}
+	data, err := mutationData(body, label)
+	if err != nil {
+		return "", h, true, err
+	}
+	upid, _ = data.(string)
+	h, err = parseTaskArg(upid)
+	if err != nil {
+		return "", h, true, fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
+	}
+	return upid, h, false, nil
 }
 
 // evacOutcome maps the plan/results to the exit code: failed migrations exit 5
