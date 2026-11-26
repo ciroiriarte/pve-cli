@@ -18,6 +18,155 @@ surface may change between minor releases.
   `pc`: GO-2025-3503, GO-2025-3595, GO-2026-4440, GO-2026-4441, GO-2026-4918,
   GO-2026-5024 (x/sys), GO-2026-5025 to 5030, GO-2026-5942, GO-2026-6603,
   6610, 6611, 6612, 6617, GO-2026-6860 and GO-2026-6866 (#46).
+- **Added**: `pc node evacuate <node>` migrates the guests off a node for
+  maintenance (#21). It moves running guests by default, or all guests with
+  `--all`. Destinations are planned greedily, largest guest first, onto the
+  online node with the most memory headroom. The plan never exceeds
+  `--max-mem-pct` (default 90) of a node's RAM, or `--vcpu-ratio` allocated
+  vCPUs per logical CPU (thread) when that flag is set. `--target` forces a
+  single destination, still capacity-checked unless `--force`. Running VMs are
+  live-migrated (with `--with-local-disks` when they have attached local disks)
+  and running containers use restart migration (`--restart-timeout`).
+  Migrations run one at a time, or up to 8 at once with `--parallel`, and each
+  task is polled. If a started migration's wait ends without a final task
+  status (`--wait-timeout`, a status-poll error, cancellation), that guest is
+  reported as `unknown` because it may still be migrating. No further
+  migration starts, and the rest are reported as `not-attempted`.
+  Destinations are limited to the nodes the qemu/LXC migrate preconditions
+  allow (storage, mappings, HA affinity), the nodes where a container's
+  storages are enabled, and a running replicated VM's replication targets.
+  Guests that can't move are skipped and reported: HA-managed guests, VMs with
+  unmapped local devices, mapped devices that can't live-migrate, a local
+  CD-ROM ISO, (running) local disks without `--with-local-disks`, or local
+  disks on a storage without content `images`, containers with active local
+  bind/device mount points or a volume on a storage without content `rootdir`,
+  guests with no allowed destination or not enough capacity, guests listed
+  as stopped whose live power state (from the source node's guest lists)
+  can't be confirmed, locked guests and templates. `--dry-run`
+  prints the plan, which `-o json` emits as an array of objects (`vmid`,
+  `name`, `kind`, `status`, `from`, `to`, `mode`, `maxmem`, `skip`, `reason`;
+  after a real run also `result`, `error` and `upid`). The command asks for
+  confirmation (`--yes` skips it). It exits 5 if any migration failed or ended `unknown`/`not-attempted`, or 6 if
+  any guest other than a template could not be moved. PVE only.
+- **Added**: live-API tab completion. Shell completion now suggests guest
+  vmids (described by name) and names for `pc vm|ct|guest <verb>` (filtered by
+  kind, `--node` and the effective remote: `--remote`, else the context's
+  `remote:`), vmids only for `--vmid` (including comma lists), online node
+  names for `--node`/`--target-node` (local or group-level flags) and
+  `<node>`, PDM remote ids for `--remote` and `pc remote … <id>`, and PVE
+  storage ids for `--storage`/`<storage>`. It is wired centrally from
+  argument/flag names; unknown arguments keep file completion. Config,
+  keyring, cache and API access are all bounded by a 1.5s timeout
+  (`PVE_CLI_COMPLETION_TIMEOUT`); it never prompts or prints, yields nothing
+  when the backend is unreachable, and never contacts an insecure (unverified,
+  unpinned) backend; with ticket auth it never logs in or sends a TOTP code,
+  only reusing (or renewing) a cached ticket. Results are cached for 45s per
+  backend identity in the user cache dir (`$XDG_CACHE_HOME` or `~/.cache`;
+  `~/Library/Caches` on macOS), trusting only 0600 files you own in a 0700
+  directory you own.
+  Tag-name completion now uses the same bounded, cached path. See *Shell
+  completion* in `docs/install.md` (#23).
+- **Added**: `pc cluster check` — one health verdict for a PVE cluster or
+  standalone node: quorum and offline nodes (standalone is ok), storage usage
+  (`--storage-warn`/`--storage-crit`, default 80/90%; disabled storages ignored,
+  shared storage counted once, unavailable storage warns), tasks that ended
+  with a failure within `--since` (default 24h, every online node's task list,
+  paged), HA resources in error/fence/freeze/recovery plus a dead HA
+  manager/LRM, Ceph health (skipped only when no online node has Ceph), and
+  per-node CPU/memory pressure. Each check is ok/warn/crit/skip/error: crit is
+  an observed problem, warn is degraded or partially observed (gaps such as
+  missing `Sys.Audit` or a truncated task list are `incomplete: …` warn
+  items), error means the check could not grade anything. A failed API read
+  degrades only its own check, except a connection failure after the API has
+  answered: every later API read is then skipped without a request, so checks
+  that still need one error, while checks grade whatever data they already
+  have. `-o json` emits `{"status", "checks": [{"name",
+  "status", "detail", "items"}]}`. New exit codes for monitoring: `7` warn or
+  any errored check, `8` crit; `--fail-on crit` ignores warnings but never an
+  errored check. A rejected token (at any point), an API unreachable before
+  it first answers (any HTTP response counts), or every check failing prints
+  no report and exits with the underlying error's usual code (2 auth, 3
+  not found, 4 unreachable, …). `--check`/`--skip` select
+  checks. Needs `Sys.Audit` and
+  `Datastore.Audit` (e.g. PVEAuditor). PVE-only; refused on PDM with the
+  provider named (#22).
+- **Added**: Proxmox Backup Server as a third backend, `provider: pbs` (#19).
+  Token auth (`PBSAPIToken=<id>:<secret>`), ticket auth (`PBSAuthCookie` +
+  CSRF), TOFU fingerprint pinning, `pc auth login --provider pbs` and
+  `pc config test-auth` all work against PBS. A port-less pbs server URL
+  defaults to 8007. New `pc datastore` tree (PBS-only): `list`, `show`,
+  `status [store]`, `namespace list`, `group list`, `snapshot list` (`--ns`,
+  `--group`), `gc status`/`gc start`, `prune` (`--keep-*`, confirm-gated,
+  `--dry-run`), `verify start` and `job list` (prune/verify/sync). `pc task`
+  works with PBS tasks, and `pc raw`/`pc api` walk an embedded PBS schema.
+  Commands that don't apply to PBS (guests, nodes, storage, remotes, …) are
+  refused up front with an error naming the current provider, and
+  `pc datastore` is refused on pve/pdm. The PDM-proxied `pc pbs` is unchanged.
+  `protocol.ParseUPID` now understands the PBS UPID layout (extra task-id
+  field), and the schema parser flattens `allOf` parameter sets, so
+  `pc raw … --help` lists every PBS parameter. On `prune` and `verify start`,
+  `--set` refuses keys that have a dedicated flag (`dry-run`, `ns`,
+  `backup-type`/`backup-id`, `keep-*`, …), so the confirmation always matches
+  the request. Provider names are now case-insensitive (`provider: PBS`), and
+  backend-agnostic commands (`version`, `config`, `context`, `auth`, `plugin`,
+  `task`, `raw`, `api`) are never refused by the provider gate. `datastore job
+  list` requests `sync-direction=all`, so push sync jobs are listed too (PBS
+  defaults to pull); on PBS < 3.3, which has no push sync and rejects the
+  parameter, it retries without it. A PBS ticket login (`pc auth login
+  --provider pbs --user … --otp`) caches and replays the ticket as
+  `PBSAuthCookie`, the same as the runtime client.
+- **Changed (json output)**: a task handle printed for a plain UPID now reports
+  the provider that returned it in `backend` (`pbs` on PBS; `pdm` for a PDM
+  task without a remote, where it used to say `pve`). PDM-proxied
+  `pve:<remote>!UPID:…` handles are unchanged (#19).
+- **Fixed**: key/value and generic list tables printed large integers in
+  exponent notation (`1.4420443136e+10`); they now print plain integers, as
+  column-projected lists already did (table output only; json unchanged) (#19).
+- **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login
+  --user` takes `--otp <code>`, `--otp-ref env:NAME|keyring://…`, or
+  `PVE_CLI_OTP`, and prompts for the code on a terminal when the server answers
+  with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
+  given or on a terminal, `auth login` now verifies the ticket login, so a wrong
+  password or code fails (exit 2) without saving the profile. The TFA-confirmed
+  ticket is cached in the OS keyring (one entry per provider, user and server:
+  `ticket:<provider>:<user>@<server>`) and renewed once it is an hour old (by
+  later commands, and in memory by a long-running one), so commands don't need
+  a code until it lapses (~2h idle); then they prompt on a terminal, use
+  `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.
+  A server error during renewal keeps the still-valid ticket. A cached ticket
+  the server rejects on first use is dropped and the command logs in again once
+  (not for 401s from the auth endpoints themselves, e.g. `pc raw` on
+  `/access/ticket`). `pc config test-auth` reports the cached-ticket state.
+  `auth login` now refuses a non-loopback `http://` server before sending
+  anything, and warns when a recovery key is passed on argv. A rejected ticket
+  login is now an auth error (exit 2) and is not retried; a 5xx during login is
+  retried for read (GET) requests only, like other transient errors. Its
+  message no longer includes server-provided text.
+- **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
+  create <id> --keep N [--label L]` takes a pc-managed snapshot named
+  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`) with the ownership
+  marker `[pc-rotate:<label>]` appended to its description, waits for it, then
+  deletes that label's managed snapshots beyond the newest N, oldest first. The
+  new snapshot counts toward N and is never pruned. `pc vm|ct|guest snapshot
+  rotate <id> --keep N` is the cron-friendly verb (create + prune;
+  `--no-create` prunes only, `--dry-run` changes nothing and never prompts).
+  A snapshot is managed only if it has both the label's exact name pattern and
+  the marker as the last token of its description; snapshots without the
+  marker (hand-made ones, even if named like `pc-auto-…`, snapshots made
+  without `--keep`, other labels) are never touched, and removing the marker
+  unmanages a snapshot. Deletions are planned first and confirm-gated, naming
+  the guest and node, before anything is created (`-y/--yes` for cron; no
+  prompt when nothing is to be deleted). Each deletion is reported on stderr,
+  and `-o json` emits a summary object (`created`, `kept`, `deleted`, `failed`,
+  `not_attempted`). A failed create, including a task ending with `WARNINGS`,
+  prunes nothing; a delete that hits `--wait-timeout` (which does not cancel
+  the PVE task) stops the remaining deletions, also when the final task-status
+  poll fails after the deadline (e.g. exhausted transport retries). Task waits
+  in general now report such a failure as a timeout (the error wraps the
+  context deadline as well as the poll error, so exit codes are unchanged).
+  `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
+  `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
+  …` is now available (type-agnostic, like the other `guest` verbs).
 - **Security**: GitHub Actions in `ci.yml` and `release.yml` (`actions/checkout`,
   `actions/setup-go`, `goreleaser/goreleaser-action`) are pinned to full commit
   SHAs instead of mutable tags, and Dependabot (`github-actions`, weekly) keeps

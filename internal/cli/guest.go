@@ -394,7 +394,7 @@ func guestConfigTable(g domain.Guest, cfg map[string]any) output.Tabular {
 
 // finishTask either waits for a task (with optional spinner) or prints its id.
 func finishTask(ctx context.Context, a *app, p provider.Provider, h protocol.TaskHandle, wait bool, timeoutSecs int, label string) error {
-	if !wait || a.format == "json" || a.format == "yaml" {
+	if !wait || a.machineOutput() {
 		return a.render(taskHandleTable(h))
 	}
 	spinner := isTTY()

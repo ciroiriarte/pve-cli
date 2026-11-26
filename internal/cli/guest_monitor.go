@@ -36,7 +36,7 @@ func mapsTable(rows []map[string]any, preferred ...string) output.Tabular {
 		row := make([]string, len(cols))
 		for i, c := range cols {
 			if v, ok := r[c]; ok && v != nil {
-				row[i] = fmt.Sprintf("%v", v)
+				row[i] = formatCell(v)
 			}
 		}
 		t.Rows = append(t.Rows, row)

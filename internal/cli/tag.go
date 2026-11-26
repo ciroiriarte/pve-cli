@@ -124,26 +124,13 @@ func writeGuestTags(ctx context.Context, a *app, p provider.Provider, g domain.G
 	return rawMutate(ctx, a, p, "PUT", path, params, label, true, 0)
 }
 
-// completeTagNames offers existing cluster tag names for shell completion.
+// completeTagNames offers existing cluster tag names for shell completion,
+// through the bounded, cached live-completion path (completion.go).
 func completeTagNames(a *app) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		p, err := a.Provider()
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		guests, err := p.ListGuests(cmd.Context(), provider.GuestFilter{})
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		seen := map[string]bool{}
 		var out []string
-		for _, g := range guests {
-			for _, t := range splitTags(g.Tags) {
-				if !seen[t] {
-					seen[t] = true
-					out = append(out, t)
-				}
-			}
+		for _, t := range a.completionData(cmd, compTags).items {
+			out = append(out, t.ID)
 		}
 		sort.Strings(out)
 		return out, cobra.ShellCompDirectiveNoFileComp
@@ -201,7 +188,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 		Use: "add <vmid> <tag>...", Short: "Add tags to a guest", Args: cobra.MinimumNArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, tc string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 { // first arg is the vmid, not a tag
-				return nil, cobra.ShellCompDirectiveNoFileComp
+				return completeGuests(a, spec.kind, false)(cmd, args, tc)
 			}
 			return completeTagNames(a)(cmd, args, tc)
 		},
@@ -217,7 +204,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 		Use: "rm <vmid> <tag>...", Aliases: []string{"remove"}, Short: "Remove tags from a guest", Args: cobra.MinimumNArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, tc string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return nil, cobra.ShellCompDirectiveNoFileComp
+				return completeGuests(a, spec.kind, false)(cmd, args, tc)
 			}
 			return completeTagNames(a)(cmd, args, tc)
 		},

@@ -54,6 +54,7 @@ func newGuestTopCmd(a *app) *cobra.Command {
 		newGuestPowerCmd(a, guestKind, "resume", "Resume", false),
 		newGuestTagCmd(a, guestKind),
 		newGuestConsoleCmd(a, guestKind),
+		newGuestSnapshotCmd(a, guestKind),
 	)
 	return cmd
 }

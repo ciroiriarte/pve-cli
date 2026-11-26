@@ -229,3 +229,59 @@ sudo cp -r dist/man/man1/*.1 /usr/local/share/man/man1/
 
 `go install github.com/ciroiriarte/pve-cli/cmd/pc@latest` also works (installs
 `pc` into `$GOBIN`).
+
+## Shell completion
+
+Distribution packages install bash/zsh/fish completions automatically. For a
+static binary or a source build, load them from `pc` itself:
+
+```bash
+# bash (~/.bashrc); needs the bash-completion package
+source <(pc completion bash)
+# zsh (~/.zshrc)
+source <(pc completion zsh)
+# fish
+pc completion fish > ~/.config/fish/completions/pc.fish
+```
+
+Besides commands and flags, completion queries the active backend (the same
+context, `--server`/`--context` flags and `PVE_CLI_*` env vars the command
+would use) for live values:
+
+- guest vmids (shown with their name) and guest names for `vm`/`ct`/`guest`
+  verbs, filtered to the command's kind and narrowed by `--node` and the
+  effective remote (`--remote`, else the context's `remote:` on PDM);
+- online node names for every `--node` and `--target-node` flag (including
+  group-level ones such as `pc vm snapshot … --node`) and `<node>` arguments;
+- guest vmids only (no names) for `--vmid` flags, including comma lists;
+- PDM remote ids for `--remote` and `pc remote … <id>`;
+- storage ids for `--storage` and `<storage>` arguments (PVE);
+- existing tag names for the tag commands.
+
+Arguments it doesn't know about keep the shell's default (file) completion.
+
+It is best-effort and never blocks the shell: everything — reading the
+config, resolving the secret (keyring), the cache and the API call — is bounded
+by 1.5s (`PVE_CLI_COMPLETION_TIMEOUT`, e.g. `3s` on a slow link). An
+unreachable or untrusted server simply yields no suggestions, and completion
+never prompts or prints: an unpinned self-signed cert needs `pc auth login`
+first. A backend with TLS verification disabled (`--insecure`, `tls.verify:
+false` or `PVE_CLI_INSECURE`) and no pinned fingerprint is **never contacted**
+by completion — it couldn't show the insecure-credentials warning, so it
+doesn't send credentials; pin the cert to get live suggestions.
+
+With ticket auth (`auth.type: ticket`), completion never logs in with your
+password and never sends a TOTP code (`PVE_CLI_OTP` is ignored). It only uses
+the ticket that a two-factor login cached in the keyring (renewing it once it
+is over an hour old). Without one, which includes every ticket user without
+TFA (their tickets aren't cached), it offers no live suggestions; use an API
+token for live completion.
+
+Results are cached for 45s in the user cache dir (`$XDG_CACHE_HOME`, default
+`~/.cache`; `~/Library/Caches` on macOS) as
+`pve-cli/completion-<hash>.json`, keyed by provider, server, auth identity and
+TLS pin/CA — never the secret. Only a regular 0600 file owned by you, in a
+0700 directory you own, is read; otherwise the cache is skipped (the directory
+is replaced by a fresh, empty 0700 directory the next time completion writes,
+so nothing written while it was open is ever read). Delete the file to
+refresh sooner.
