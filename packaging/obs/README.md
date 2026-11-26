@@ -64,7 +64,7 @@ zypper addrepo https://download.opensuse.org/repositories/home:/ciriarte:/pve-cl
 zypper refresh && zypper install pve-cli
 
 # Debian 13
-echo 'deb [signed-by=/usr/share/keyrings/pve-cli.gpg] http://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_13/ /' | sudo tee /etc/apt/sources.list.d/pve-cli.list
+echo 'deb [signed-by=/usr/share/keyrings/pve-cli.gpg] https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_13/ /' | sudo tee /etc/apt/sources.list.d/pve-cli.list
 curl -fsSL https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_13/Release.key | gpg --dearmor | sudo tee /usr/share/keyrings/pve-cli.gpg >/dev/null
 sudo apt update && sudo apt install pve-cli
 ```
