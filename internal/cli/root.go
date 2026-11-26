@@ -310,8 +310,15 @@ func NewRootCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := providerGate(c, a.gateProvider()); err != nil {
-				return err
+			// Shell completion (__complete) passes the gate anyway; skip it
+			// before gateProvider reads the config, which could block a <TAB>
+			// (e.g. a FIFO config). Completion does its own bounded read.
+			switch topLevel(c).Name() {
+			case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			default:
+				if err := providerGate(c, a.gateProvider()); err != nil {
+					return err
+				}
 			}
 			// Runs once per invocation for every command, so provider-free
 			// paths (e.g. `config test-auth --offline`) warn too. Same wording
@@ -379,6 +386,8 @@ func NewRootCmd() *cobra.Command {
 
 	// Mark read commands so the table-only global flags only clutter their help.
 	annotateTabularReads(root)
+	// Live-API completion for guest/node/remote/storage args and flags (#23).
+	wireLiveCompletion(a, root)
 
 	// Custom help: (a) hide --column/--sort/--no-headers on non-tabular
 	// subcommands (they stay functional, just off that command's help); and

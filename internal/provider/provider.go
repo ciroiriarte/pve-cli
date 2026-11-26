@@ -108,6 +108,7 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		}
 		t.OTP = s.OTP
 		t.PromptOTP = s.OTPPrompt
+		t.CacheOnly = s.TicketCacheOnly
 		ap = t
 	default:
 		return nil, fmt.Errorf("unsupported auth type %q", s.AuthType)
