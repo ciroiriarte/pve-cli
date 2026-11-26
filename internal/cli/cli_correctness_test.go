@@ -26,13 +26,18 @@ func correctnessServer(t *testing.T, hits map[string]int) *httptest.Server {
 		return `{"data":"UPID:pve-01:0001:0002:6A00:` + typ + `:100:root@pam!t:"}`
 	}
 	record := func(r *http.Request) { hits[r.Method+" "+r.URL.Path]++ }
+	// real PVE agent reply shapes: {"data":{"result":...}}
 	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/agent/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
-		w.Write([]byte(`{"data":null}`))
+		w.Write([]byte(`{"data":{"result":{}}}`))
 	})
 	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/agent/ping", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
-		w.Write([]byte(`{"data":null}`))
+		w.Write([]byte(`{"data":{"result":{}}}`))
+	})
+	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/agent/fstrim", func(w http.ResponseWriter, r *http.Request) {
+		record(r)
+		w.Write([]byte(`{"data":{"result":{"paths":[{"path":"/","trimmed":1048576,"minimum":0},{"path":"/boot","trimmed":0,"minimum":0}]}}}`))
 	})
 	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/move_disk", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
@@ -118,7 +123,11 @@ func TestRawMutateResponseHandling(t *testing.T) {
 		{name: "null is sync success", body: `{"data":null}`},
 		{name: "empty string is sync success", body: `{"data":""}`},
 		{name: "malformed envelope errors", body: `{"data":`, wantErr: "unexpected response"},
+		{name: "empty body errors", body: ``, wantErr: "unexpected response"},
+		{name: "envelope without data errors", body: `{}`, wantErr: "unexpected response"},
+		{name: "message-only envelope errors", body: `{"message":"upstream failure"}`, wantErr: "upstream failure"},
 		{name: "unparsable UPID errors", body: `{"data":"UPID:::::::"}`, wantErr: "malformed task id"},
+		{name: "unparsable PDM-prefixed UPID errors", body: `{"data":"pve:dc-east!UPID:::::::"}`, wantErr: "malformed task id"},
 		{name: "object is rendered", body: `{"data":{"answer":42}}`, wantOut: "answer"},
 		{name: "plain string is rendered", body: `{"data":"ok-123"}`, wantOut: "ok-123"},
 	}
@@ -198,8 +207,8 @@ func TestNodeShowJSONYAMLIsObject(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(out), &obj); err != nil {
 		t.Fatalf("node show yaml is not a mapping: %v\n%s", err, out)
 	}
-	// yaml keys follow the Go field names (no yaml tags on domain.Node).
-	if obj["name"] != "pve-01" || obj["status"] != "online" {
+	// yaml keys match the json keys (`node`, not the Go field name `name`).
+	if obj["node"] != "pve-01" || obj["status"] != "online" || obj["name"] != nil {
 		t.Errorf("node show yaml = %v", obj)
 	}
 }
@@ -267,6 +276,40 @@ func TestDisruptiveCommandsConfirmGate(t *testing.T) {
 				t.Fatalf("expected %s once with --yes, got %d", tc.hit, hits[tc.hit])
 			}
 		})
+	}
+}
+
+// Guest-agent replies are {"result":...}: empty results print nothing, and
+// fstrim's report is unwrapped into a readable table / native json.
+func TestAgentPostUnwrapsResult(t *testing.T) {
+	srv := correctnessServer(t, map[string]int{})
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "vm", "agent", "ping", "100")...)
+	if err != nil {
+		t.Fatalf("agent ping: %v", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("agent ping should print nothing, got:\n%s", out)
+	}
+
+	out, err = runCLI(t, withCreds(srv, "vm", "agent", "fstrim", "100")...)
+	if err != nil {
+		t.Fatalf("agent fstrim: %v", err)
+	}
+	if !strings.Contains(out, "/boot") || !strings.Contains(out, "1.0MiB") || strings.Contains(out, "map[") || strings.Contains(out, "e+06") {
+		t.Errorf("fstrim table not readable:\n%s", out)
+	}
+
+	out, err = runCLI(t, withCreds(srv, "vm", "agent", "fstrim", "100", "-o", "json")...)
+	if err != nil {
+		t.Fatalf("agent fstrim -o json: %v", err)
+	}
+	var obj struct {
+		Paths []map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal([]byte(out), &obj); err != nil || len(obj.Paths) != 2 {
+		t.Errorf("fstrim json should be the unwrapped result object (%v):\n%s", err, out)
 	}
 }
 

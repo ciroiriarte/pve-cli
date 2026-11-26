@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -270,7 +271,7 @@ func newGuestAgentCmd(a *app, spec guestSpec, base guestBaseFn, scope func(*cobr
 						return err
 					}
 				}
-				return rawMutate(cmd.Context(), a, p, "POST", b+"/agent/"+suffix, nil, suffix, true, 0)
+				return agentPost(cmd, a, p, b+"/agent/"+suffix, nil, suffix)
 			},
 		}
 		scope(c)
@@ -335,8 +336,8 @@ func newAgentSetPasswordCmd(a *app, base guestBaseFn, scope func(*cobra.Command)
 			if pw == "" {
 				return fmt.Errorf("a password is required (--password, --password-ref, `--password -`, or an interactive prompt)")
 			}
-			return rawMutate(cmd.Context(), a, p, "POST", b+"/agent/set-user-password",
-				map[string][]string{"username": {user}, "password": {pw}}, "set guest password", true, 0)
+			return agentPost(cmd, a, p, b+"/agent/set-user-password",
+				map[string][]string{"username": {user}, "password": {pw}}, "set guest password")
 		},
 	}
 	scope(cmd)
@@ -345,4 +346,62 @@ func newAgentSetPasswordCmd(a *app, base guestBaseFn, scope func(*cobra.Command)
 	cmd.Flags().StringVar(&passwordRef, "password-ref", "", "resolve the password from env:NAME or keyring://service/key")
 	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
 	return cmd
+}
+
+// agentPost issues a guest-agent POST. PVE wraps agent replies as
+// {"result": ...}: the wrapper is unwrapped, an empty/null result (ping,
+// shutdown, set-user-password) prints nothing, and anything else is rendered —
+// the native value for json/yaml, and fstrim's per-path report as a table.
+func agentPost(cmd *cobra.Command, a *app, p provider.Provider, path string, params url.Values, label string) error {
+	body, err := p.Raw(cmd.Context(), "POST", path, params)
+	if err != nil {
+		return err
+	}
+	data, err := mutationData(body, label)
+	if err != nil {
+		return err
+	}
+	if m, ok := data.(map[string]any); ok {
+		if r, has := m["result"]; has {
+			data = r
+		}
+	}
+	switch v := data.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		if len(v) == 0 {
+			return nil
+		}
+		if paths, ok := v["paths"].([]any); ok && len(v) == 1 {
+			rows := make([]map[string]any, 0, len(paths))
+			for _, e := range paths {
+				row, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				// Human view: byte counts as sizes (json/yaml keep raw numbers).
+				disp := make(map[string]any, len(row))
+				for k, val := range row {
+					if n, isNum := val.(float64); isNum && (k == "trimmed" || k == "minimum") {
+						val = humanBytes(int64(n))
+					}
+					disp[k] = val
+				}
+				rows = append(rows, disp)
+			}
+			t := mapsTable(rows, "path", "trimmed", "minimum")
+			t.Raw = v
+			return a.render(t)
+		}
+	case []any:
+		if len(v) == 0 {
+			return nil
+		}
+	}
+	wrapped, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		return err
+	}
+	return a.renderBody(wrapped)
 }

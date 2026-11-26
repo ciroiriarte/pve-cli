@@ -9,7 +9,8 @@ surface may change between minor releases.
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a
   JSON/YAML **object** instead of a one-element array, matching the documented
   contract for singular reads (#35). Scripts using `jq '.[0]…'` must drop the
-  `.[0]`.
+  `.[0]`. Also, yaml keys for nodes, remotes, guests and storages now match
+  the json keys (e.g. `node`, not `name`), including in `list` output.
 - **Fixed**: `pc <vm> cloudinit --dump` and the `pc storage prune-backups`
   preview sent their query string inside the request path (escaped to `%3F`),
   so they hit a non-existent endpoint; the query is now sent as real query
@@ -18,8 +19,13 @@ surface may change between minor releases.
   the one-time secret `value` (native object for `-o json/yaml`); it was
   silently dropped, leaving an unusable token (#31).
 - **Fixed**: mutations no longer report success on a malformed response. Only
-  `data: null`/empty means synchronous success; an unparsable envelope or task
-  id is an error, and any other payload is rendered instead of discarded (#32).
+  an explicit `data: null`/`""` means synchronous success; an empty body, an
+  envelope without `data`, or an unparsable task id (bare or PDM-prefixed
+  `pve:<remote>!UPID:…`) is an error, and any other payload is rendered
+  instead of discarded (#32). Commands that now print output include
+  `vm/ct agent …` (the agent's `result` is unwrapped; empty results print
+  nothing, `fstrim` shows a per-path table), `subscription key add`, and
+  `access token create`.
 - **Fixed**: `pc vm agent shutdown`, `move-disk --delete`, `ct move-volume
   --delete` and `access acl set --delete` are now confirm-gated (`-y/--yes` to
   skip), with prompts that name the target (#36).

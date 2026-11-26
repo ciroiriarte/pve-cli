@@ -137,9 +137,11 @@ func newTaskLogCmd(a *app) *cobra.Command {
 func parseTaskArg(arg string) (protocol.TaskHandle, error) {
 	if i := strings.Index(arg, "!"); i > 0 && strings.HasPrefix(arg, "pve:") && strings.Contains(arg[i:], "UPID:") {
 		remote := strings.TrimPrefix(arg[:i], "pve:")
+		// The suffix is a plain PVE UPID; reject a malformed one rather than
+		// carrying an unpollable handle forward (#32).
 		h, err := protocol.ParseUPID(arg[i+1:])
 		if err != nil {
-			h = protocol.TaskHandle{UPID: arg[i+1:]}
+			return protocol.TaskHandle{}, err
 		}
 		h.Backend, h.Remote, h.UPID = "pdm", remote, arg
 		return h, nil
