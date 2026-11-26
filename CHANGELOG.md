@@ -7,9 +7,10 @@ surface may change between minor releases.
 ## [Unreleased]
 
 - **Docs**: `packaging/obs/README.md` records why the `go 1.22.0` floor and the
-  `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which
-  of the package-level x/net advisories govulncheck reports each Go floor fixes, the OBS steps to raise the floor, and
-  the re-check rule (#46).
+  `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which Go
+  floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,
+  19 module-level, none reaching `pc`), the OBS steps to raise the floor, and the
+  re-check rule (#46).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 

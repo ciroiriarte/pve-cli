@@ -96,25 +96,28 @@ The highest floor every target can reach with those paths added is **Go 1.26**
 `go` directive required by x/net: v0.35 needs 1.18, v0.36-v0.43 need 1.23,
 v0.44-v0.50 need 1.24, v0.51-v0.58 need 1.25, v0.59-v0.63 need 1.26.
 
-Scope: this table lists the advisories `govulncheck` v1.10.0 reports at package
-level (the x/net packages `pc` imports) for this module as of 2026-11. None is
-reachable from `pc`.
+Scope: x/net advisories govulncheck reports for this module (CI toolchain: `go run
+golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...` on Go 1.26.11, 2026-11). Result:
+0 affecting `pc`, 1 package-level (imported, not called) and 19 module-level
+(required only), of which 18 are x/net (the other is x/sys GO-2026-5024).
+Only GO-2025-3503 is package-level; the rest are module-level. Classification
+depends on the Go toolchain used for the scan.
 
-| Advisory | Fixed in | Needs Go |
-|---|---|---|
-| GO-2025-3503 (`x/net/proxy`) | v0.36.0 | 1.23 |
-| GO-2026-5942 (`x/net/dns/dnsmessage`) | v0.56.0 | 1.25 |
-| GO-2026-5026 (`x/net/idna`) | v0.57.0 | 1.25 |
-| GO-2026-6603, 6610, 6611, 6612, 6617 | v0.60.0 | 1.26 |
+| Advisory | Level | Fixed in | Needs Go |
+|---|---|---|---|
+| GO-2025-3503 (`x/net/proxy`) | package | v0.36.0 | 1.23 |
+| GO-2025-3595 | module | v0.38.0 | 1.23 |
+| GO-2026-4440, GO-2026-4441 | module | v0.45.0 | 1.24 |
+| GO-2026-4918 | module | v0.53.0 | 1.25 |
+| GO-2026-5025, 5027, 5028, 5029, 5030 | module | v0.55.0 | 1.25 |
+| GO-2026-5942 | module | v0.56.0 | 1.25 |
+| GO-2026-5026 | module | v0.57.0 | 1.25 |
+| GO-2026-6603, 6610, 6611, 6612, 6617 | module | v0.60.0 | 1.26 |
+| GO-2026-6860, GO-2026-6866 | module | v0.62.0 | 1.26 |
 
-govulncheck also reports 16 module-level x/net-and-other advisories (modules
-required but no imported package affected), so a higher floor fixes more of
-them: 1.23 (up to v0.43) includes GO-2025-3595 (v0.38); 1.24 (up to v0.50) adds
-GO-2026-4440 and GO-2026-4441 (v0.45); 1.25 (up to v0.58) adds GO-2026-4918
-(v0.53) and GO-2026-5025, 5027, 5028, 5029, 5030 (v0.55); 1.26 adds
-GO-2026-6860 and GO-2026-6866 (v0.62). Fix versions were checked against
-https://vuln.go.dev. A higher floor fixes some advisories, not all: only 1.26
-clears everything listed here.
+Fix versions and Go floors were checked against https://vuln.go.dev and the x/net
+`go.mod` files. A higher floor fixes some advisories, not all: 1.23 reaches
+v0.43, 1.24 reaches v0.50, 1.25 reaches v0.58, and only 1.26 clears every row.
 
 ### Path to raising the floor (maintainer decision; edits the OBS project)
 
