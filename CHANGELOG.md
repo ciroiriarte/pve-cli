@@ -11,6 +11,10 @@ surface may change between minor releases.
   floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,
   19 module-level, none reaching `pc`), the OBS steps to raise the floor, and the
   re-check rule (#46).
+- **Security**: GitHub Actions in `ci.yml` and `release.yml` (`actions/checkout`,
+  `actions/setup-go`, `goreleaser/goreleaser-action`) are pinned to full commit
+  SHAs instead of mutable tags, and Dependabot (`github-actions`, weekly) keeps
+  the pins current (#45).
 
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
