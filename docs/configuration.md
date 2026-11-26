@@ -90,6 +90,38 @@ auth: { type: ticket, user: "root@pam", secret_ref: "keyring://pve-cli/home" }
 The password is the profile "secret" (keyring/env/inline, as below). Provide it
 non-interactively with `PVE_CLI_PASSWORD` (or `--password` at login).
 
+#### Two-factor authentication (TOTP)
+
+For a user with TFA enabled, `/access/ticket` first answers with a TFA
+challenge; `pc` completes it with a second `/access/ticket` call carrying the
+code. Give the code at login with `--otp <code>`, `--otp-ref env:NAME`, or
+`PVE_CLI_OTP`; on a terminal it is prompted when the server asks for it. A
+recovery key works as `--otp recovery:<key>`:
+
+```bash
+pc auth login https://pve1.example:8006 --user ops@pve --otp 123456
+```
+
+When a code is given (or stdin is a terminal), `auth login` performs the login
+against the server: a wrong password or a rejected code fails with exit code 2
+and saves nothing. A server that can't be reached only warns. Without a code
+and without a terminal, login stays offline, as for non-TFA users.
+
+The password alone can't produce a ticket for a TFA user, so the TFA-confirmed
+ticket is cached in the OS keyring (entry `ticket:<user>@<server>` under the
+`pve-cli` service) and reused by later commands. A ticket older than 1 h is
+renewed by passing it as the password, which keeps the TFA state and does not
+ask for a code. Proxmox tickets expire after 2 h, so after ~2 h without any
+command the next one needs a new code: it prompts on a terminal, takes
+`PVE_CLI_OTP` if set, and otherwise fails (exit 2) with a hint to re-run
+`pc auth login --otp`. Without an OS keyring, nothing is cached and every
+command needs `PVE_CLI_OTP` or a terminal prompt. `pc config test-auth` shows
+the cached-ticket state on its `tfa:` line.
+
+This is the PVE 7.2+/8/9 flow (`tfa-challenge` + `password=totp:<code>`). PDM
+uses the same challenge shape (a `PDM:!tfa!…` ticket in the body), and `pc`
+answers it the same way; it has been verified live against PVE only.
+
 > **Note:** the auth *type* is selected only by a profile's `auth.type`
 > (default `token`) — there is no `PVE_CLI_AUTH_TYPE` env var. So ticket auth
 > needs a profile with `type: ticket`; `PVE_CLI_USER`/`PVE_CLI_PASSWORD` then
@@ -136,6 +168,7 @@ token/fingerprint.
 | `PVE_CLI_SERVER` | API base URL |
 | `PVE_CLI_TOKEN_ID` / `PVE_CLI_TOKEN_SECRET` | token auth |
 | `PVE_CLI_USER` / `PVE_CLI_PASSWORD` | ticket-auth credentials (type set via profile `auth.type: ticket`) |
+| `PVE_CLI_OTP` | two-factor (TOTP) code for ticket auth, used when the server asks for one |
 | `PVE_CLI_TLS_FINGERPRINT` | pinned SHA-256 fingerprint |
 | `PVE_CLI_INSECURE` | disable TLS verification (`true`/`false`) |
 | `PVE_CLI_OUTPUT` | default output format |

@@ -6,6 +6,19 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: two-factor (TOTP) support for ticket auth (#18). `pc auth login
+  --user` takes `--otp <code>`, `--otp-ref env:NAME|keyring://…`, or
+  `PVE_CLI_OTP`, and prompts for the code on a terminal when the server answers
+  with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
+  given or on a terminal, `auth login` now verifies the ticket login, so a wrong
+  password or code fails (exit 2) without saving the profile. The TFA-confirmed
+  ticket is cached in the OS keyring and renewed while in use, so later commands
+  don't need a code until it lapses (~2h idle); then they prompt on a terminal,
+  use `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run
+  `pc auth login --otp`. `pc config test-auth` reports the cached-ticket state.
+  A failed ticket login is now an auth error (exit 2) and is no longer retried
+  as a transport error.
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a

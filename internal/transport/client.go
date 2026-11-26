@@ -168,6 +168,13 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 
 		body, status, transErr := c.attempt(ctx, req)
 		if transErr != nil {
+			// A decoded auth failure (e.g. a rejected ticket login or a TFA
+			// code that is required but missing) is deterministic: retrying
+			// would re-send the password, or re-prompt for a code, for nothing.
+			var ae *protocol.APIError
+			if errors.As(transErr, &ae) {
+				return nil, ae
+			}
 			lastErr = &protocol.APIError{Kind: protocol.KindTransport, Message: transErr.Error()}
 			if errors.Is(transErr, ErrRedirectRefused) {
 				return nil, lastErr // deterministic: retrying hits the same redirect
