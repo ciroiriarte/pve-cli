@@ -14,7 +14,10 @@ surface may change between minor releases.
   location (a `PVE_CLI_CONFIG` override leaves its user-managed directory
   alone). Writes go through a `0600` temp file + fsync + atomic rename onto the
   symlink-resolved target, so a symlinked config stays a symlink and a crash
-  can't leave a truncated file.
+  can't leave a truncated file; a dangling config symlink is now an error
+  rather than being replaced. Because the file is replaced, the config
+  directory must be writable, and hardlinks, owner, ACLs and xattrs of the old
+  file are not preserved (e.g. `sudo pc config set` on a user's config).
 - **Security**: credentials no longer have to be passed in plaintext on argv
   (#39). `pc auth login` takes `--token-secret-ref`/`--password-ref`
   (`env:NAME|keyring://service/key`) and accepts `-` for stdin on

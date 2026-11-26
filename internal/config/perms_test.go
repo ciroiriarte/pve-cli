@@ -4,9 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
-
-	"github.com/ciroiriarte/pve-cli/internal/testenv"
 )
 
 // APP-02: the config directory holds the credential file, so Save must create
@@ -78,7 +77,7 @@ func TestWriteTightensPreexistingPerms(t *testing.T) {
 		"SetValue": func(p string) error { return SetValue(p, "current_context", "x") },
 	} {
 		t.Run(name, func(t *testing.T) {
-			testenv.ClearPVEEnv(t)
+			t.Setenv("PVE_CLI_CONFIG", "") // no override: the default managed location
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			path := DefaultPath()
 			dir := filepath.Dir(path)
@@ -96,7 +95,6 @@ func TestWriteTightensPreexistingPerms(t *testing.T) {
 // a dotfiles repo that happens to be named pve-cli): only the file is tightened.
 func TestWriteOverrideLeavesDirMode(t *testing.T) {
 	skipOnWindows(t)
-	testenv.ClearPVEEnv(t)
 	for name, dir := range map[string]string{
 		"named pve-cli": filepath.Join(t.TempDir(), "dotfiles", "pve-cli"),
 		"foreign":       t.TempDir(),
@@ -118,7 +116,6 @@ func TestWriteOverrideLeavesDirMode(t *testing.T) {
 // on its target, which ends up 0600 even if it was 0644.
 func TestWriteKeepsSymlinkedConfig(t *testing.T) {
 	skipOnWindows(t)
-	testenv.ClearPVEEnv(t)
 	root := t.TempDir()
 	realDir := filepath.Join(root, "dotfiles")
 	target := filepath.Join(realDir, "pc.yaml")
@@ -154,5 +151,36 @@ func TestWriteKeepsSymlinkedConfig(t *testing.T) {
 	entries, _ := os.ReadDir(realDir)
 	if len(entries) != 1 {
 		t.Errorf("expected only the config in %s, got %d entries", realDir, len(entries))
+	}
+}
+
+// A dangling config symlink must fail clearly: the link is neither replaced by
+// a regular file nor followed to create its (missing) target.
+func TestWriteRejectsDanglingSymlink(t *testing.T) {
+	skipOnWindows(t)
+	dir := filepath.Join(t.TempDir(), "pve-cli")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink("../missing/pc.yaml", link); err != nil { // relative target
+		t.Fatal(err)
+	}
+	t.Setenv("PVE_CLI_CONFIG", link)
+
+	err := Save(link, &File{CurrentContext: "x"})
+	if err == nil || !strings.Contains(err.Error(), "is a symlink to") ||
+		!strings.Contains(err.Error(), filepath.Join(dir, "..", "missing", "pc.yaml")) {
+		t.Fatalf("expected a dangling-symlink error naming the target, got %v", err)
+	}
+	li, lerr := os.Lstat(link)
+	if lerr != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("link was replaced or removed: %v %v", li, lerr)
+	}
+	if dest, _ := os.Readlink(link); dest != "../missing/pc.yaml" {
+		t.Errorf("link target changed to %q", dest)
+	}
+	if _, serr := os.Stat(filepath.Join(filepath.Dir(dir), "missing")); !os.IsNotExist(serr) {
+		t.Errorf("the missing target directory was created: %v", serr)
 	}
 }

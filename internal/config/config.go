@@ -125,7 +125,12 @@ func Save(path string, f *File) error {
 //   - the file is written to a 0600 temp file in the same directory, fsynced,
 //     and renamed over the symlink-resolved target. That keeps a symlinked
 //     config a symlink, replaces a 0644 inode (cutting off readers holding an
-//     fd on the old one), and is crash-atomic.
+//     fd on the old one), and is crash-atomic. A dangling symlink is an error.
+//
+// Because the file is replaced (not rewritten in place), the config directory
+// must be writable, and the new file does not keep the old one's hardlinks,
+// owner, ACLs or xattrs — e.g. `sudo pc config set` on a user's config leaves
+// it root-owned.
 func writeConfigFile(path string, b []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -143,6 +148,14 @@ func writeConfigFile(path string, b []byte) error {
 		target = resolved
 	} else if !os.IsNotExist(err) {
 		return err
+	} else if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+		// A dangling symlink: neither replace the link with a regular file
+		// nor follow it to create a file somewhere unexpected.
+		dest, _ := os.Readlink(path)
+		if dest != "" && !filepath.IsAbs(dest) {
+			dest = filepath.Join(dir, dest)
+		}
+		return fmt.Errorf("config path %s is a symlink to %s, which does not exist; create the target or remove the link", path, dest)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")

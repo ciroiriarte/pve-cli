@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ciroiriarte/pve-cli/internal/testenv"
 	"github.com/zalando/go-keyring"
 )
 
@@ -27,7 +26,6 @@ func baseFile() *File {
 }
 
 func TestResolveFromProfile(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	s, err := Resolve(baseFile(), Overrides{})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +42,6 @@ func TestResolveFromProfile(t *testing.T) {
 }
 
 func TestEnvOverridesProfile(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	t.Setenv("PVE_CLI_SERVER", "https://env-host:8006")
 	t.Setenv("PVE_CLI_TOKEN_SECRET", "envsecret")
 	s, err := Resolve(baseFile(), Overrides{})
@@ -60,7 +57,6 @@ func TestEnvOverridesProfile(t *testing.T) {
 }
 
 func TestFlagOverridesEnv(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	t.Setenv("PVE_CLI_SERVER", "https://env-host:8006")
 	s, err := Resolve(baseFile(), Overrides{Server: "https://flag-host:8006"})
 	if err != nil {
@@ -72,14 +68,12 @@ func TestFlagOverridesEnv(t *testing.T) {
 }
 
 func TestUnknownProfileErrors(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	if _, err := Resolve(baseFile(), Overrides{Profile: "nope"}); err == nil {
 		t.Fatal("expected error for unknown profile")
 	}
 }
 
 func TestValidateRequiresServerAndCreds(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	if err := (&Settings{AuthType: "token", TokenID: "x", Secret: "y"}).Validate(); err == nil {
 		t.Error("expected error without server")
 	}
@@ -104,7 +98,6 @@ func keyringRefFile() *File {
 // #34: a locked/unavailable keyring must not block a valid env or flag secret —
 // the profile reference is only dereferenced when nothing higher is set.
 func TestUnavailableKeyringDoesNotBlockOverrides(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	keyring.MockInitWithError(errors.New("keyring locked"))
 	t.Cleanup(keyring.MockInit)
 
@@ -148,7 +141,6 @@ func TestUnavailableKeyringDoesNotBlockOverrides(t *testing.T) {
 
 // #34: SecretSource names the source that actually won, not the profile's.
 func TestSecretSourceReportsWinner(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	keyring.MockInit()
 	t.Setenv("PC_TEST_SECRET", "x")
 	cases := []struct {
@@ -187,7 +179,6 @@ func TestSecretSourceReportsWinner(t *testing.T) {
 }
 
 func TestSecretRefOverrideEmptyErrors(t *testing.T) {
-	testenv.ClearPVEEnv(t)
 	t.Setenv("PC_TEST_EMPTY", "")
 	if _, err := Resolve(baseFile(), Overrides{SecretRef: "env:PC_TEST_EMPTY"}); err == nil {
 		t.Fatal("expected error for a ref that resolves to an empty secret")

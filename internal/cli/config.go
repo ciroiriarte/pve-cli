@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -389,6 +391,11 @@ func loginSecret(value, ref, flag, label string) (string, error) {
 	s, err := resolveSecretInput(value, ref, flag, label)
 	if err == nil && s == "" && value == "" && ref == "" && !isInputTTY() {
 		s, err = promptSecret(label)
+	}
+	if errors.Is(err, io.EOF) {
+		// Empty stdin (promptSecret only reports EOF when no data was read):
+		// fall through to the clearer "empty credential" error.
+		s, err = "", nil
 	}
 	if err != nil {
 		return "", err

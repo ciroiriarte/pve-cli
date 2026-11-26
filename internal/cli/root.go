@@ -186,6 +186,10 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Validate global flags early so bad input fails before any network I/O.
+		// NOTE: cobra runs only the nearest PersistentPreRun(E) (hooks aren't
+		// chained by default), so a subcommand defining its own would shadow
+		// this one — silently dropping the --format check and the plaintext
+		// --token-secret warning. Call this hook from it, or don't define one.
 		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 			if a.format != "" {
 				if _, err := output.ParseFormat(a.format); err != nil {
