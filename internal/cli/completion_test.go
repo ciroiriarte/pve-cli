@@ -150,7 +150,7 @@ func TestCompleteSlowServerTimesOutEmpty(t *testing.T) {
 	defer srv.Close()
 	start := time.Now()
 	got := complete(t, withCreds(srv, "vm", "start", "")...)
-	if el := time.Since(start); el > 2*time.Second {
+	if el := time.Since(start); el > completionSlack(t) {
 		t.Errorf("completion took %v against a slow server; want ~timeout", el)
 	}
 	if len(got) != 0 {
@@ -189,7 +189,7 @@ func TestCompleteUnreachableServerEmpty(t *testing.T) {
 	for _, server := range []string{"https://" + closedAddr, "https://" + black.Addr().String()} {
 		start := time.Now()
 		got := complete(t, "--server", server, "--token-id", "u@pam!c", "--token-secret", "s", "vm", "start", "")
-		if el := time.Since(start); el > 2*time.Second {
+		if el := time.Since(start); el > completionSlack(t) {
 			t.Errorf("%s: completion took %v", server, el)
 		}
 		if len(got) != 0 {

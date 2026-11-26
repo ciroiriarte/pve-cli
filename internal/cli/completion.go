@@ -107,10 +107,13 @@ func completionCachePath(s *config.Settings) string {
 }
 
 // readCompCache loads the cache file, ignoring anything we don't trust: a
-// symlink, a non-regular file, or one not owned by us with mode 0600.
+// directory that isn't ours with mode 0700 (in a shared writable dir another
+// user could rename one of our valid files over another key), a symlink, a
+// non-regular file, or one not owned by us with mode 0600. Reading never
+// changes permissions.
 func readCompCache(path string) map[string]compCacheEntry {
 	m := map[string]compCacheEntry{}
-	if path == "" {
+	if path == "" || !cacheDirSafe(filepath.Dir(path)) {
 		return m
 	}
 	li, err := os.Lstat(path)
@@ -184,16 +187,13 @@ func (a *app) completionData(cmd *cobra.Command, set string) compResult {
 		}
 		ch <- r
 	}()
-	// Network calls honor ctx; the timer also covers work that doesn't (a
-	// FIFO config, a keyring stuck on D-Bus). The small grace lets a
-	// ctx-bounded fetch report first. A stuck worker is abandoned; the
-	// completion process exits right after.
-	timer := time.NewTimer(timeout + 250*time.Millisecond)
-	defer timer.Stop()
+	// Return on the deadline even if the worker is stuck in something that
+	// ignores ctx (a FIFO config, a keyring stuck on D-Bus); the abandoned
+	// worker dies with the completion process, which exits right after.
 	select {
 	case r := <-ch:
 		return r
-	case <-timer.C:
+	case <-ctx.Done():
 		return compResult{}
 	}
 }
@@ -314,10 +314,12 @@ func flagValue(cmd *cobra.Command, name string) string {
 	return ""
 }
 
-// completeGuests suggests vmids (described by name) and names (described by
-// vmid) of the given kind ("" = both), narrowed by --node and by the
+// completeGuests suggests vmids (described by name) and, unless idsOnly, names
+// (described by vmid) of the given kind ("" = both), narrowed by --node and by the
 // effective remote (--remote > context `remote:`, as in resolveGuest) on PDM.
-func completeGuests(a *app, kind domain.GuestKind) completer {
+// Positional guest args take names (resolveGuest resolves them); --vmid flags
+// take numeric ids only, so they use idsOnly.
+func completeGuests(a *app, kind domain.GuestKind, idsOnly bool) completer {
 	return func(cmd *cobra.Command, _ []string, tc string) ([]string, cobra.ShellCompDirective) {
 		// Comma-list flags (e.g. `tag add --vmid 100,10<TAB>`): complete the
 		// last element and keep what precedes it.
@@ -341,7 +343,7 @@ func completeGuests(a *app, kind domain.GuestKind) completer {
 			if strings.HasPrefix(g.ID, tc) {
 				ids = append(ids, g)
 			}
-			if g.Name != "" && strings.HasPrefix(g.Name, tc) {
+			if !idsOnly && g.Name != "" && strings.HasPrefix(g.Name, tc) {
 				if _, err := strconv.Atoi(g.Name); err != nil {
 					if prev, dup := names[g.Name]; dup {
 						names[g.Name] = prev + "," + g.ID
@@ -457,7 +459,7 @@ func argCompleter(a *app, c *cobra.Command, arg string) completer {
 		if c.Name() == "create" && guestKindFor(c) != "" && c.Parent().Parent() == c.Root() {
 			return nil
 		}
-		return completeGuests(a, guestKindFor(c))
+		return completeGuests(a, guestKindFor(c), false)
 	case "node":
 		if inRemote { // a node of the named remote, not of the backend
 			return nil
@@ -502,7 +504,7 @@ func wireLiveCompletion(a *app, c *cobra.Command) {
 		"node":        completeNodes(a),
 		"target-node": completeNodes(a),
 		"remote":      completeIDs(a, compRemotes),
-		"vmid":        completeGuests(a, guestKindFor(c)),
+		"vmid":        completeGuests(a, guestKindFor(c), true),
 		"storage":     completeIDs(a, compStorages),
 	}
 	if topLevel(c) == "remote" {

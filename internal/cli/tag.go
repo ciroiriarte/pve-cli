@@ -188,7 +188,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 		Use: "add <vmid> <tag>...", Short: "Add tags to a guest", Args: cobra.MinimumNArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, tc string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 { // first arg is the vmid, not a tag
-				return completeGuests(a, spec.kind)(cmd, args, tc)
+				return completeGuests(a, spec.kind, false)(cmd, args, tc)
 			}
 			return completeTagNames(a)(cmd, args, tc)
 		},
@@ -204,7 +204,7 @@ func newGuestTagCmd(a *app, spec guestSpec) *cobra.Command {
 		Use: "rm <vmid> <tag>...", Aliases: []string{"remove"}, Short: "Remove tags from a guest", Args: cobra.MinimumNArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, tc string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return completeGuests(a, spec.kind)(cmd, args, tc)
+				return completeGuests(a, spec.kind, false)(cmd, args, tc)
 			}
 			return completeTagNames(a)(cmd, args, tc)
 		},

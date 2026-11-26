@@ -18,8 +18,15 @@ func cacheFileTrusted(fi os.FileInfo) bool {
 	return fi.Mode().IsRegular() && fi.Mode().Perm() == 0o600 && ownedByMe(fi)
 }
 
+// cacheDirSafe reports whether dir is a real directory (not a symlink) owned
+// by the current user with mode 0700. Read-side check; never modifies.
+func cacheDirSafe(dir string) bool {
+	fi, err := os.Lstat(dir)
+	return err == nil && fi.IsDir() && ownedByMe(fi) && fi.Mode().Perm() == 0o700
+}
+
 // cacheDirUsable reports whether dir is a real directory (not a symlink) owned
-// by the current user, tightening it to 0700 if needed.
+// by the current user, tightening it to 0700 if needed. Write-side only.
 func cacheDirUsable(dir string) bool {
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() || !ownedByMe(fi) {

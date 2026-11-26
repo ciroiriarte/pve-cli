@@ -253,6 +253,7 @@ would use) for live values:
   effective remote (`--remote`, else the context's `remote:` on PDM);
 - online node names for every `--node` and `--target-node` flag (including
   group-level ones such as `pc vm snapshot … --node`) and `<node>` arguments;
+- guest vmids only (no names) for `--vmid` flags, including comma lists;
 - PDM remote ids for `--remote` and `pc remote … <id>`;
 - storage ids for `--storage` and `<storage>` arguments (PVE);
 - existing tag names for the tag commands.
@@ -273,5 +274,6 @@ Results are cached for 45s in the user cache dir (`$XDG_CACHE_HOME`, default
 `~/.cache`; `~/Library/Caches` on macOS) as
 `pve-cli/completion-<hash>.json`, keyed by provider, server, auth identity and
 TLS pin/CA — never the secret. Only a regular 0600 file owned by you, in a
-0700 directory you own, is trusted; anything else is ignored. Delete the file
+0700 directory you own, is read; otherwise the cache is skipped (the directory
+is tightened to 0700 only when completion next writes to it). Delete the file
 to refresh sooner.

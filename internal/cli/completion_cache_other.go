@@ -9,6 +9,8 @@ import "os"
 // non-regular files.
 func cacheFileTrusted(fi os.FileInfo) bool { return fi.Mode().IsRegular() }
 
+func cacheDirSafe(dir string) bool { return cacheDirUsable(dir) }
+
 func cacheDirUsable(dir string) bool {
 	fi, err := os.Lstat(dir)
 	return err == nil && fi.IsDir()

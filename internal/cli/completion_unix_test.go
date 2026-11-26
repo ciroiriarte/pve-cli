@@ -27,7 +27,7 @@ func TestCompleteFIFOConfigWithinBudget(t *testing.T) {
 	})
 	start := time.Now()
 	got := complete(t, "vm", "start", "")
-	if el := time.Since(start); el > 2*time.Second {
+	if el := time.Since(start); el > completionSlack(t) {
 		t.Errorf("FIFO config: completion took %v; want ~timeout", el)
 	}
 	if len(got) != 0 {

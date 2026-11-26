@@ -131,7 +131,7 @@ func TestCompleteBlockedSecretWithinBudget(t *testing.T) {
 	start := time.Now()
 	got := complete(t, "--server", "https://127.0.0.1:1", "--token-id", "u@pam!c",
 		"--token-secret-ref", "keyring://svc/key", "vm", "start", "")
-	if el := time.Since(start); el > 2*time.Second {
+	if el := time.Since(start); el > completionSlack(t) {
 		t.Errorf("blocked secret lookup took %v; want ~timeout", el)
 	}
 	if len(got) != 0 {
