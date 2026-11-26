@@ -1,7 +1,8 @@
 # pve-cli
 
 A remote-first, [OpenStack-Client](https://docs.openstack.org/python-openstackclient/latest/)-inspired
-command-line client for **Proxmox VE** and **Proxmox Datacenter Manager (PDM)**.
+command-line client for **Proxmox VE**, **Proxmox Datacenter Manager (PDM)** and
+**Proxmox Backup Server (PBS)**.
 The installed command is **`pc`**.
 
 `pc` talks to the Proxmox REST API over HTTPS, so **nothing needs to be installed
@@ -24,8 +25,9 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
   [cookbook](docs/cookbook.md).
 - **Full API coverage** via schema-driven [`pc raw`](#full-api-coverage-pc-raw)
   and the `pc api` escape hatch — every endpoint is reachable.
-- **Two backends, one CLI** — a single PVE cluster, or a PDM fleet (`--provider pdm`)
-  with cross-remote listing. See [docs/providers.md](docs/providers.md).
+- **Three backends, one CLI** — a single PVE cluster, a PDM fleet (`--provider pdm`)
+  with cross-remote listing, or a Backup Server (`--provider pbs`: datastores,
+  snapshots, GC, prune, verify, jobs). See [docs/providers.md](docs/providers.md).
 - **Async-aware** — long-running operations surface their task (`--wait` /
   `--no-wait`, `pc task wait|log --follow`).
 - **Auth**: API tokens or ticket (user+password); secrets in the OS keyring.
@@ -35,9 +37,11 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
 
 ## Status
 
-Active development (`v0.10.x`, SemVer). **Both backends are live-verified**:
-direct PVE against PVE 9.1/9.2 (token *and* ticket auth), and the PDM backend
-against a live PDM 1.x fleet. Curated coverage is broad — daily-driver PVE
+Active development (`v0.x`, SemVer). **All three backends are
+live-verified**: direct PVE against PVE 9.1/9.2 (token *and* ticket auth), the
+PDM backend against a live PDM 1.x fleet, and the PBS backend against a PBS 4.2
+server (token and ticket auth, fingerprint pinning, every `pc datastore` read,
+GC, verify and a dry-run prune). Curated coverage is broad — daily-driver PVE
 (lifecycle + disks, cloud-init, guest agent, snapshots, migrate, console,
 storage, pools, HA, firewall, SDN, Ceph, access) and the PDM control plane
 (remotes, cross-cluster monitoring, Ceph/SDN/PBS/subscription/server domains);
@@ -119,6 +123,7 @@ pc ceph    health osd pool service config                  # PVE mgmt; reads aut
 pc access  user token role acl realm group                 # users, tokens, ACLs, realms
 pc task    list show wait log [--follow]
 pc remote  list show add update delete | cluster status | node status·network·storage | updates [list] …  # PDM
+pc datastore list show status | namespace·group·snapshot list | gc status·start | prune | verify start | job list  # PBS
 pc raw <segments...> | pc api <METHOD> <path> [-d k=v]     # full coverage / escape hatch
 pc config | context | auth | plugin | completion | version
 # PDM control-plane (provider: pdm): pc ceph | sdn | pbs | subscription | server | resources | auto-install
@@ -175,11 +180,13 @@ built-in**. Token and ticket auth are supported; secrets live in the OS keyring.
 Full details, the config-file schema, all environment variables, and PDM setup
 are in **[docs/configuration.md](docs/configuration.md)**.
 
-## Proxmox VE vs PDM
+## Proxmox VE vs PDM vs PBS
 
-The same grammar targets a single cluster (`provider: pve`) or a PDM fleet
-(`provider: pdm` / `--provider pdm`). Capabilities differ per backend (e.g.
-`pc remote` is PDM-only); the matrix is in **[docs/providers.md](docs/providers.md)**.
+The same grammar targets a single cluster (`provider: pve`), a PDM fleet
+(`provider: pdm` / `--provider pdm`) or a Proxmox Backup Server (`provider: pbs`,
+default port 8007). Capabilities differ per backend (e.g. `pc remote` is
+PDM-only, `pc datastore` is PBS-only); the matrix is in
+**[docs/providers.md](docs/providers.md)**.
 
 ## Rosetta Stone
 
@@ -199,7 +206,7 @@ any token/user — see [docs/configuration.md](docs/configuration.md).)
 - [docs/cookbook.md](docs/cookbook.md) — day-to-day recipes (lifecycle, snapshots, agent, firewall, SDN, Ceph, PDM, reports)
 - [docs/install.md](docs/install.md) — per-distribution package install commands
 - [docs/configuration.md](docs/configuration.md) — auth, profiles, contexts, env vars, TLS
-- [docs/providers.md](docs/providers.md) — PVE vs PDM capability matrix
+- [docs/providers.md](docs/providers.md) — PVE / PDM / PBS capability matrix
 - [docs/coverage.md](docs/coverage.md) — curated-vs-raw endpoint coverage per provider
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, project layout, releases, the v1.0.0 gate
 - [CHANGELOG.md](CHANGELOG.md) — release history

@@ -85,6 +85,11 @@ func handleMutationResponse(ctx context.Context, a *app, p provider.Provider, bo
 		return a.renderBody(body)
 	}
 	h.Display = label
+	// A plain UPID belongs to the backend that returned it (a PDM-proxied
+	// "pve:<remote>!UPID:…" handle already carries backend pdm + remote).
+	if h.Remote == "" {
+		h.Backend = p.Name()
+	}
 	return finishTask(ctx, a, p, h, wait, timeout, label)
 }
 
@@ -384,17 +389,118 @@ func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 		return resolveGuestBase(cmd, a, spec, idArg, node, remote)
 	}
 
+	var keep, timeout int
+	var label, description string
+	var vmstate bool
 	create := &cobra.Command{
-		Use: "create <vmid> <name>", Short: "Create a snapshot", Args: cobra.ExactArgs(2),
+		Use:   "create <vmid> [name]",
+		Short: "Create a snapshot (optionally rotating old ones with --keep)",
+		Long: "Create a snapshot. A name is required unless --keep is given.\n\n" +
+			"With --keep N the snapshot is pc-managed: the name defaults to\n" +
+			"pc-<label>-YYYYMMDD-HHMMSS (UTC; an explicit name must follow that\n" +
+			"pattern) and the ownership marker [pc-rotate:<label>] is appended to its\n" +
+			"description. The label's managed snapshots beyond the newest N (the new\n" +
+			"one counts and is never pruned) are deleted, oldest first, after the\n" +
+			"create succeeds. Managed means BOTH the exact name pattern and the marker\n" +
+			"at the end of the description: snapshots without the marker are never\n" +
+			"touched (hand-made ones, other labels, snapshots made without --keep),\n" +
+			"even if their name looks managed.\n\n" +
+			"Deleting prompts for confirmation (before anything is created); pass\n" +
+			"-y/--yes for cron. Preview with `snapshot rotate --dry-run`.",
+		Example: fmt.Sprintf("  pc %[1]s snapshot create 100 pre-upgrade --description 'before 9.2'\n"+
+			"  pc %[1]s snapshot create 100 --keep 7 --yes\n"+
+			"  pc %[1]s snapshot create 100 --keep 24 --label hourly --yes -o json", spec.noun),
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rotating := cmd.Flags().Changed("keep")
+			name := ""
+			if len(args) == 2 {
+				name = args[1]
+			}
+			if !rotating {
+				if cmd.Flags().Changed("label") {
+					return fmt.Errorf("--label only applies with --keep")
+				}
+				if name == "" {
+					return fmt.Errorf("a snapshot name is required (or pass --keep N to generate a managed one)")
+				}
+			}
+			p, g, b, err := base(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			if rotating {
+				return rotateGuestSnapshots(cmd.Context(), a, p, g, b, rotateOpts{
+					label: label, keep: keep, create: true, name: name,
+					vmstate: vmstate, description: description, timeout: timeout,
+				})
+			}
+			params := url.Values{"snapname": {name}}
+			if description != "" {
+				params.Set("description", description)
+			}
+			if vmstate {
+				if g.Kind != domain.KindVM {
+					return fmt.Errorf("--vmstate is only supported for VMs (%d is a container)", g.VMID)
+				}
+				params.Set("vmstate", "1")
+			}
+			return rawMutate(cmd.Context(), a, p, "POST", b+"/snapshot", params,
+				fmt.Sprintf("snapshot %s %d", spec.label, g.VMID), true, timeout)
+		},
+	}
+	create.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait for each snapshot task (0 = no limit)")
+	create.Flags().IntVar(&keep, "keep", 0, "keep only the newest N pc-managed snapshots of --label (deletes older ones)")
+	create.Flags().StringVar(&label, "label", defaultSnapLabel, "rotation label; managed names are pc-<label>-YYYYMMDD-HHMMSS")
+	create.Flags().StringVar(&description, "description", "", "snapshot description")
+	create.Flags().BoolVar(&vmstate, "vmstate", false, "include VM RAM state (VMs only)")
+
+	var rKeep, rTimeout int
+	var rLabel, rDescription string
+	var rVMState, rNoCreate, rDryRun bool
+	rotate := &cobra.Command{
+		Use:   "rotate <vmid> --keep N",
+		Short: "Create a managed snapshot and prune the oldest beyond N (cron-friendly)",
+		Long: "Take a pc-managed snapshot named pc-<label>-YYYYMMDD-HHMMSS (UTC), wait for\n" +
+			"it, then delete the label's managed snapshots beyond the newest N, oldest\n" +
+			"first. The new snapshot counts toward N and is never pruned. --no-create\n" +
+			"only prunes. A failed create prunes nothing.\n\n" +
+			"A snapshot is managed only if it has BOTH the label's exact name pattern\n" +
+			"and the [pc-rotate:<label>] marker at the end of its description (pc\n" +
+			"appends it on create). Snapshots without the marker are never touched,\n" +
+			"whatever their name; removing the marker unmanages a snapshot.\n\n" +
+			"The deletions are planned first and confirmed before anything is created\n" +
+			"(pass -y/--yes for cron); with nothing to delete there is no prompt. Each\n" +
+			"deletion is reported on stderr and listed in the json/yaml summary.\n" +
+			"--dry-run never prompts, creates or deletes; it reports the plan.\n" +
+			"A task that ends with WARNINGS counts as failed, like elsewhere in pc,\n" +
+			"so the run stops before pruning. --wait-timeout does not cancel a PVE\n" +
+			"task: if a delete times out, its task keeps running (holding the guest\n" +
+			"lock), so the remaining deletions are skipped and reported as\n" +
+			"not_attempted.",
+		Example: fmt.Sprintf("  pc %[1]s snapshot rotate 100 --keep 7 --label daily --yes\n"+
+			"  pc %[1]s snapshot rotate 100 --keep 24 --label hourly --dry-run\n"+
+			"  pc %[1]s snapshot rotate 100 --keep 0 --label hourly --no-create --yes   # drop all hourly", spec.noun),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, g, b, err := base(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			return rawMutate(cmd.Context(), a, p, "POST", b+"/snapshot", url.Values{"snapname": {args[1]}},
-				fmt.Sprintf("snapshot %s %d", spec.label, g.VMID), true, 0)
+			return rotateGuestSnapshots(cmd.Context(), a, p, g, b, rotateOpts{
+				label: rLabel, keep: rKeep, create: !rNoCreate, dryRun: rDryRun,
+				vmstate: rVMState, description: rDescription, timeout: rTimeout,
+			})
 		},
 	}
+	rotate.Flags().IntVar(&rTimeout, "wait-timeout", 0, "seconds to wait for each snapshot task (0 = no limit)")
+	rotate.Flags().IntVar(&rKeep, "keep", 0, "number of newest managed snapshots of --label to keep (required)")
+	_ = rotate.MarkFlagRequired("keep")
+	rotate.Flags().StringVar(&rLabel, "label", defaultSnapLabel, "rotation label; managed names are pc-<label>-YYYYMMDD-HHMMSS")
+	rotate.Flags().StringVar(&rDescription, "description", "", "description for the new snapshot")
+	rotate.Flags().BoolVar(&rVMState, "vmstate", false, "include VM RAM state (VMs only)")
+	rotate.Flags().BoolVar(&rNoCreate, "no-create", false, "only prune; do not take a new snapshot")
+	rotate.Flags().BoolVar(&rDryRun, "dry-run", false, "preview only; create and delete nothing")
 	list := &cobra.Command{
 		Use: "list <vmid>", Short: "List snapshots", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -456,6 +562,6 @@ func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(&node, "node", "", "node hosting the guest")
 	cmd.PersistentFlags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
-	cmd.AddCommand(create, list, del, rollback)
+	cmd.AddCommand(create, list, del, rollback, rotate)
 	return cmd
 }

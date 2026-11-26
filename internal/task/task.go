@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -47,6 +48,13 @@ func Wait(ctx context.Context, poll PollFunc, h protocol.TaskHandle, opt WaitOpt
 		st, err := poll(ctx, h)
 		if err != nil {
 			clearSpinner(opt)
+			// A poll that failed because the wait expired (or was cancelled)
+			// may not wrap the context error itself (the transport flattens
+			// errors into APIError). Wrap it so callers can detect the
+			// timeout; the original error stays in the chain for exit codes.
+			if cerr := ctx.Err(); cerr != nil && !errors.Is(err, cerr) {
+				err = fmt.Errorf("%w: %w", cerr, err)
+			}
 			return protocol.TaskStatus{}, err
 		}
 		if st.Done() {

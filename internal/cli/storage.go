@@ -69,7 +69,7 @@ func rawObjectKV(ctx context.Context, p provider.Provider, path string) (output.
 	sort.Strings(keys)
 	t := output.Tabular{Columns: []string{"key", "value"}, Raw: obj}
 	for _, k := range keys {
-		t.Rows = append(t.Rows, []string{k, fmt.Sprintf("%v", obj[k])})
+		t.Rows = append(t.Rows, []string{k, formatCell(obj[k])})
 	}
 	return t, nil
 }
