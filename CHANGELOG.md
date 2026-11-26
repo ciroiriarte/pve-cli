@@ -29,7 +29,7 @@ surface may change between minor releases.
   disks on a storage without content `images`, containers with active local
   bind/device mount points or a volume on a storage without content `rootdir`,
   guests with no allowed destination or not enough capacity, guests listed
-  as stopped whose live power state can't be confirmed, locked guests and
+  as stopped whose live power state (from the source node's guest lists) can't be confirmed, locked guests and
   templates. `--dry-run`
   prints the plan, which `-o json` emits as an array of objects (`vmid`,
   `name`, `kind`, `status`, `from`, `to`, `mode`, `maxmem`, `skip`, `reason`;

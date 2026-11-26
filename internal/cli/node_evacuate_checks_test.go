@@ -346,49 +346,99 @@ func TestNodeEvacuateDefaultFilterUsesLiveState(t *testing.T) {
 	}
 }
 
-// Default mode: a guest listed stopped leaves the plan only when confirmed
-// stopped; unconfirmed ones stay as skips (exit 6).
+// Default mode: liveness comes from the node's guest lists. A guest listed
+// stopped leaves the plan only when the live list confirms it stopped; if a
+// list call fails, stopped-listed guests of that kind stay as skips (exit 6).
 func TestNodeEvacuateDefaultUnknownLivenessStays(t *testing.T) {
-	f := newEvacFixture([]map[string]any{
-		// 200: VM precondition 403 and status/current 403 → unknown, kept.
-		{"type": "qemu", "vmid": 200, "name": "vm-403", "node": "pve-01", "status": "stopped", "maxmem": gib},
-		// 201: VM precondition 403 but status/current says stopped → dropped.
-		{"type": "qemu", "vmid": 201, "name": "vm-off", "node": "pve-01", "status": "stopped", "maxmem": gib},
-		// 202: CT precondition 403, status/current 403 → unknown, kept.
-		ctGuest(202, "stopped"),
-		// 203: locked CT (bypasses the precondition), actually running → kept, skipped as locked.
-		{"type": "lxc", "vmid": 203, "name": "locked", "node": "pve-01", "status": "stopped", "maxmem": gib, "lock": "backup"},
-		// 204: HA VM listed stopped, status/current fails → kept, skipped.
-		{"type": "qemu", "vmid": 204, "name": "ha", "node": "pve-01", "status": "stopped", "maxmem": gib, "hastate": "started"},
-		// 205: older PVE without the LXC endpoint, actually running → planned restart.
-		ctGuest(205, "stopped"),
-		// 206: template: never checked, never in the default plan.
-		{"type": "qemu", "vmid": 206, "name": "tpl", "node": "pve-01", "status": "stopped", "maxmem": gib, "template": 1},
-	})
-	f.pre[200], f.pre[201], f.pre[202], f.pre[205] = "403", "403", "403", "501"
-	f.statusErr[200], f.statusErr[202], f.statusErr[204], f.statusErr[206] = true, true, true, true
-	f.liveRunning[203], f.liveRunning[205] = 1, 1
-	srv := f.start()
-	defer srv.Close()
+	guests := func() []map[string]any {
+		return []map[string]any{
+			// 200: VM listed stopped, live running, precondition 403 → kept as a skip.
+			{"type": "qemu", "vmid": 200, "name": "vm-403", "node": "pve-01", "status": "stopped", "maxmem": gib},
+			// 201: VM really stopped (precondition would 403) → dropped, never queried.
+			{"type": "qemu", "vmid": 201, "name": "vm-off", "node": "pve-01", "status": "stopped", "maxmem": gib},
+			// 202: CT listed stopped.
+			ctGuest(202, "stopped"),
+			// 203: locked CT listed stopped, live running.
+			{"type": "lxc", "vmid": 203, "name": "locked", "node": "pve-01", "status": "stopped", "maxmem": gib, "lock": "backup"},
+			// 204: HA VM listed stopped, live running → kept, skipped as HA.
+			{"type": "qemu", "vmid": 204, "name": "ha", "node": "pve-01", "status": "stopped", "maxmem": gib, "hastate": "started"},
+			// 205: CT on PVE without the LXC precondition, listed stopped, live running.
+			ctGuest(205, "stopped"),
+			// 206: template: never in the default plan.
+			{"type": "qemu", "vmid": 206, "name": "tpl", "node": "pve-01", "status": "stopped", "maxmem": gib, "template": 1},
+			// 207: CT listed running.
+			ctGuest(207, "running"),
+		}
+	}
+	setup := func(f *evacFixture) {
+		f.pre[200], f.pre[201], f.pre[202], f.pre[205] = "403", "403", "403", "501"
+		f.liveRunning[200], f.liveRunning[203], f.liveRunning[204], f.liveRunning[205] = 1, 1, 1, 1
+	}
 
-	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
-	if err == nil || ExitCodeFor(err) != ExitValidation {
-		t.Fatalf("unconfirmed guests must exit %d, got %v", ExitValidation, err)
-	}
-	plan := evacPlan(t, out)
-	for id, w := range map[int]string{200: "power state unknown", 202: "power state unknown", 203: "locked (backup)", 204: "HA-managed"} {
-		if it := plan[id]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
-			t.Errorf("vmid %d: want a skip with %q, got %v", id, w, it)
+	t.Run("lists ok", func(t *testing.T) {
+		f := newEvacFixture(guests())
+		setup(f)
+		srv := f.start()
+		defer srv.Close()
+		out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+		if err == nil || ExitCodeFor(err) != ExitValidation {
+			t.Fatalf("want exit %d, got %v", ExitValidation, err)
 		}
-	}
-	if plan[205] == nil || plan[205]["mode"] != "restart" || plan[205]["skip"] != false {
-		t.Errorf("205 is running (confirmed via status/current) and must be planned: %v", plan[205])
-	}
-	for _, id := range []int{201, 206} {
-		if _, ok := plan[id]; ok {
-			t.Errorf("vmid %d is confirmed stopped and must leave the default plan: %v", id, plan[id])
+		plan := evacPlan(t, out)
+		for id, w := range map[int]string{200: "precondition check failed", 203: "locked (backup)", 204: "HA-managed"} {
+			if it := plan[id]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
+				t.Errorf("vmid %d: want a skip with %q, got %v", id, w, it)
+			}
 		}
-	}
+		if plan[205] == nil || plan[205]["mode"] != "restart" || plan[205]["skip"] != false {
+			t.Errorf("205 is live running and must be planned: %v", plan[205])
+		}
+		for _, id := range []int{201, 202, 206} {
+			if _, ok := plan[id]; ok {
+				t.Errorf("vmid %d is confirmed stopped and must leave the default plan: %v", id, plan[id])
+			}
+		}
+	})
+
+	t.Run("lxc list fails", func(t *testing.T) {
+		f := newEvacFixture(guests())
+		setup(f)
+		f.listErr["lxc"] = true
+		srv := f.start()
+		defer srv.Close()
+		out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+		if err == nil || ExitCodeFor(err) != ExitValidation {
+			t.Fatalf("unconfirmed guests must exit %d, got %v", ExitValidation, err)
+		}
+		plan := evacPlan(t, out)
+		for id, w := range map[int]string{202: "power state unknown", 205: "power state unknown", 203: "locked (backup)"} {
+			if it := plan[id]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
+				t.Errorf("vmid %d: want a skip with %q, got %v", id, w, it)
+			}
+		}
+		if plan[207] == nil || plan[207]["skip"] != false {
+			t.Errorf("a CT listed running is still planned: %v", plan[207])
+		}
+		if _, ok := plan[201]; ok {
+			t.Errorf("the qemu list worked, so 201 stays out: %v", plan[201])
+		}
+	})
+
+	t.Run("qemu list fails", func(t *testing.T) {
+		f := newEvacFixture(guests())
+		setup(f)
+		f.listErr["qemu"] = true
+		srv := f.start()
+		defer srv.Close()
+		out, _ := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+		plan := evacPlan(t, out)
+		if it := plan[201]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), "power state unknown") {
+			t.Errorf("201's liveness is unknown: %v", it)
+		}
+		if _, ok := plan[206]; ok {
+			t.Errorf("a template can't be running and stays out: %v", plan[206])
+		}
+	})
 }
 
 // Both halt paths print a "not attempted" line: at admission (--parallel 1)

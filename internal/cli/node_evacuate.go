@@ -51,7 +51,6 @@ type evacItem struct {
 	localDisks bool              // live migration with attached local disks: send with-local-disks=1
 	allowed    []string          // allowed destinations (nil = unrestricted)
 	blocked    map[string]string // excluded node → why
-	liveKnown  bool              // power state confirmed live (precondition or status/current)
 	expected   bool              // an expected skip (templates) that doesn't fail the run
 }
 
@@ -276,10 +275,44 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 				return ""
 			}(),
 			expected: r.Template == 1,
-			// A template can't run: its stopped state needs no live check.
-			liveKnown: r.Template == 1,
 		})
 	}
+
+	// Live power state from the source node itself (GET /nodes/<src>/qemu
+	// and /lxc report vmstatus, the same as status/current), since
+	// /cluster/resources can lag by several seconds. It decides the
+	// running-only filter, before any per-guest precondition, so stopped
+	// guests cost nothing in default mode. Fail closed: if a list call
+	// fails, a guest of that kind that /cluster/resources shows as stopped
+	// stays as a reported skip in default mode, since it may be running.
+	live := map[domain.GuestKind]map[int]string{}
+	liveErr := map[domain.GuestKind]error{}
+	for _, k := range []domain.GuestKind{domain.KindVM, domain.KindCT} {
+		live[k], liveErr[k] = listLiveStatus(ctx, p, src, k)
+	}
+	kept := items[:0]
+	for _, it := range items {
+		if err := liveErr[it.Kind]; err != nil {
+			switch {
+			case o.all || it.Status == "running":
+			case it.expected:
+				continue // a stopped template can't be running
+			case !it.Skip:
+				it.Skip, it.Reason = true, "power state unknown (listing "+kindEndpoint(it.Kind)+" guests on "+src+" failed: "+err.Error()+")"
+			}
+			kept = append(kept, it)
+			continue
+		}
+		st, ok := live[it.Kind][it.VMID]
+		if !ok {
+			continue // no longer on src (moved or deleted since the inventory)
+		}
+		it.Status = st
+		if o.all || st == "running" {
+			kept = append(kept, it)
+		}
+	}
+	items = kept
 	if len(items) == 0 {
 		return items, nil
 	}
@@ -362,26 +395,6 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 		}
 	}
 
-	// Running-only filter (default), applied after the preconditions have
-	// refreshed each guest's live state. Only a guest confirmed stopped
-	// leaves the plan: one listed stopped whose liveness wasn't confirmed by
-	// a precondition (HA/lock/no-target skips, a failed precondition, older
-	// PVE without the LXC endpoint) is checked via status/current, and if
-	// that fails too it stays as a skip, so it is reported and the run
-	// exits non-zero instead of silently leaving a running guest behind.
-	if !o.all {
-		kept := items[:0]
-		for _, it := range items {
-			if it.Status != "running" && !it.liveKnown {
-				confirmLiveness(ctx, p, it)
-			}
-			if it.Status == "running" || !it.liveKnown {
-				kept = append(kept, it)
-			}
-		}
-		items = kept
-	}
-
 	// Greedy placement: running guests first (they need the capacity now),
 	// largest first, each onto the eligible node with the most headroom.
 	order := make([]*evacItem, 0, len(items))
@@ -452,6 +465,11 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 			if it.localDisks {
 				it.Reason = "with local disks"
 			}
+		}
+	}
+	for _, it := range items {
+		if it.Skip {
+			it.Mode = "" // no migration, no mode: same in default and --all
 		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].VMID < items[j].VMID })
@@ -714,30 +732,25 @@ func endpointMissing(err error) bool {
 	return errors.As(err, &apiErr) && (apiErr.StatusCode == 404 || apiErr.StatusCode == 501)
 }
 
-// confirmLiveness reads a guest's power state from status/current when no
-// precondition confirmed it. On success the state is applied (a running guest
-// keeps any earlier skip reason); on failure the guest is marked skipped with
-// the error, leaving liveKnown false.
-func confirmLiveness(ctx context.Context, p provider.Provider, it *evacItem) {
-	body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/%s/%d/status/current", it.From, kindEndpoint(it.Kind), it.VMID), nil)
-	var st struct {
+// listLiveStatus returns vmid → live status ("running", "stopped", ...) for
+// the guests of one kind on node, from GET /nodes/<node>/<kind>.
+func listLiveStatus(ctx context.Context, p provider.Provider, node string, k domain.GuestKind) (map[int]string, error) {
+	body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/%s", node, kindEndpoint(k)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var list []struct {
+		VMID   int    `json:"vmid"`
 		Status string `json:"status"`
 	}
-	if err == nil {
-		err = protocol.DecodeData(body, &st)
+	if err := protocol.DecodeData(body, &list); err != nil {
+		return nil, err
 	}
-	if err == nil && st.Status == "" {
-		err = fmt.Errorf("no status in response")
+	out := make(map[int]string, len(list))
+	for _, g := range list {
+		out[g.VMID] = g.Status
 	}
-	if err != nil {
-		reason := "power state unknown (listed stopped; status check failed: " + err.Error() + ")"
-		if it.Skip && it.Reason != "" {
-			reason = it.Reason + "; " + reason
-		}
-		it.Skip, it.Reason = true, reason
-		return
-	}
-	it.applyRunning(st.Status == "running")
+	return out, nil
 }
 
 // applyRunning updates the guest's power state and migration mode from a
@@ -748,7 +761,6 @@ func (it *evacItem) applyRunning(v any) {
 	if v == nil {
 		return
 	}
-	it.liveKnown = true
 	running := truthy(v)
 	if running == (it.Status == "running") {
 		return

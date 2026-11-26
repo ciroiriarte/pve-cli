@@ -31,7 +31,7 @@ type evacFixture struct {
 	// pending-applied view). Unset = same as ctConf.
 	ctConfCurrent map[int]string
 	liveRunning   map[int]int      // vmid → live running flag override (stale /cluster/resources)
-	statusErr     map[int]bool     // vmid → status/current fails (403)
+	listErr       map[string]bool  // "qemu"/"lxc" → the node guest list call fails (403)
 	fail          map[int]bool     // vmid → migration task ends with an error
 	nodes         []map[string]any // override nodes (nil = default 3-node cluster)
 	mu            sync.Mutex
@@ -52,7 +52,7 @@ func defaultEvacGuests() []map[string]any {
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
 	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
-		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, statusErr: map[int]bool{},
+		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, listErr: map[string]bool{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
@@ -108,18 +108,25 @@ func (f *evacFixture) start() *httptest.Server {
 			w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 			return
 		}
-		// {qemu|lxc}/<vmid>/status/current
-		if len(parts) == 4 && parts[2] == "status" && parts[3] == "current" {
-			vmid, _ := strconv.Atoi(parts[1])
-			if f.statusErr[vmid] {
+		// {qemu|lxc}: the node's live guest list
+		if len(parts) == 1 && (parts[0] == "qemu" || parts[0] == "lxc") {
+			if f.listErr[parts[0]] {
 				http.Error(w, "Permission check failed", http.StatusForbidden)
 				return
 			}
-			st := "stopped"
-			if f.running(vmid) == 1 {
-				st = "running"
+			var out []map[string]any
+			for _, g := range f.guests {
+				if g["type"] != parts[0] || g["node"] != "pve-01" {
+					continue
+				}
+				vmid := g["vmid"].(int)
+				st := "stopped"
+				if f.running(vmid) == 1 {
+					st = "running"
+				}
+				out = append(out, map[string]any{"vmid": vmid, "status": st})
 			}
-			fmt.Fprintf(w, `{"data":{"status":%q}}`, st)
+			json.NewEncoder(w).Encode(map[string]any{"data": out})
 			return
 		}
 		// lxc/<vmid>/config
