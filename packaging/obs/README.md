@@ -27,7 +27,7 @@ and install the binary, `pc*.1` man pages, and bash/zsh/fish completions.
 | openSUSE Tumbleweed | `openSUSE_Tumbleweed` | `openSUSE:Factory` | `.rpm` |
 
 All build for x86_64 + aarch64 (Slowroll x86_64 only). The build needs Go
-≥ 1.26 (`go.mod` declares `go 1.26.0`), so three repos layer an extra path in
+≥ 1.26 (`go.mod` declares `go 1.26.0`), so four repos layer an extra path in
 front of the base distro (see [Go floor](#go-floor-go-1260)):
 
 | Repository | Extra path(s) | Go used |
@@ -63,9 +63,9 @@ every enabled repository.
 zypper addrepo https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/openSUSE_Leap_15.6/home:ciriarte:pve-cli.repo
 zypper refresh && zypper install pve-cli
 
-# Debian 12
-echo 'deb http://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_12/ /' | sudo tee /etc/apt/sources.list.d/pve-cli.list
-curl -fsSL https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_12/Release.key | gpg --dearmor | sudo tee /usr/share/keyrings/pve-cli.gpg >/dev/null
+# Debian 13
+echo 'deb http://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_13/ /' | sudo tee /etc/apt/sources.list.d/pve-cli.list
+curl -fsSL https://download.opensuse.org/repositories/home:/ciriarte:/pve-cli/Debian_13/Release.key | gpg --dearmor | sudo tee /usr/share/keyrings/pve-cli.gpg >/dev/null
 sudo apt update && sudo apt install pve-cli
 ```
 
@@ -113,7 +113,8 @@ Without the extra paths above, Debian 13 resolves golang-go 1.24.4, Ubuntu
 | Debian 13 | `Debian:13/backports` `golang-1.26-go` | 1.27 (`golang-1.27-go`) |
 | Ubuntu 24.04 | `Ubuntu:24.04/universe-update` `golang-1.26-go` 1.26.8 | 1.26 |
 | Leap 15.6 | `devel:languages:go/SLE_15_SP6` | 1.27 |
-| Leap 16.0, Tumbleweed, Slowroll, Rocky 9/10 | base / existing paths | 1.27 |
+| Leap 16.0 | `devel:languages:go/16.0` | 1.27 |
+| Tumbleweed, Slowroll, Rocky 9/10 | base paths | 1.27 |
 
 Ubuntu 24.04 caps the floor at **1.26**. Raising it to 1.27 needs a
 `golang-1.27-go` there first.
