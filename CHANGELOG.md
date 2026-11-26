@@ -6,6 +6,30 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: `pc cluster check` — one health verdict for a PVE cluster or
+  standalone node: quorum and offline nodes (standalone is ok), storage usage
+  (`--storage-warn`/`--storage-crit`, default 80/90%; disabled storages ignored,
+  shared storage counted once, unavailable storage warns), tasks that ended
+  with a failure within `--since` (default 24h, every online node's task list,
+  paged), HA resources in error/fence/freeze/recovery plus a dead HA
+  manager/LRM, Ceph health (skipped only when no online node has Ceph), and
+  per-node CPU/memory pressure. Each check is ok/warn/crit/skip/error: crit is
+  an observed problem, warn is degraded or partially observed (gaps such as
+  missing `Sys.Audit` or a truncated task list are `incomplete: …` warn
+  items), error means the check could not grade anything. A failed API read
+  degrades only its own check, except a connection failure after the API has
+  answered: every later API read is then skipped without a request, so checks
+  that still need one error, while checks grade whatever data they already
+  have. `-o json` emits `{"status", "checks": [{"name",
+  "status", "detail", "items"}]}`. New exit codes for monitoring: `7` warn or
+  any errored check, `8` crit; `--fail-on crit` ignores warnings but never an
+  errored check. A rejected token (at any point), an API unreachable before
+  it first answers (any HTTP response counts), or every check failing prints
+  no report and exits with the underlying error's usual code (2 auth, 3
+  not found, 4 unreachable, …). `--check`/`--skip` select
+  checks. Needs `Sys.Audit` and
+  `Datastore.Audit` (e.g. PVEAuditor). PVE-only; refused on PDM with the
+  provider named (#22).
 - **Added**: Proxmox Backup Server as a third backend, `provider: pbs` (#19).
   Token auth (`PBSAPIToken=<id>:<secret>`), ticket auth (`PBSAuthCookie` +
   CSRF), TOFU fingerprint pinning, `pc auth login --provider pbs` and

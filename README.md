@@ -170,7 +170,8 @@ pc vm list --status running -c vmid -o value | xargs -n1 pc vm stop --yes
 ```
 
 Exit codes: `0` ok · `1` generic · `2` auth/config · `3` not found ·
-`4` API/server · `5` task failed · `6` validation.
+`4` API/server · `5` task failed · `6` validation · `7` health warn / `8`
+health crit (`pc cluster check` only).
 
 ## Configuration & auth
 

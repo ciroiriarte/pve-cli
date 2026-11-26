@@ -16,12 +16,19 @@ const (
 	ExitAPIServer  = 4
 	ExitTaskFailed = 5
 	ExitValidation = 6
+	// `pc cluster check` verdicts (the report itself is on stdout).
+	ExitCheckWarn = 7
+	ExitCheckCrit = 8
 )
 
 // ExitCodeFor maps an error to its process exit code.
 func ExitCodeFor(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	var chk *checkExit
+	if errors.As(err, &chk) {
+		return chk.code
 	}
 	var cfgErr *config.Error
 	if errors.As(err, &cfgErr) {
