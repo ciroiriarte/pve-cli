@@ -6,6 +6,31 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
+  create <id> --keep N [--label L]` takes a pc-managed snapshot named
+  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`) with the ownership
+  marker `[pc-rotate:<label>]` appended to its description, waits for it, then
+  deletes that label's managed snapshots beyond the newest N, oldest first. The
+  new snapshot counts toward N and is never pruned. `pc vm|ct|guest snapshot
+  rotate <id> --keep N` is the cron-friendly verb (create + prune;
+  `--no-create` prunes only, `--dry-run` changes nothing and never prompts).
+  A snapshot is managed only if it has both the label's exact name pattern and
+  the marker as the last token of its description; snapshots without the
+  marker (hand-made ones, even if named like `pc-auto-…`, snapshots made
+  without `--keep`, other labels) are never touched, and removing the marker
+  unmanages a snapshot. Deletions are planned first and confirm-gated, naming
+  the guest and node, before anything is created (`-y/--yes` for cron; no
+  prompt when nothing is to be deleted). Each deletion is reported on stderr,
+  and `-o json` emits a summary object (`created`, `kept`, `deleted`, `failed`,
+  `not_attempted`). A failed create, including a task ending with `WARNINGS`,
+  prunes nothing; a delete that hits `--wait-timeout` (which does not cancel
+  the PVE task) stops the remaining deletions, also when the final task-status
+  poll fails after the deadline (e.g. exhausted transport retries). Task waits
+  in general now report such a failure as a timeout (the error wraps the
+  context deadline as well as the poll error, so exit codes are unchanged).
+  `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
+  `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
+  …` is now available (type-agnostic, like the other `guest` verbs).
 - **Docs**: `packaging/obs/README.md` records why the `go 1.22.0` floor and the
   `golang.org/x/net` v0.35.0 pin are kept: per-target Go availability, which Go
   floor fixes which x/net advisories (govulncheck v1.10.0 on Go 1.26.11: 1 package-level,
