@@ -6,6 +6,20 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: token auth against Proxmox Datacenter Manager now sends
+  `Authorization: PDMAPIToken=<tokenid>:<secret>` (colon separator) instead of
+  the PVE `PVEAPIToken=<tokenid>=<secret>` form; PVE is unchanged (#30).
+- **Security**: TLS hardening (#38):
+  - A configured `--tls-fingerprint` pin now always wins over `--insecure`;
+    previously insecure silently ignored the pin. A profile with `insecure`
+    plus a stale fingerprint used to work and now fails with a pin mismatch;
+    fix or remove the stale fingerprint.
+  - `--insecure=false` now overrides a profile/env `insecure: true`.
+  - Sending credentials with verification disabled (insecure, no pin) prints a
+    one-line warning to stderr, once per process.
+  - The API and ticket-login clients refuse HTTP redirects, so an https→http
+    redirect can't leak the token in clear and a 307/308 can't replay the
+    login password to another target.
 - **Security**: build CI and release binaries with Go **1.26.11** (was 1.26.6),
   which fixes standard-library advisory GO-2026-6859 (`net/http`) flagged by
   the `govulncheck` CI gate.
