@@ -6,6 +6,8 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-26 — PBS provider, TOTP, node evacuate & cluster check
+
 - **Changed**: building pve-cli now requires **Go 1.26** (`go.mod` declares
   `go 1.26.0`, up from 1.22). OBS packages build with Go 1.26 or later on every
   target: Debian 13 and Ubuntu 24.04 use `golang-1.26-go` (from

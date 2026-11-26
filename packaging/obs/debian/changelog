@@ -1,3 +1,9 @@
+pve-cli (0.16.0-1) unstable; urgency=medium
+
+  * PBS provider, TOTP, node evacuate & cluster check
+
+ -- Ciro Iriarte <ciro.iriarte+software@gmail.com>  Thu, 26 Nov 2026 00:00:00 +0000
+
 pve-cli (0.15.0-1) unstable; urgency=medium
 
   * PDM token auth, json contract & hardening
