@@ -60,6 +60,15 @@ contexts:
   corp: { profile: corp-pdm, remote: dc-west }
 ```
 
+Single-guest commands then target `dc-west` without `--remote` (an explicit
+`--remote` still wins). Lists (`guest list`, `node list`) stay cross-remote.
+On `provider: pve` the context `remote:` is ignored.
+
+If a remote's inventory can't be fetched, lists still show the healthy remotes
+and print a warning on stderr, but a single-guest command without a remote
+scope refuses (exit 4) — the vmid might also live on the unreachable remote.
+Pass `--remote` (or pin one in the context) to target a healthy remote.
+
 Curated per-remote operations (use `--remote` when a vmid exists on more than
 one remote):
 

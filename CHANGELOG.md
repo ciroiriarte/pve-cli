@@ -6,6 +6,18 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: PDM wrong-remote guard hardening (#37):
+  - Single-guest resolution no longer trusts an incomplete inventory. If any
+    remote's `/resources/list` entry reports an error, an unscoped lookup (by
+    vmid or name) is refused (exit 4) naming the failed remotes and pointing at
+    `--remote`, since the vmid might also live on the unreachable remote. A
+    `--remote`-scoped lookup only fails if that remote errored.
+  - `guest list` / `node list` keep working but warn about failed remotes on
+    stderr instead of silently dropping them.
+  - The context's `remote:` is now honored as the default for single-guest
+    commands (`--remote` > context `remote:` > none); it was documented but
+    ignored. It is ignored on `provider: pve`, and lists are not filtered by it.
+
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
 - **Security**: fixes from a static security assessment (govulncheck + gosec +

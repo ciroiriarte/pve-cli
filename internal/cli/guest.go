@@ -193,10 +193,18 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 
 // resolveGuest finds a guest by vmid, honoring an explicit --node override and
 // an optional --remote (PDM) to disambiguate a vmid present on several remotes.
+// Without --remote, the context's pinned remote (PDM only) applies: precedence
+// is --remote > context `remote:` > none. PVE has no default remote, so a
+// context `remote:` is ignored there.
 func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idArg, node string, remoteOpt ...string) (domain.Guest, error) {
 	remote := ""
 	if len(remoteOpt) > 0 {
 		remote = remoteOpt[0]
+	}
+	if remote == "" {
+		if d, ok := p.(interface{ DefaultRemote() string }); ok {
+			remote = d.DefaultRemote()
+		}
 	}
 	vmid, err := strconv.Atoi(idArg)
 	if err != nil {
@@ -257,7 +265,17 @@ func enforceKind(spec guestSpec, g domain.Guest) error {
 // points back at the vmid. The kind (vm/ct), --node, and --remote (PDM) scope
 // the search.
 func resolveGuestByName(ctx context.Context, p provider.Provider, spec guestSpec, name, node, remote string) (domain.Guest, error) {
-	guests, err := p.ListGuests(ctx, provider.GuestFilter{Kind: spec.kind, Node: node})
+	f := provider.GuestFilter{Kind: spec.kind, Node: node}
+	var guests []domain.Guest
+	var err error
+	// PDM fails closed when a remote's inventory is unavailable (#37).
+	if gr, ok := p.(interface {
+		GuestsForResolve(context.Context, provider.GuestFilter, string) ([]domain.Guest, error)
+	}); ok {
+		guests, err = gr.GuestsForResolve(ctx, f, remote)
+	} else {
+		guests, err = p.ListGuests(ctx, f)
+	}
 	if err != nil {
 		return domain.Guest{}, err
 	}

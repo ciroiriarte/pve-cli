@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -28,7 +29,17 @@ func init() {
 // PDM is the Datacenter Manager provider.
 type PDM struct {
 	cl *transport.Client
+	// defaultRemote is the context's pinned remote (config `remote:`), applied
+	// by single-guest resolution when --remote isn't given.
+	defaultRemote string
 }
+
+// SetDefaultRemote pins the remote used by single-guest resolution when no
+// --remote flag is given (the context's `remote:`).
+func (p *PDM) SetDefaultRemote(r string) { p.defaultRemote = r }
+
+// DefaultRemote returns the pinned remote ("" = none).
+func (p *PDM) DefaultRemote() string { return p.defaultRemote }
 
 func (p *PDM) Name() string                        { return "pdm" }
 func (p *PDM) Capabilities() provider.Capabilities { return provider.Capabilities{Remotes: true} }
@@ -111,12 +122,44 @@ func (p *PDM) resources(ctx context.Context) ([]resourceEntry, error) {
 	return entries, err
 }
 
+// failedRemote is a remote whose /resources/list entry carried an error, so its
+// inventory is missing from the listing.
+type failedRemote struct{ remote, err string }
+
+func failedRemotes(entries []resourceEntry) []failedRemote {
+	var out []failedRemote
+	for _, e := range entries {
+		if e.Error != "" {
+			out = append(out, failedRemote{e.Remote, e.Error})
+		}
+	}
+	return out
+}
+
+func joinFailed(fs []failedRemote) string {
+	parts := make([]string, 0, len(fs))
+	for _, f := range fs {
+		parts = append(parts, fmt.Sprintf("%s (%s)", f.remote, f.err))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// warnFailed surfaces failed remotes on stderr so a list never silently drops
+// a cluster's inventory.
+func warnFailed(fs []failedRemote) {
+	for _, f := range fs {
+		fmt.Fprintf(os.Stderr, "warning: inventory for remote %s unavailable: %s\n", f.remote, f.err)
+	}
+}
+
 // ListNodes returns nodes across all remotes (each tagged with its remote).
+// Remotes whose inventory failed are reported on stderr, not dropped silently.
 func (p *PDM) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	entries, err := p.resources(ctx)
 	if err != nil {
 		return nil, err
 	}
+	warnFailed(failedRemotes(entries))
 	var out []domain.Node
 	for _, e := range entries {
 		for _, r := range e.Resources {
@@ -130,10 +173,20 @@ func (p *PDM) ListNodes(ctx context.Context) ([]domain.Node, error) {
 }
 
 // ListGuests returns VMs/containers across all remotes (tagged with remote).
+// Remotes whose inventory failed are reported on stderr, not dropped silently.
 func (p *PDM) ListGuests(ctx context.Context, f provider.GuestFilter) ([]domain.Guest, error) {
-	entries, err := p.resources(ctx)
+	guests, failed, err := p.guests(ctx, f)
 	if err != nil {
 		return nil, err
+	}
+	warnFailed(failed)
+	return guests, nil
+}
+
+func (p *PDM) guests(ctx context.Context, f provider.GuestFilter) ([]domain.Guest, []failedRemote, error) {
+	entries, err := p.resources(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	var out []domain.Guest
 	for _, e := range entries {
@@ -154,12 +207,39 @@ func (p *PDM) ListGuests(ctx context.Context, f provider.GuestFilter) ([]domain.
 			})
 		}
 	}
-	return out, nil
+	return out, failedRemotes(entries), nil
 }
 
-// ResolveGuest finds a vmid across remotes; ambiguous if present on several.
+// GuestsForResolve lists guests for single-guest resolution, failing closed on
+// incomplete inventory: unscoped (remote == "") it refuses if any remote's
+// inventory errored — a vmid/name that looks unique might also live on the
+// failed remote, so a mutation could hit the wrong cluster. Scoped to a remote,
+// it only fails if that remote errored. The result is not filtered by remote.
+func (p *PDM) GuestsForResolve(ctx context.Context, f provider.GuestFilter, remote string) ([]domain.Guest, error) {
+	guests, failed, err := p.guests(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	if remote == "" {
+		if len(failed) > 0 {
+			return nil, &protocol.APIError{Kind: protocol.KindConflict, Message: fmt.Sprintf(
+				"cannot resolve guest across remotes: inventory unavailable for %s (use --remote to target a specific remote)", joinFailed(failed))}
+		}
+		return guests, nil
+	}
+	for _, fr := range failed {
+		if strings.EqualFold(fr.remote, remote) {
+			return nil, &protocol.APIError{Kind: protocol.KindServer, Message: fmt.Sprintf(
+				"inventory for remote %q unavailable: %s", fr.remote, fr.err)}
+		}
+	}
+	return guests, nil
+}
+
+// ResolveGuest finds a vmid across remotes; ambiguous if present on several,
+// and refused if any remote's inventory is unavailable.
 func (p *PDM) ResolveGuest(ctx context.Context, vmid int) (domain.Guest, error) {
-	guests, err := p.ListGuests(ctx, provider.GuestFilter{})
+	guests, err := p.GuestsForResolve(ctx, provider.GuestFilter{}, "")
 	if err != nil {
 		return domain.Guest{}, err
 	}
@@ -184,9 +264,10 @@ func (p *PDM) ResolveGuest(ctx context.Context, vmid int) (domain.Guest, error) 
 }
 
 // ResolveGuestInRemote finds a vmid scoped to a single remote, disambiguating a
-// vmid that exists on several remotes (backs the --remote flag).
+// vmid that exists on several remotes (backs the --remote flag). Only that
+// remote's inventory has to be healthy.
 func (p *PDM) ResolveGuestInRemote(ctx context.Context, vmid int, remote string) (domain.Guest, error) {
-	guests, err := p.ListGuests(ctx, provider.GuestFilter{})
+	guests, err := p.GuestsForResolve(ctx, provider.GuestFilter{}, remote)
 	if err != nil {
 		return domain.Guest{}, err
 	}
