@@ -4,6 +4,6 @@ Version: 0.5.5
 Binary: pve-cli
 Architecture: any
 Maintainer: Ciro Iriarte <ciro.iriarte+software@gmail.com>
-Build-Depends: debhelper-compat (= 13), golang-go (>= 2:1.22~)
+Build-Depends: debhelper-compat (= 13), golang-1.26-go | golang-go (>= 2:1.26~)
 Files:
  00000000000000000000000000000000 1 pve-cli_0.orig.tar.gz
