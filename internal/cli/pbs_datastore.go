@@ -161,7 +161,7 @@ func newDatastoreStatusCmd(a *app) *cobra.Command {
 func datastoreUsageTable(rows []map[string]any) output.Tabular {
 	t := output.Tabular{Columns: []string{"store", "used", "avail", "total", "use%", "error"}, Raw: rows}
 	for _, r := range rows {
-		used, avail, total := num(r["used"]), num(r["avail"]), num(r["total"])
+		used, avail, total := int64Field(r["used"]), int64Field(r["avail"]), int64Field(r["total"])
 		pct := ""
 		if total > 0 {
 			pct = fmt.Sprintf("%.1f%%", float64(used)*100/float64(total))
@@ -176,7 +176,8 @@ func datastoreUsageTable(rows []map[string]any) output.Tabular {
 	return t
 }
 
-func num(v any) int64 {
+// int64Field reads a JSON number as int64 (0 when absent or not a number).
+func int64Field(v any) int64 {
 	if f, ok := v.(float64); ok {
 		return int64(f)
 	}
