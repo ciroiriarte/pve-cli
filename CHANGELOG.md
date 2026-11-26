@@ -18,13 +18,15 @@ surface may change between minor releases.
   missing `Sys.Audit` or a truncated task list are `incomplete: …` warn
   items), error means the check could not grade anything. A failed API read
   degrades only its own check, except a connection failure after the API has
-  answered, which errors the current check and all remaining ones without
-  further requests. `-o json` emits `{"status", "checks": [{"name",
+  answered: every later API read is then skipped without a request, so checks
+  that still need one error, while checks grade whatever data they already
+  have. `-o json` emits `{"status", "checks": [{"name",
   "status", "detail", "items"}]}`. New exit codes for monitoring: `7` warn or
   any errored check, `8` crit; `--fail-on crit` ignores warnings but never an
   errored check. A rejected token (at any point), an API unreachable before
   it first answers (any HTTP response counts), or every check failing prints
-  no report and exits with the usual code (2/4). `--check`/`--skip` select
+  no report and exits with the underlying error's usual code (2 auth, 3
+  not found, 4 unreachable, …). `--check`/`--skip` select
   checks. Needs `Sys.Audit` and
   `Datastore.Audit` (e.g. PVEAuditor). PVE-only; refused on PDM with the
   provider named (#22).
