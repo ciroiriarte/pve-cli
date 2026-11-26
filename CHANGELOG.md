@@ -35,6 +35,13 @@ surface may change between minor releases.
 - **Fixed**: `pc vm agent shutdown`, `move-disk --delete`, `ct move-volume
   --delete` and `access acl set --delete` are now confirm-gated (`-y/--yes` to
   skip), with prompts that name the target (#36).
+- **Security**: build CI and release binaries with Go **1.26.11** (was 1.26.6),
+  which fixes standard-library advisory GO-2026-6859 (`net/http`) flagged by
+  the `govulncheck` CI gate.
+- **Security**: bump `github.com/gorilla/websocket` (console transport) to the
+  upstream fix commit for GO-2026-6278 (no tagged release carries it yet). The
+  fix pulls in `golang.org/x/net`, pinned at v0.35.0, the newest release that
+  still builds with Go 1.22 (the OBS distro floor).
 
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
