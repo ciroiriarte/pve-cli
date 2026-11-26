@@ -318,15 +318,13 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 			it.Skip, it.Reason = true, "no destination: no other online node"
 			continue
 		}
+		// Initial mode from /cluster/resources; the preconditions below
+		// refresh it from the live running flag (and apply --online=false).
 		running := it.Status == "running"
 		switch {
 		case it.Kind == domain.KindCT && running:
 			it.Mode = "restart"
 		case it.Kind == domain.KindVM && running:
-			if !o.online {
-				it.Skip, it.Reason = true, "running VM; live migration disabled (--online=false)"
-				continue
-			}
 			it.Mode = "online"
 		default:
 			it.Mode = "offline"
@@ -342,7 +340,7 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 		}
 		// PVE refuses to live-migrate a replicated VM to a node that isn't one
 		// of its replication targets (Qemu.pm migrate_vm, unless force).
-		if !it.Skip && it.Kind == domain.KindVM && running {
+		if !it.Skip && it.Kind == domain.KindVM && it.Status == "running" {
 			jobs, err := cache.replication(ctx, p)
 			if err != nil {
 				return nil, err
@@ -460,7 +458,11 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, onli
 		it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
 		return nil
 	}
-	if it.applyRunning(pre.Running, online); it.Skip {
+	// Running-state policy uses the precondition's live flag, not the
+	// possibly stale /cluster/resources status.
+	it.applyRunning(pre.Running)
+	if it.Status == "running" && !online {
+		it.Skip, it.Reason = true, "running VM; live migration disabled (--online=false)"
 		return nil
 	}
 	// As QemuMigrate::prepare: local resources that are cluster mappings
@@ -554,7 +556,7 @@ func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cach
 			it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
 			return nil
 		}
-		it.applyRunning(pre.Running, true)
+		it.applyRunning(pre.Running)
 		if pre.AllowedNodes != nil {
 			it.restrict(*pre.AllowedNodes, notAllowedReasons(pre.NotAllowedNodes))
 		}
@@ -691,7 +693,7 @@ func endpointMissing(err error) bool {
 // precondition's live `running` flag. /cluster/resources can lag by several
 // seconds (e.g. right after a restart migration), and planning a running CT as
 // offline makes PVE refuse the migration.
-func (it *evacItem) applyRunning(v any, online bool) {
+func (it *evacItem) applyRunning(v any) {
 	if v == nil {
 		return
 	}
@@ -702,9 +704,6 @@ func (it *evacItem) applyRunning(v any, online bool) {
 	switch {
 	case running && it.Kind == domain.KindCT:
 		it.Status, it.Mode = "running", "restart"
-	case running && !online:
-		it.Status = "running"
-		it.Skip, it.Reason = true, "running VM; live migration disabled (--online=false)"
 	case running:
 		it.Status, it.Mode = "running", "online"
 	default:
@@ -834,48 +833,50 @@ func (c *evacCache) storage(ctx context.Context, p provider.Provider) (map[strin
 // not-attempted.
 func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, parallel, timeout, restartTimeout int) {
 	var mu sync.Mutex
-	halted := false
 	logf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprintf(stderrWriter(), format, args...)
 	}
-	isHalted := func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return halted
-	}
+	const notAttempted = "not attempted: an earlier migration ended without a final task status"
+	var gate evacGate
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	for _, it := range items {
 		it := it
 		sem <- struct{}{}
-		if isHalted() {
+		if gate.isHalted() {
 			<-sem
-			it.Result, it.Error = "not-attempted", "not attempted: an earlier migration ended without a final task status"
+			it.Result, it.Error = "not-attempted", notAttempted
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if evacBeforePost != nil {
+				evacBeforePost(it.VMID)
+			}
 			label := fmt.Sprintf("migrate %s %d (%s) %s -> %s [%s]", kindLabel(it.Kind), it.VMID, it.Name, it.From, it.To, it.Mode)
+			upid, posted, err := migrateOne(ctx, p, it, &gate, timeout, restartTimeout, label)
+			if !posted {
+				// A worker admitted before the halt never POSTs after it.
+				it.Result, it.Error = "not-attempted", notAttempted
+				return
+			}
 			logf("→ %s\n", label)
-			upid, err := migrateOne(ctx, p, it, timeout, restartTimeout, label)
 			it.UPID = upid
 			if err != nil {
 				it.Result, it.Error = "failed", err.Error()
-				// Once a task exists, only a terminal task status (a
-				// KindTaskFailed error from task.Wait) settles it. Any other
-				// wait error (timeout, poll failure, auth expiry) leaves the
-				// migration possibly still running.
+				// Contract: once a task exists, only a terminal task status
+				// settles it, and task.Wait reports a non-OK terminal status
+				// as KindTaskFailed. Any other wait error (timeout, poll
+				// failure, auth expiry) leaves the migration possibly running.
 				var apiErr *protocol.APIError
 				if upid != "" && !(errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTaskFailed) {
 					it.Result = "unknown"
 					it.Error = "no final task status; the migration may still be running in PVE (check `pc task show " + upid + "`): " + err.Error()
-					mu.Lock()
-					halted = true
-					mu.Unlock()
+					gate.halt()
 				}
 				logf("✘ %s: %v\n", label, err)
 				return
@@ -887,7 +888,47 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 	wg.Wait()
 }
 
-func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, timeout, restartTimeout int, label string) (string, error) {
+// evacGate serializes the halt flag with migration POSTs: the check and the
+// POST happen under one lock, and halt() takes the same lock, so no POST can
+// start once a halt is recorded.
+type evacGate struct {
+	mu     sync.Mutex
+	halted bool
+}
+
+func (g *evacGate) isHalted() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.halted
+}
+
+func (g *evacGate) halt() {
+	g.mu.Lock()
+	g.halted = true
+	g.mu.Unlock()
+	if evacHalted != nil {
+		evacHalted()
+	}
+}
+
+// post runs fn unless halted; ran reports whether it did.
+func (g *evacGate) post(fn func() ([]byte, error)) (body []byte, ran bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.halted {
+		return nil, false, nil
+	}
+	body, err = fn()
+	return body, true, err
+}
+
+// Test seams for deterministic concurrency tests (nil in production).
+var (
+	evacBeforePost func(vmid int)
+	evacHalted     func()
+)
+
+func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, gate *evacGate, timeout, restartTimeout int, label string) (string, bool, error) {
 	params := url.Values{"target": {it.To}}
 	switch it.Mode {
 	case "online":
@@ -904,21 +945,24 @@ func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, timeout,
 		params.Set("with-local-disks", "1")
 	}
 	path := fmt.Sprintf("/nodes/%s/%s/%d/migrate", it.From, kindEndpoint(it.Kind), it.VMID)
-	body, err := p.Raw(ctx, "POST", path, params)
+	body, posted, err := gate.post(func() ([]byte, error) { return p.Raw(ctx, "POST", path, params) })
+	if !posted {
+		return "", false, nil
+	}
 	if err != nil {
-		return "", err
+		return "", true, err
 	}
 	data, err := mutationData(body, label)
 	if err != nil {
-		return "", err
+		return "", true, err
 	}
 	upid, _ := data.(string)
 	h, err := parseTaskArg(upid)
 	if err != nil {
-		return "", fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
+		return "", true, fmt.Errorf("unexpected migrate response: %s", strings.TrimSpace(string(body)))
 	}
 	_, err = task.Wait(ctx, p.TaskStatus, h, task.WaitOptions{Timeout: secs(timeout), Out: stderrWriter(), Label: label})
-	return upid, err
+	return upid, true, err
 }
 
 // evacOutcome maps the plan/results to the exit code: failed migrations exit 5

@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func ctGuest(vmid int, status string) map[string]any {
@@ -281,6 +283,63 @@ func TestNodeEvacuateStaleStatusUsesPrecondition(t *testing.T) {
 	}
 	if plan[171]["mode"] != "offline" || f.posts[171]["online"] != "" {
 		t.Errorf("171 is stopped per the precondition: %v / %v", plan[171], f.posts[171])
+	}
+}
+
+// Running-state policy (replication restriction, --online=false) must use the
+// precondition's live state, not stale /cluster/resources.
+func TestNodeEvacuateStalePolicyUsesLiveState(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		{"type": "qemu", "vmid": 180, "name": "repl", "node": "pve-01", "status": "stopped", "maxmem": gib},
+		{"type": "qemu", "vmid": 181, "name": "off", "node": "pve-01", "status": "running", "maxmem": gib},
+	})
+	f.liveRunning[180] = 1 // actually running → live migration → replication target only
+	f.liveRunning[181] = 0 // actually stopped → --online=false doesn't apply
+	f.repl = `{"id":"180-0","guest":180,"target":"pve-02"}`
+	srv := f.start()
+	defer srv.Close()
+
+	out, _ := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--all", "-o", "json")...)
+	if it := evacPlan(t, out)[180]; it["to"] != "pve-02" || it["mode"] != "online" {
+		t.Errorf("180 is running live and replicates to pve-02: %v", it)
+	}
+	out, _ = runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "--online=false", "-o", "json")...)
+	if it := evacPlan(t, out)[181]; it["skip"] != false || it["mode"] != "offline" {
+		t.Errorf("181 is stopped live; --online=false must not skip it: %v", it)
+	}
+}
+
+// A worker admitted before a halt must not POST after it (--parallel > 1).
+func TestNodeEvacuateParallelNoPostAfterHalt(t *testing.T) {
+	f := newEvacFixture(defaultEvacGuests())
+	f.pollErr[100] = true // 100's wait ends without a terminal status
+	srv := f.start()
+	defer srv.Close()
+
+	haltedCh := make(chan struct{})
+	var once sync.Once
+	evacHalted = func() { once.Do(func() { close(haltedCh) }) }
+	evacBeforePost = func(vmid int) {
+		if vmid == 100 {
+			return
+		}
+		select { // hold the second worker until the halt is recorded
+		case <-haltedCh:
+		case <-time.After(10 * time.Second):
+		}
+	}
+	defer func() { evacHalted, evacBeforePost = nil, nil }()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "2", "-o", "json")...)
+	if err == nil {
+		t.Fatal("want non-zero exit")
+	}
+	if fmt.Sprint(f.order) != "[100]" {
+		t.Fatalf("no POST may follow the halt, got %v", f.order)
+	}
+	plan := evacPlan(t, out)
+	if plan[100]["result"] != "unknown" || plan[101]["result"] != "not-attempted" || plan[102]["result"] != "not-attempted" {
+		t.Errorf("results: 100=%v 101=%v 102=%v", plan[100]["result"], plan[101]["result"], plan[102]["result"])
 	}
 }
 
