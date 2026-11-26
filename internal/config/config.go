@@ -67,11 +67,21 @@ func DefaultPath() string {
 	if p := os.Getenv("PVE_CLI_CONFIG"); p != "" {
 		return p
 	}
+	if p := managedPath(); p != "" {
+		return p
+	}
+	return "pve-cli-config.yaml"
+}
+
+// managedPath is the default, app-managed config location
+// ($XDG_CONFIG_HOME/pve-cli/config.yaml or ~/.config/pve-cli/config.yaml), or
+// "" when no home directory is known.
+func managedPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "pve-cli-config.yaml"
+			return ""
 		}
 		base = filepath.Join(home, ".config")
 	}
@@ -105,35 +115,56 @@ func Save(path string, f *File) error {
 }
 
 // writeConfigFile writes the credential-bearing config file (it may hold an
-// inline plaintext secret when no keyring is available). The directory is
-// created 0700 and the file 0600 — and, because MkdirAll/WriteFile never change
-// the mode of a path that already exists, pre-existing permissive modes left by
-// older versions (0755 dir, 0644 file) are tightened too. Only the app's own
-// "pve-cli" directory is chmod'ed: a PVE_CLI_CONFIG pointing elsewhere (e.g.
-// straight into $HOME) must not have its parent's mode changed.
+// inline plaintext secret when no keyring is available) with mode 0600.
+//
+// MkdirAll/WriteFile never change the mode of a path that already exists, so
+// pre-existing permissive modes left by older versions are tightened here:
+//   - the directory is chmod'ed 0700 only when it is the default app-managed
+//     location; a PVE_CLI_CONFIG override may live in a user-managed directory
+//     (dotfiles repo, $HOME) whose mode isn't ours to change.
+//   - the file is written to a 0600 temp file in the same directory, fsynced,
+//     and renamed over the symlink-resolved target. That keeps a symlinked
+//     config a symlink, replaces a 0644 inode (cutting off readers holding an
+//     fd on the old one), and is crash-atomic.
 func writeConfigFile(path string, b []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if filepath.Base(dir) == "pve-cli" {
+	if mp := managedPath(); os.Getenv("PVE_CLI_CONFIG") == "" && mp != "" &&
+		filepath.Clean(path) == filepath.Clean(mp) {
 		if err := os.Chmod(dir, 0o700); err != nil {
 			return err
 		}
 	}
-	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	// Tighten the mode on the open fd before any content is written, so an
-	// existing 0644 file never holds the new contents world-readable.
-	if err := fh.Chmod(0o600); err != nil {
-		fh.Close()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
 		return err
 	}
-	if _, err := fh.Write(b); err != nil {
-		fh.Close()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
 		return err
 	}
-	return fh.Close()
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, target)
 }

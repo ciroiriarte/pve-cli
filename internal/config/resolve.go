@@ -12,21 +12,24 @@ import (
 // Settings is the fully-resolved connection configuration the rest of the CLI
 // consumes. It is produced by Resolve from file + env + flag inputs.
 type Settings struct {
-	Provider    string
-	Server      string
-	AuthType    string
-	TokenID     string
-	User        string
-	Secret      string
-	Output      string
-	Remote      string
-	TLSCAFile   string
-	TLSFinger   string
-	TLSInsecure bool
-	RateQPS     float64
-	RateBurst   int
-	ProfileName string
-	ContextName string
+	Provider string
+	Server   string
+	AuthType string
+	TokenID  string
+	User     string
+	Secret   string
+	// SecretSource names where Secret came from (flag, flag ref, env var,
+	// profile ref, inline); "" when no secret was found. For diagnostics only.
+	SecretSource string
+	Output       string
+	Remote       string
+	TLSCAFile    string
+	TLSFinger    string
+	TLSInsecure  bool
+	RateQPS      float64
+	RateBurst    int
+	ProfileName  string
+	ContextName  string
 }
 
 // Overrides carries explicit flag values (highest precedence). Empty string /
@@ -89,8 +92,11 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	// The secret is decided up front (flag > flag ref > env > profile) and the
 	// profile's reference is dereferenced only when nothing higher is set, so a
 	// locked/unavailable keyring can't block a valid env/flag override.
-	sec := ov.Secret
-	if sec == "" && ov.SecretRef != "" {
+	// PVE_CLI_PASSWORD wins over PVE_CLI_TOKEN_SECRET (pre-existing order).
+	switch {
+	case ov.Secret != "":
+		s.Secret, s.SecretSource = ov.Secret, "flag --token-secret"
+	case ov.SecretRef != "":
 		v, err := ResolveSecretRef(ov.SecretRef)
 		if err != nil {
 			return nil, err
@@ -98,20 +104,25 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 		if v == "" {
 			return nil, errf("--token-secret-ref %s resolved to an empty secret", ov.SecretRef)
 		}
-		sec = v
-	}
-	if sec == "" {
-		// PVE_CLI_PASSWORD wins over PVE_CLI_TOKEN_SECRET (pre-existing order).
-		sec = firstNonEmpty(os.Getenv("PVE_CLI_PASSWORD"), os.Getenv("PVE_CLI_TOKEN_SECRET"))
-	}
-	if sec == "" && profName != "" {
-		v, err := resolveSecret(f.Profiles[profName].Auth)
+		s.Secret, s.SecretSource = v, "flag --token-secret-ref "+ov.SecretRef
+	case os.Getenv("PVE_CLI_PASSWORD") != "":
+		s.Secret, s.SecretSource = os.Getenv("PVE_CLI_PASSWORD"), "env PVE_CLI_PASSWORD"
+	case os.Getenv("PVE_CLI_TOKEN_SECRET") != "":
+		s.Secret, s.SecretSource = os.Getenv("PVE_CLI_TOKEN_SECRET"), "env PVE_CLI_TOKEN_SECRET"
+	case profName != "":
+		a := f.Profiles[profName].Auth
+		v, err := resolveSecret(a)
 		if err != nil {
 			return nil, err
 		}
-		sec = v
+		s.Secret = v
+		switch {
+		case a.SecretRef != "":
+			s.SecretSource = "profile " + a.SecretRef
+		case a.Secret != "":
+			s.SecretSource = "inline (plaintext in config)"
+		}
 	}
-	s.Secret = sec
 
 	// 4. Env vars override profile values.
 	s.Server = firstNonEmpty(os.Getenv("PVE_CLI_SERVER"), s.Server)

@@ -190,8 +190,7 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			f, err := config.Load(config.DefaultPath())
-			if err != nil {
+			if _, err := config.Load(config.DefaultPath()); err != nil {
 				return fmt.Errorf("config: cannot load %s: %w", config.DefaultPath(), err)
 			}
 			// Resolving settings dereferences the secret (keyring/env); a failure
@@ -202,24 +201,9 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 				return err
 			}
 
-			secretSrc := ""
-			if prof, ok := f.Profiles[s.ProfileName]; ok {
-				switch {
-				case prof.Auth.SecretRef != "":
-					secretSrc = prof.Auth.SecretRef
-				case prof.Auth.Secret != "":
-					secretSrc = "inline (plaintext in config)"
-				}
-			}
-			if secretSrc == "" {
-				// No profile-based secret; it came from env (PVE_CLI_*) or a flag,
-				// or nowhere.
-				if s.Secret != "" {
-					secretSrc = "env or flag"
-				} else {
-					secretSrc = "(none)"
-				}
-			}
+			// The winning source (flag > flag ref > env > profile), as decided
+			// by config.Resolve — not just whatever the profile declares.
+			secretSrc := orElse(s.SecretSource, "(none)")
 			id := s.TokenID
 			if s.AuthType == "ticket" {
 				id = s.User
@@ -399,12 +383,20 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 // (ref / `-` stdin / warned plaintext / TTY prompt). When nothing is given and
 // stdin isn't a terminal it still reads one line from stdin, preserving the
 // pre-existing `echo secret | pc auth login …` behavior.
+// An empty result (e.g. `--token-secret -` with blank stdin) is rejected rather
+// than saved as an empty credential.
 func loginSecret(value, ref, flag, label string) (string, error) {
 	s, err := resolveSecretInput(value, ref, flag, label)
-	if err != nil || s != "" || value != "" || ref != "" {
-		return s, err
+	if err == nil && s == "" && value == "" && ref == "" && !isInputTTY() {
+		s, err = promptSecret(label)
 	}
-	return promptSecret(label)
+	if err != nil {
+		return "", err
+	}
+	if s == "" {
+		return "", fmt.Errorf("empty credential: provide a non-empty %s (or %s-ref)", flag, flag)
+	}
+	return s, nil
 }
 
 // promptYesNo asks a y/N question on stderr and returns true only on an

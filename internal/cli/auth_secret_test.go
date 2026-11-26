@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ciroiriarte/pve-cli/internal/config"
+	"github.com/ciroiriarte/pve-cli/internal/testenv"
 	"github.com/zalando/go-keyring"
 )
 
@@ -55,6 +57,7 @@ func loginKeyringSecret(t *testing.T, profile string) string {
 
 // #39: `auth login --token-secret-ref` resolves the secret off-argv, silently.
 func TestAuthLoginTokenSecretRef(t *testing.T) {
+	testenv.ClearPVEEnv(t)
 	keyring.MockInit()
 	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	t.Setenv("PC_TEST_TOKEN", "from-env")
@@ -78,6 +81,7 @@ func TestAuthLoginTokenSecretRef(t *testing.T) {
 
 // #39: `auth login --password -` reads the password from stdin.
 func TestAuthLoginPasswordStdin(t *testing.T) {
+	testenv.ClearPVEEnv(t)
 	keyring.MockInit()
 	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	withStdin(t, "pw-from-stdin\n")
@@ -95,6 +99,7 @@ func TestAuthLoginPasswordStdin(t *testing.T) {
 // #39: --password-ref works for ticket auth, and the value/ref pair is
 // mutually exclusive.
 func TestAuthLoginPasswordRefAndExclusive(t *testing.T) {
+	testenv.ClearPVEEnv(t)
 	keyring.MockInit()
 	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	t.Setenv("PC_TEST_PW", "pw-env")
@@ -117,6 +122,7 @@ func TestAuthLoginPasswordRefAndExclusive(t *testing.T) {
 
 // #39: a plaintext argv secret still works but warns on stderr.
 func TestAuthLoginPlaintextSecretWarns(t *testing.T) {
+	testenv.ClearPVEEnv(t)
 	keyring.MockInit()
 	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 
@@ -140,6 +146,7 @@ func TestAuthLoginPlaintextSecretWarns(t *testing.T) {
 // #39: the global --token-secret-ref authenticates without a plaintext secret
 // on argv; the plaintext global --token-secret still works but warns.
 func TestGlobalTokenSecretRef(t *testing.T) {
+	testenv.ClearPVEEnv(t)
 	srv := fakeServer(t)
 	defer srv.Close()
 	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
@@ -171,5 +178,68 @@ func TestGlobalTokenSecretRef(t *testing.T) {
 		"--token-secret-ref", "env:PC_TEST_TOKEN", "raw", "version")
 	if err == nil || !strings.Contains(err.Error(), "token-secret") {
 		t.Fatalf("expected mutual-exclusion error, got %v", err)
+	}
+}
+
+// #39: `--token-secret -` with blank stdin must not save an empty credential.
+func TestAuthLoginRejectsEmptyStdinSecret(t *testing.T) {
+	testenv.ClearPVEEnv(t)
+	keyring.MockInit()
+	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	withStdin(t, "\n")
+
+	_, err := runCLI(t, "auth", "login", "https://pve1:8006",
+		"--token-id", "svc@pve!cli", "--token-secret", "-", "--profile", "empty",
+		"--fingerprint", loginFP)
+	if err == nil || !strings.Contains(err.Error(), "empty credential") {
+		t.Fatalf("expected empty-credential error, got %v", err)
+	}
+	if _, kerr := keyring.Get(keyringService, "empty"); kerr == nil {
+		t.Error("an empty credential was stored in the keyring")
+	}
+}
+
+// #39: the global plaintext --token-secret warning fires on provider-free paths
+// too (test-auth --offline never builds a provider).
+func TestGlobalPlaintextSecretWarnsWithoutProvider(t *testing.T) {
+	testenv.ClearPVEEnv(t)
+	t.Setenv("PVE_CLI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	var err error
+	stderr := captureStderr(t, func() {
+		_, err = runCLI(t, "--server", "https://pve1:8006", "--token-id", "u@pam!c",
+			"--token-secret", "x", "config", "test-auth", "--offline")
+	})
+	if err != nil {
+		t.Fatalf("test-auth --offline: %v", err)
+	}
+	if strings.Count(stderr, "warning: plaintext --token-secret") != 1 {
+		t.Errorf("expected exactly one plaintext warning, got %q", stderr)
+	}
+}
+
+// #34: test-auth reports the source that actually won (env over a profile
+// keyring ref), not just what the profile declares.
+func TestConfigTestAuthReportsWinningSecretSource(t *testing.T) {
+	testenv.ClearPVEEnv(t)
+	keyring.MockInit()
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("PVE_CLI_CONFIG", cfg)
+	if err := config.Save(cfg, &config.File{
+		CurrentContext: "lab",
+		Contexts:       map[string]config.Context{"lab": {Profile: "lab"}},
+		Profiles: map[string]config.Profile{"lab": {
+			Server: "https://pve1:8006",
+			Auth:   config.AuthConfig{Type: "token", TokenID: "u@pam!c", SecretRef: "keyring://pve-cli/lab"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PVE_CLI_TOKEN_SECRET", "envsecret")
+	out, err := runCLI(t, "config", "test-auth", "--offline")
+	if err != nil {
+		t.Fatalf("test-auth --offline: %v", err)
+	}
+	if !strings.Contains(out, "secret:     env PVE_CLI_TOKEN_SECRET") {
+		t.Errorf("expected env as the secret source, got:\n%s", out)
 	}
 }

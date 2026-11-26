@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/ciroiriarte/pve-cli/internal/config"
+	"github.com/zalando/go-keyring"
 )
 
 // #8: `pc auth login --user` writes a ticket-auth profile. A pinned fingerprint
 // keeps login offline (no TOFU probe); --password avoids the interactive prompt.
 func TestAuthLoginTicketWritesTicketProfile(t *testing.T) {
+	keyring.MockInit() // never touch the developer's real keyring
 	cfg := filepath.Join(t.TempDir(), "config.yaml")
 	t.Setenv("PVE_CLI_CONFIG", cfg)
 
@@ -44,6 +46,7 @@ func TestAuthLoginTicketWritesTicketProfile(t *testing.T) {
 }
 
 func TestAuthLoginTokenWritesTokenProfile(t *testing.T) {
+	keyring.MockInit()
 	cfg := filepath.Join(t.TempDir(), "config.yaml")
 	t.Setenv("PVE_CLI_CONFIG", cfg)
 

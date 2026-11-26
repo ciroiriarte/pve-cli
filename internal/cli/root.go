@@ -49,11 +49,6 @@ func (a *app) Provider() (provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	if a.secret != "" {
-		// Same wording as resolveSecretInput's warning; the global flag has no
-		// `-` (stdin) form, so point at the ref flag / env var instead.
-		fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --token-secret leaks to shell history and the process table; prefer --token-secret-ref (env:…/keyring://…) or PVE_CLI_TOKEN_SECRET")
-	}
 	s, err := config.Resolve(f, a.overrides())
 	if err != nil {
 		return nil, err
@@ -196,6 +191,13 @@ func NewRootCmd() *cobra.Command {
 				if _, err := output.ParseFormat(a.format); err != nil {
 					return err
 				}
+			}
+			// Runs once per invocation for every command, so provider-free
+			// paths (e.g. `config test-auth --offline`) warn too. Same wording
+			// as resolveSecretInput's warning; the global flag has no `-`
+			// (stdin) form, so point at the ref flag / env var instead.
+			if a.secret != "" {
+				fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --token-secret leaks to shell history and the process table; prefer --token-secret-ref (env:…/keyring://…) or PVE_CLI_TOKEN_SECRET")
 			}
 			return nil
 		},
