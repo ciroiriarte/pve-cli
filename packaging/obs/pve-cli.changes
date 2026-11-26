@@ -1,4 +1,9 @@
 -------------------------------------------------------------------
+Thu Nov 26 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.16.1-1
+
+- node evacuate halt and capacity docs fixes
+
+-------------------------------------------------------------------
 Thu Nov 26 2026 Ciro Iriarte <ciro.iriarte+software@gmail.com> - 0.16.0-1
 
 - PBS provider, TOTP, node evacuate & cluster check
