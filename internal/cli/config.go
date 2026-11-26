@@ -275,6 +275,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			"  pc auth login https://pbs1:8007 --provider pbs --token-id 'svc@pbs!cli'",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			provider = strings.ToLower(strings.TrimSpace(provider))
 			switch provider {
 			case "pve", "pdm", "pbs":
 			default:

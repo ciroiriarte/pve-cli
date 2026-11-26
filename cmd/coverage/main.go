@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
+	"github.com/ciroiriarte/pve-cli/internal/cli"
 	"github.com/ciroiriarte/pve-cli/internal/coverage"
 	pbs "github.com/ciroiriarte/pve-cli/internal/generated/pbs"
 	pdm "github.com/ciroiriarte/pve-cli/internal/generated/pdm"
@@ -40,9 +43,10 @@ func main() {
 	b.WriteString("`pc raw` / `pc api` escape hatch. The source of truth for \"curated\" is\n")
 	b.WriteString("`internal/coverage/registry.go`.\n\n")
 
-	section(&b, "Proxmox VE", pveAPI)
-	section(&b, "Proxmox Datacenter Manager (PDM)", pdmAPI)
-	section(&b, "Proxmox Backup Server (PBS)", pbsAPI)
+	root := cli.NewRootCmd()
+	section(&b, root, "pve", "Proxmox VE", pveAPI)
+	section(&b, root, "pdm", "Proxmox Datacenter Manager (PDM)", pdmAPI)
+	section(&b, root, "pbs", "Proxmox Backup Server (PBS)", pbsAPI)
 
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
 		fail(err)
@@ -50,10 +54,33 @@ func main() {
 	fmt.Printf("wrote %s\n", out)
 }
 
-func section(b *strings.Builder, title string, api *schema.API) {
+// topCommand returns the top-level pc command a registry label names: its
+// first word, and the first alternative of a "vm/ct"-style pair.
+func topCommand(label string) string {
+	f := strings.Fields(label)
+	if len(f) == 0 {
+		return ""
+	}
+	top, _, _ := strings.Cut(f[0], "/")
+	return top
+}
+
+// section renders one provider's coverage. An endpoint counts as curated only
+// if its registry command runs on that provider (per the command gate): the
+// registry is keyed by method+path across all schemas, so e.g. PBS's
+// /access/users would otherwise be credited to a pve/pdm-only command.
+func section(b *strings.Builder, root *cobra.Command, provider, title string, api *schema.API) {
 	var curated, raw []string
 	for _, e := range api.Endpoints {
-		if cmd, ok := coverage.Classify(e.Method, e.Path); ok {
+		cmd, ok := coverage.Classify(e.Method, e.Path)
+		if ok {
+			supported, found := cli.CommandSupports(root, topCommand(cmd), provider)
+			if !found {
+				fail(fmt.Errorf("registry command %q (%s %s) names no top-level pc command", cmd, e.Method, e.Path))
+			}
+			ok = supported
+		}
+		if ok {
 			curated = append(curated, fmt.Sprintf("| `%s %s` | %s |", e.Method, e.Path, cmd))
 		} else {
 			raw = append(raw, fmt.Sprintf("`%s %s`", e.Method, e.Path))

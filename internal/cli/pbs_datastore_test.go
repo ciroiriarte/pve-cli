@@ -80,7 +80,6 @@ func pbsServer(t *testing.T) *pbsFake {
 		"GET /nodes/localhost/tasks/" + pbsGCUPID + "/status":    `{"data":{"upid":"` + pbsGCUPID + `","node":"pbs","type":"garbage_collection","id":"store1","user":"root@pam","status":"stopped","exitstatus":"OK","starttime":1732000002,"pid":1000}}`,
 		"GET /nodes/localhost/tasks/" + pbsPruneUPID + "/status": `{"data":{"upid":"` + pbsPruneUPID + `","node":"pbs","type":"prune","status":"stopped","exitstatus":"OK"}}`,
 		"GET /nodes/localhost/tasks/" + pbsGCUPID + "/log":       `{"data":[{"n":1,"t":"starting garbage collection on store store1"},{"n":2,"t":"TASK OK"}]}`,
-		"GET /nodes/localhost/tasks/" + pbsPruneUPID + "/log":    `{"data":[{"n":1,"t":"would remove vm/100/2024-11-07T05:20:00Z"},{"n":2,"t":"TASK OK"}]}`,
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -88,6 +87,10 @@ func pbsServer(t *testing.T) *pbsFake {
 		f.mu.Lock()
 		f.calls = append(f.calls, pbsCall{Method: r.Method, Path: path, Auth: r.Header.Get("Authorization"), Query: r.URL.Query(), Form: r.PostForm})
 		f.mu.Unlock()
+		if r.Method == "GET" && path == "/nodes/localhost/tasks/"+pbsPruneUPID+"/log" {
+			w.Write([]byte(pbsLongLog(r.URL.Query())))
+			return
+		}
 		if body, ok := routes[r.Method+" "+path]; ok {
 			w.Write([]byte(body))
 			return

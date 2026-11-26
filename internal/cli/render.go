@@ -24,6 +24,13 @@ func (a *app) render(t output.Tabular) error {
 	return output.Render(os.Stdout, t, opts)
 }
 
+// machineOutput reports whether the effective format is json or yaml (the
+// scripting contract), using the parsed format so `-o JSON` counts too.
+func (a *app) machineOutput() bool {
+	opts, err := a.outputOptions()
+	return err == nil && (opts.Format == output.JSON || opts.Format == output.YAML)
+}
+
 // isTTY reports whether stdout is an interactive terminal.
 func isTTY() bool {
 	fi, err := os.Stdout.Stat()

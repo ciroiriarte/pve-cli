@@ -20,7 +20,16 @@ surface may change between minor releases.
   `pc datastore` is refused on pve/pdm. The PDM-proxied `pc pbs` is unchanged.
   `protocol.ParseUPID` now understands the PBS UPID layout (extra task-id
   field), and the schema parser flattens `allOf` parameter sets, so
-  `pc raw … --help` lists every PBS parameter.
+  `pc raw … --help` lists every PBS parameter. On `prune` and `verify start`,
+  `--set` refuses keys that have a dedicated flag (`dry-run`, `ns`,
+  `backup-type`/`backup-id`, `keep-*`, …), so the confirmation always matches
+  the request. Provider names are now case-insensitive (`provider: PBS`), and
+  backend-agnostic commands (`version`, `config`, `context`, `auth`, `task`,
+  `raw`, `api`) are never refused by the provider gate.
+- **Changed (json output)**: a task handle printed for a plain UPID now reports
+  the provider that returned it in `backend` (`pbs` on PBS; `pdm` for a PDM
+  task without a remote, where it used to say `pve`). PDM-proxied
+  `pve:<remote>!UPID:…` handles are unchanged (#19).
 - **Fixed**: key/value and generic list tables printed large integers in
   exponent notation (`1.4420443136e+10`); they now print plain integers, as
   column-projected lists already did (table output only; json unchanged) (#19).

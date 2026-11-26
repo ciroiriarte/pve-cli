@@ -29,6 +29,13 @@ func TestParseUPIDPBSFormat(t *testing.T) {
 		{"UPID:pbs:000003E8:00001F40:00000002:6740A1B2:garbage_collection:store1:root@pam:", "pbs", "garbage_collection store1"},
 		{`UPID:pbs01:00000F2C:0005B4B5:0000000A:65A0B5E0:verificationjob:store1\x3av\x2dabc:root@pam!ci:`, "pbs01", `verificationjob store1\x3av\x2dabc`},
 		{"UPID:pbs:000003E8:00001F40:00000003:6740A1B2:prune:store1:root@pam:", "pbs", "prune store1"},
+		// task_id is 8–16 hex digits per the PBS schema: both bounds.
+		{"UPID:pbs:000003E8:00001F40:0000000000000003:6740A1B2:prune:store1:root@pam:", "pbs", "prune store1"},
+		{"UPID:pbs:000003E8:00001F40:100000000:6740A1B2:verify:store1:root@pam:", "pbs", "verify store1"},
+	}
+	// A 17-digit counter is outside the PBS layout: not parsed as PBS.
+	if h, err := ParseUPID("UPID:pbs:000003E8:00001F40:00000000000000003:6740A1B2:prune:store1:root@pam:"); err != nil || h.Display == "prune store1" {
+		t.Errorf("17-digit task_id should not take the PBS path: display %q err %v", h.Display, err)
 	}
 	for _, c := range cases {
 		h, err := ParseUPID(c.upid)

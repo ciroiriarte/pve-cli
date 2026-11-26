@@ -80,7 +80,8 @@ func ParseUPID(upid string) (TaskHandle, error) {
 		UPID:    upid,
 	}
 	typ, id := parts[5], parts[6]
-	if len(parts) == 10 && isHex8(parts[4]) && isHex8(parts[5]) {
+	// PBS: task_id is 8–16 hex digits, starttime exactly 8.
+	if len(parts) == 10 && isHex(parts[4], 8, 16) && isHex(parts[5], 8, 8) {
 		typ, id = parts[6], parts[7]
 		if typ == "" {
 			return TaskHandle{}, fmt.Errorf("malformed UPID (empty type): %q", upid)
@@ -90,9 +91,9 @@ func ParseUPID(upid string) (TaskHandle, error) {
 	return h, nil
 }
 
-// isHex8 reports whether s is an 8-digit hex field (PBS task_id/starttime).
-func isHex8(s string) bool {
-	if len(s) != 8 {
+// isHex reports whether s is a hex field of min..max digits.
+func isHex(s string, minLen, maxLen int) bool {
+	if len(s) < minLen || len(s) > maxLen {
 		return false
 	}
 	for _, c := range s {

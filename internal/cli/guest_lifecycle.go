@@ -85,8 +85,10 @@ func handleMutationResponse(ctx context.Context, a *app, p provider.Provider, bo
 		return a.renderBody(body)
 	}
 	h.Display = label
-	if p.Name() == "pbs" {
-		h.Backend = "pbs"
+	// A plain UPID belongs to the backend that returned it (a PDM-proxied
+	// "pve:<remote>!UPID:…" handle already carries backend pdm + remote).
+	if h.Remote == "" {
+		h.Backend = p.Name()
 	}
 	return finishTask(ctx, a, p, h, wait, timeout, label)
 }

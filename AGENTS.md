@@ -178,7 +178,14 @@ unannotated commands are `pve,pdm`. On pbs only `datastore`, `task`, `raw`,
 `api` and the local commands run — everything else fails before any request
 with `current provider: pbs`. The gate uses `config.ResolveProvider` (no secret
 or keyring access). When adding a top-level command that works on PBS, annotate
-it. The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
+it. Backend-agnostic commands (`allProviders`) and unknown provider names
+always pass the gate, so a broken config can be repaired (`provider.New`
+reports an unknown provider); a missing profile also skips it so "profile not
+found" surfaces. Provider names are lower-cased in `config` (one shared
+selection helper for `Resolve`/`ResolveProvider`). Confirm-gated PBS
+mutations refuse `--set` for keys that have a flag (`refuseFlaggedSet`), so
+the prompt and the dry-run decision always match the request — apply the same
+rule to new confirm-gated commands with `--set`. The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
 older `pc pbs` stays the PDM-through-remotes view and is refused on pbs with a
 pointer to `pc datastore` — don't merge the two, their arities differ. PBS
 node-scoped endpoints use the node `localhost`. PBS UPIDs have an extra hex

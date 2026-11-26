@@ -37,9 +37,11 @@ grammar — and automatic node resolution — instead of SSHing into a node to r
 
 ## Status
 
-Active development (`v0.10.x`, SemVer). **Both backends are live-verified**:
-direct PVE against PVE 9.1/9.2 (token *and* ticket auth), and the PDM backend
-against a live PDM 1.x fleet. Curated coverage is broad — daily-driver PVE
+Active development (`v0.10.x`, SemVer). **All three backends are
+live-verified**: direct PVE against PVE 9.1/9.2 (token *and* ticket auth), the
+PDM backend against a live PDM 1.x fleet, and the PBS backend against a PBS 4.2
+server (token and ticket auth, fingerprint pinning, every `pc datastore` read,
+GC, verify and a dry-run prune). Curated coverage is broad — daily-driver PVE
 (lifecycle + disks, cloud-init, guest agent, snapshots, migrate, console,
 storage, pools, HA, firewall, SDN, Ceph, access) and the PDM control plane
 (remotes, cross-cluster monitoring, Ceph/SDN/PBS/subscription/server domains);

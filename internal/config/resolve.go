@@ -53,16 +53,50 @@ type Overrides struct {
 // "pve") with the same context/profile selection as Resolve, but without
 // dereferencing any secret — so it's cheap and side-effect free (no keyring
 // access, no plaintext-secret warning) for gating commands up front.
-func ResolveProvider(f *File, ov Overrides) string {
-	if ov.Provider != "" {
-		return ov.Provider
+// It returns Resolve's "profile not found" error for a missing profile, so a
+// typo'd --profile isn't misreported as a provider mismatch.
+func ResolveProvider(f *File, ov Overrides) (string, error) {
+	sel, err := selectProfile(f, ov)
+	if err != nil {
+		return "", err
 	}
-	ctxName := firstNonEmpty(ov.Context, os.Getenv("PVE_CLI_CONTEXT"), f.CurrentContext)
-	profName := firstNonEmpty(ov.Profile, os.Getenv("PVE_CLI_PROFILE"))
-	if profName == "" && ctxName != "" {
-		profName = f.Contexts[ctxName].Profile
+	return effectiveProvider(sel, ov), nil
+}
+
+// selection is the context/profile chosen by the shared precedence rules.
+type selection struct {
+	ctxName, profName, remote string
+	prof                      Profile // zero when profName == ""
+}
+
+// selectProfile picks the context (flag > env > current_context) and the
+// profile (flag > env > context's profile). Shared by Resolve and
+// ResolveProvider so their precedence can't drift.
+func selectProfile(f *File, ov Overrides) (selection, error) {
+	sel := selection{ctxName: firstNonEmpty(ov.Context, os.Getenv("PVE_CLI_CONTEXT"), f.CurrentContext)}
+	sel.profName = firstNonEmpty(ov.Profile, os.Getenv("PVE_CLI_PROFILE"))
+	if sel.profName == "" && sel.ctxName != "" {
+		if c, ok := f.Contexts[sel.ctxName]; ok {
+			sel.profName = c.Profile
+			sel.remote = c.Remote
+		}
 	}
-	return orDefault(f.Profiles[profName].Provider, "pve")
+	if sel.profName != "" {
+		prof, ok := f.Profiles[sel.profName]
+		if !ok {
+			return selection{}, errf("profile %q not found in config", sel.profName)
+		}
+		sel.prof = prof
+	}
+	return sel, nil
+}
+
+// effectiveProvider applies the provider precedence (flag > profile > "pve")
+// and normalizes case, so `provider: PBS` selects pbs everywhere (provider.New
+// and the command gate see the same name). A provider env var would slot in
+// here as one more firstNonEmpty argument.
+func effectiveProvider(sel selection, ov Overrides) string {
+	return strings.ToLower(strings.TrimSpace(firstNonEmpty(ov.Provider, sel.prof.Provider, "pve")))
 }
 
 // Resolve computes effective Settings using precedence:
@@ -70,27 +104,17 @@ func ResolveProvider(f *File, ov Overrides) string {
 func Resolve(f *File, ov Overrides) (*Settings, error) {
 	s := &Settings{Provider: "pve", Output: "table"}
 
-	// 1. Pick context (flag > env > file.current_context).
-	ctxName := firstNonEmpty(ov.Context, os.Getenv("PVE_CLI_CONTEXT"), f.CurrentContext)
-	s.ContextName = ctxName
-
-	// 2. Determine profile (flag > env > context's profile).
-	profName := firstNonEmpty(ov.Profile, os.Getenv("PVE_CLI_PROFILE"))
-	if profName == "" && ctxName != "" {
-		if c, ok := f.Contexts[ctxName]; ok {
-			profName = c.Profile
-			s.Remote = c.Remote
-		}
+	// 1-2. Pick context and profile.
+	sel, err := selectProfile(f, ov)
+	if err != nil {
+		return nil, err
 	}
-	s.ProfileName = profName
+	s.ContextName, s.ProfileName, s.Remote = sel.ctxName, sel.profName, sel.remote
+	profName := sel.profName
 
 	// 3. Layer in the profile from file, if any.
 	if profName != "" {
-		prof, ok := f.Profiles[profName]
-		if !ok {
-			return nil, errf("profile %q not found in config", profName)
-		}
-		s.Provider = orDefault(prof.Provider, s.Provider)
+		prof := sel.prof
 		s.Server = prof.Server
 		s.AuthType = orDefault(prof.Auth.Type, "token")
 		s.TokenID = prof.Auth.TokenID
@@ -155,7 +179,7 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	}
 
 	// 5. Explicit flags override everything.
-	s.Provider = firstNonEmpty(ov.Provider, s.Provider)
+	s.Provider = effectiveProvider(sel, ov)
 	s.Server = firstNonEmpty(ov.Server, s.Server)
 	s.TokenID = firstNonEmpty(ov.TokenID, s.TokenID)
 	s.TLSFinger = firstNonEmpty(ov.Fingerprint, s.TLSFinger)

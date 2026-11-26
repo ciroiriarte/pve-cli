@@ -2,7 +2,7 @@
 // Server. PBS has no guests, nodes-as-cluster or remotes, so those operations
 // return provider.ErrUnsupported (naming the provider); tasks and the raw
 // escape hatch are fully supported. The curated datastore/GC/prune/verify
-// commands are thin CLI wrappers over Raw (see internal/cli/pbs.go).
+// commands are thin CLI wrappers over Raw (see internal/cli/pbs_datastore.go).
 package pbs
 
 import (
@@ -128,15 +128,16 @@ func (p *PBS) ListTasks(ctx context.Context, _ string) ([]protocol.TaskStatus, e
 	return out, nil
 }
 
-// TaskLog returns task log lines (PBS 'start' is 0-based, like PVE).
+// TaskLog returns task log lines (PBS 'start' is 0-based, like PVE). PBS
+// defaults `limit` to 50 lines, and 0 means "all lines", so an unset limit is
+// sent as 0: otherwise `pc task log` and a dry-run prune preview would stop
+// silently at line 50.
 func (p *PBS) TaskLog(ctx context.Context, h protocol.TaskHandle, opts provider.LogOptions) ([]protocol.LogLine, error) {
 	q := url.Values{}
 	if opts.Start > 0 {
 		q.Set("start", strconv.Itoa(opts.Start-1))
 	}
-	if opts.Limit > 0 {
-		q.Set("limit", strconv.Itoa(opts.Limit))
-	}
+	q.Set("limit", strconv.Itoa(max(opts.Limit, 0)))
 	var lines []protocol.LogLine
 	err := p.cl.Do(ctx, &transport.Request{Method: "GET", Path: taskPath(h.UPID, "log"), Query: q}, &lines)
 	return lines, err

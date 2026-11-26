@@ -341,6 +341,38 @@ func newDatastoreGCStartCmd(a *app) *cobra.Command {
 // keepOptions are PBS's retention flags, shared by prune.
 var keepOptions = []string{"keep-last", "keep-hourly", "keep-daily", "keep-weekly", "keep-monthly", "keep-yearly"}
 
+// pruneFlaggedKeys / verifyFlaggedKeys are the API parameters that have a
+// dedicated flag (plus the store, which is the positional argument). They
+// decide what is affected and whether the confirmation is shown, so --set may
+// not supply them (see refuseFlaggedSet).
+var (
+	pruneFlaggedKeys  = append([]string{"store", "dry-run", "ns", "backup-type", "backup-id", "max-depth"}, keepOptions...)
+	verifyFlaggedKeys = []string{"store", "ns", "backup-type", "backup-id", "backup-time", "ignore-verified", "outdated-after", "max-depth"}
+)
+
+// refuseFlaggedSet rejects --set entries for keys that have a dedicated flag.
+// For confirm-gated mutations the prompt (and the dry-run decision) is built
+// from the flags; letting --set override one of those keys would make the
+// request differ from what was confirmed — e.g. `--dry-run --set dry-run=0`
+// would prune for real without a prompt.
+func refuseFlaggedSet(set []string, flagged ...string) error {
+	for _, kv := range set {
+		k, _, _ := strings.Cut(kv, "=")
+		for _, f := range flagged {
+			if k == f {
+				if f == "store" {
+					return fmt.Errorf("--set store is not allowed: the datastore is the positional argument")
+				}
+				if strings.HasPrefix(f, "backup-") && f != "backup-time" {
+					return fmt.Errorf("--set %s is not allowed: use --group <type>/<id>", f)
+				}
+				return fmt.Errorf("--set %s is not allowed: use --%s", f, f)
+			}
+		}
+	}
+	return nil
+}
+
 func newDatastorePruneCmd(a *app) *cobra.Command {
 	var ns, grp string
 	var maxDepth int
@@ -393,22 +425,22 @@ func newDatastorePruneCmd(a *app) *cobra.Command {
 			if ns != "" {
 				scope += " (namespace " + ns + ")"
 			}
+			// The dry-run decision, the scope and the retention shown in the
+			// prompt come from the flags, so --set must not be able to
+			// override any of them behind the prompt's back.
+			if err := refuseFlaggedSet(set, pruneFlaggedKeys...); err != nil {
+				return err
+			}
 			params, err := mergeSet(base, set)
 			if err != nil {
 				return err
 			}
-			hasKeep := false
-			for _, k := range keepOptions {
-				if params.Get(k) != "" {
-					hasKeep = true
-				}
-			}
-			if !hasKeep {
+			if len(retention) == 0 {
 				return fmt.Errorf("no retention given: pass at least one of --%s", strings.Join(keepOptions, ", --"))
 			}
 			if !dryRun {
 				if err := confirm(a, fmt.Sprintf("prune %s on %s keeping %s? snapshots outside this retention are removed",
-					scope, a.pbsTarget(), orElse(strings.Join(retention, ","), "the --set retention"))); err != nil {
+					scope, a.pbsTarget(), strings.Join(retention, ","))); err != nil {
 					return err
 				}
 			}
@@ -426,7 +458,7 @@ func newDatastorePruneCmd(a *app) *cobra.Command {
 	cmd.Flags().StringVar(&grp, "group", "", "prune only this backup group (<type>/<id>, e.g. vm/100)")
 	cmd.Flags().IntVar(&maxDepth, "max-depth", 0, "namespace recursion depth (datastore-wide prune)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pruned without removing anything (no confirmation)")
-	cmd.Flags().StringArrayVar(&set, "set", nil, "extra API parameter key=value (repeatable; wins over flags)")
+	cmd.Flags().StringArrayVar(&set, "set", nil, "extra API parameter key=value (repeatable; keys that have a flag are refused)")
 	cmd.MarkFlagsMutuallyExclusive("group", "max-depth")
 	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
@@ -453,7 +485,7 @@ func pbsPrune(ctx context.Context, a *app, p provider.Provider, path string, par
 		return err
 	}
 	upid, _ := data.(string)
-	if !dryRun || !wait || upid == "" || a.format == "json" || a.format == "yaml" {
+	if !dryRun || !wait || upid == "" || a.machineOutput() {
 		return nil
 	}
 	h, err := parseTaskArg(upid)
@@ -512,6 +544,9 @@ func newDatastoreVerifyStartCmd(a *app) *cobra.Command {
 			if ns != "" {
 				scope += " (namespace " + ns + ")"
 			}
+			if err := refuseFlaggedSet(set, verifyFlaggedKeys...); err != nil {
+				return err
+			}
 			params, err := mergeSet(base, set)
 			if err != nil {
 				return err
@@ -529,7 +564,7 @@ func newDatastoreVerifyStartCmd(a *app) *cobra.Command {
 	cmd.Flags().BoolVar(&ignoreVerified, "ignore-verified", false, "skip snapshots already verified (see --outdated-after)")
 	cmd.Flags().IntVar(&outdatedAfter, "outdated-after", 0, "re-verify snapshots verified more than N days ago")
 	cmd.Flags().IntVar(&maxDepth, "max-depth", 0, "namespace recursion depth")
-	cmd.Flags().StringArrayVar(&set, "set", nil, "extra API parameter key=value (repeatable; wins over flags)")
+	cmd.Flags().StringArrayVar(&set, "set", nil, "extra API parameter key=value (repeatable; keys that have a flag are refused)")
 	waitFlags(cmd, &wait, &noWait, &timeout)
 	return cmd
 }

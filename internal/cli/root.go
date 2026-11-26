@@ -30,12 +30,34 @@ const defaultProviders = "pve,pdm"
 // allProviders marks backend-agnostic commands (tasks, raw/api, config, auth…).
 const allProviders = "pve,pdm,pbs"
 
+// knownProviders are the provider names the gate understands.
+var knownProviders = map[string]bool{"pve": true, "pdm": true, "pbs": true}
+
 func forProviders(c *cobra.Command, providers string) *cobra.Command {
 	if c.Annotations == nil {
 		c.Annotations = map[string]string{}
 	}
 	c.Annotations[providersAnnotation] = providers
 	return c
+}
+
+// CommandSupports reports whether the top-level command named top runs on
+// provider (per its forProviders annotation; unannotated = pve,pdm). found is
+// false when root has no such command. Used by cmd/coverage so each provider's
+// coverage only counts commands the gate allows on it.
+func CommandSupports(root *cobra.Command, top, provider string) (supported, found bool) {
+	for _, c := range root.Commands() {
+		if c.Name() != top {
+			continue
+		}
+		for _, p := range strings.Split(orElse(c.Annotations[providersAnnotation], defaultProviders), ",") {
+			if p == provider {
+				return true, true
+			}
+		}
+		return false, true
+	}
+	return false, false
 }
 
 // topLevel returns c's ancestor directly below the root (or c itself).
@@ -50,7 +72,10 @@ func topLevel(c *cobra.Command) *cobra.Command {
 // current provider (design decision #9). PBS shares almost none of the PVE
 // API, so without this a `pc vm list` against a PBS server would surface as an
 // opaque 404 rather than a clear "not on PBS". Cobra's own help/completion
-// commands are always allowed.
+// commands and the backend-agnostic ones (allProviders: config, context, auth,
+// version, task, raw, …) always pass, so a broken config can still be
+// repaired. An unknown provider name also passes: provider.New then reports
+// "unknown provider" for commands that actually need a backend.
 func providerGate(c *cobra.Command, current string) error {
 	top := topLevel(c)
 	if !top.HasParent() {
@@ -60,7 +85,13 @@ func providerGate(c *cobra.Command, current string) error {
 	case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return nil
 	}
+	if !knownProviders[current] {
+		return nil
+	}
 	supported := orElse(top.Annotations[providersAnnotation], defaultProviders)
+	if supported == allProviders {
+		return nil
+	}
 	for _, p := range strings.Split(supported, ",") {
 		if p == current {
 			return nil
@@ -222,12 +253,19 @@ func (a *app) providerName() string {
 
 // gateProvider is providerName without secret resolution (see
 // config.ResolveProvider), for the per-invocation provider gate.
+// It returns "" (the gate then steps aside) when the config can't be loaded or
+// the selected profile doesn't exist, so the real error surfaces from the
+// command instead of a misleading provider mismatch.
 func (a *app) gateProvider() string {
 	f, err := config.Load(config.DefaultPath())
 	if err != nil {
-		return orElse(a.provider, "pve")
+		return ""
 	}
-	return config.ResolveProvider(f, a.overrides())
+	p, err := config.ResolveProvider(f, a.overrides())
+	if err != nil {
+		return ""
+	}
+	return p
 }
 
 // outputOptions builds render options from the resolved global flags.
