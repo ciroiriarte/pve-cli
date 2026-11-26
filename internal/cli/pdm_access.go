@@ -72,8 +72,16 @@ func newAccessTokenCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rawMutate(cmd.Context(), a, p, "POST", "/access/users/"+args[0]+"/token/"+args[1], nil,
-				fmt.Sprintf("create token %s for %s", args[1], args[0]), true, 0)
+			// The response object carries `value`, the one-time secret;
+			// rawMutate renders it (native object for json/yaml).
+			if err := rawMutate(cmd.Context(), a, p, "POST", "/access/users/"+args[0]+"/token/"+args[1], nil,
+				fmt.Sprintf("create token %s for %s", args[1], args[0]), true, 0); err != nil {
+				return err
+			}
+			if isTTY() {
+				fmt.Fprintln(stderrWriter(), "note: the token secret (value) is shown only once; store it now.")
+			}
+			return nil
 		},
 	}
 	del := &cobra.Command{
@@ -119,6 +127,13 @@ func newAccessACLCmd(a *app) *cobra.Command {
 				params["propagate"] = []string{"1"}
 			}
 			if delete_ {
+				who := "users"
+				if asGroups {
+					who = "groups"
+				}
+				if err := confirm(a, fmt.Sprintf("delete ACL entries on %s (roles %s) for %s %s?", path, roles, who, ugids)); err != nil {
+					return err
+				}
 				params["delete"] = []string{"1"}
 			}
 			return rawMutate(cmd.Context(), a, p, "PUT", "/access/acl", params, "update acl "+path, true, 0)

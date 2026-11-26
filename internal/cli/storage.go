@@ -205,7 +205,7 @@ func newStorageCmd(a *app) *cobra.Command {
 			}
 			path := fmt.Sprintf("/nodes/%s/storage/%s/prunebackups", pruneNode, args[0])
 			if !pruneApply {
-				return a.renderGet(cmd, p, path+"?"+q.Encode(), "volid", "type", "vmid", "mark")
+				return a.renderGetQuery(cmd, p, path, q, "volid", "type", "vmid", "mark")
 			}
 			if err := confirm(a, fmt.Sprintf("apply pruning on %s/%s (deletes old backups)?", pruneNode, args[0])); err != nil {
 				return err

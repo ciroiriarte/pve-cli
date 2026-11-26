@@ -46,22 +46,38 @@ func resolveGuestBase(cmd *cobra.Command, a *app, spec guestSpec, idArg, node, r
 }
 
 // rawMutate issues a mutating API call via provider.Raw and, when the response
-// is a UPID, drives the shared task-wait UX. Non-task mutations (e.g. config
-// updates that return null) simply succeed.
+// is a UPID, drives the shared task-wait UX. Only `data: null` (or an empty
+// body/string) means synchronous success. A malformed envelope or a task id
+// that fails to parse is an error (#32); any other payload (e.g. the object
+// returned by token create) is rendered rather than dropped (#31).
 func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path string, params url.Values, label string, wait bool, timeout int) error {
 	body, err := p.Raw(ctx, method, path, params)
 	if err != nil {
 		return err
 	}
-	var upid string
-	if err := protocol.DecodeData(body, &upid); err != nil || upid == "" {
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return nil
+	}
+	var data any
+	if err := protocol.DecodeData(body, &data); err != nil {
+		return fmt.Errorf("%s: unexpected response: %w", label, err)
+	}
+	upid, isString := data.(string)
+	switch {
+	case data == nil || (isString && upid == ""):
 		return nil // synchronous mutation, nothing to wait on
+	case !isString:
+		return a.renderBody(body)
 	}
 	// parseTaskArg handles both a bare PVE "UPID:..." and the PDM-proxied
 	// "pve:<remote>!UPID:..." form (carrying the remote needed to poll it).
 	h, err := parseTaskArg(upid)
 	if err != nil {
-		return nil // response was not a task id
+		if strings.Contains(upid, "UPID:") {
+			return fmt.Errorf("%s: malformed task id in response: %w", label, err)
+		}
+		// A plain, non-task string result: show it rather than drop it.
+		return a.renderBody(body)
 	}
 	h.Display = label
 	return finishTask(ctx, a, p, h, wait, timeout, label)

@@ -49,7 +49,11 @@ func newRemoteCmd(a *app) *cobra.Command {
 				}
 				for _, r := range remotes {
 					if r.ID == args[0] {
-						return a.render(remotesTable([]domain.Remote{r}))
+						// Singular read: json/yaml emit the object, not a
+						// one-element array (AGENTS.md §1, #35).
+						t := remotesTable([]domain.Remote{r})
+						t.Raw = r
+						return a.render(t)
 					}
 				}
 				return fmt.Errorf("remote %q not found", args[0])

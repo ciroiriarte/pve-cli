@@ -94,10 +94,23 @@ func (a *app) pdmGet(cmd *cobra.Command, path string, cols ...string) error {
 // renderGet GETs a path on the given provider and renders an array (mapsTable),
 // a single object (kvTable), or a scalar — provider-agnostic.
 func (a *app) renderGet(cmd *cobra.Command, p provider.Provider, path string, cols ...string) error {
-	body, err := p.Raw(cmd.Context(), "GET", path, nil)
+	return a.renderGetQuery(cmd, p, path, nil, cols...)
+}
+
+// renderGetQuery is renderGet with query parameters. The query must be passed
+// as params, never concatenated into path: the transport sets path as
+// URL.Path, so a literal "?" would be escaped to %3F and the query lost (#29).
+func (a *app) renderGetQuery(cmd *cobra.Command, p provider.Provider, path string, query url.Values, cols ...string) error {
+	body, err := p.Raw(cmd.Context(), "GET", path, query)
 	if err != nil {
 		return err
 	}
+	return a.renderBody(body, cols...)
+}
+
+// renderBody renders an API envelope's data: an array of objects (mapsTable),
+// a single object (kvTable; the native object for json/yaml), or a scalar.
+func (a *app) renderBody(body []byte, cols ...string) error {
 	var arr []map[string]any
 	if err := protocol.DecodeData(body, &arr); err == nil {
 		return a.render(mapsTable(arr, cols...))
