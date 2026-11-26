@@ -6,6 +6,11 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Changed**: keep the `go 1.22.0` floor and the `golang.org/x/net` v0.35.0 pin;
+  `packaging/obs/README.md` now records the per-target Go availability, why
+  raising the floor does not clear the x/net advisories, and when to re-check
+  (#46).
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a

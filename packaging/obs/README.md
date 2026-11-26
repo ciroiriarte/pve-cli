@@ -70,3 +70,30 @@ Then run `pc --help`.
   ≥ 1.22 (true for the targeted releases). For older bases, switch to the OBS
   `go1.x` images.
 - Bump `_service` `revision` and `debian/changelog` on each release.
+
+## Go floor (`go 1.22.0`) and the golang.org/x/net pin
+
+`go.mod` stays at `go 1.22.0` and `golang.org/x/net` at v0.35.0 (#46). Raising
+the floor was evaluated against what each OBS target can resolve (checked with
+`osc buildinfo` and the published repos, 2026-11):
+
+| Target | Go available today | Newer Go reachable? |
+|---|---|---|
+| Debian 13 | golang-go 1.24.4 | none in the OBS `Debian:13` repo |
+| Ubuntu 24.04 | golang-go 1.22.2 | `golang-1.23/1.24/1.25/1.26-go` exist only in `Ubuntu:24.04/universe-update`, which the OBS repo does not use; needs an OBS repo path change plus `BuildRequires: golang-1.2x-go` and `PATH` in `debian/rules` |
+| Leap 15.6 | go1.22.2 | `go1.23+` not resolvable; needs `devel:languages:go/SLE_15_SP6` added to the repo paths (the current `deleted` path entry is dead) |
+| Leap 16.0, Tumbleweed, Slowroll, Rocky 9/10 | 1.27 | yes |
+
+The advisories that matter are fixed in x/net v0.56.0 (`go 1.25.0`) and v0.60.0
+(`go 1.26.0`). A floor of 1.24 only reaches x/net v0.50-v0.55, which does not
+clear them, so raising to 1.24 buys nothing. A floor of 1.26 would need Go 1.26
+on every target, which the OBS Debian 13 repo cannot provide. govulncheck
+reports none of the x/net findings as reachable from `pc`.
+
+Re-check rule: revisit the floor when any of these changes: Debian 13 gains an
+official Go >= 1.25/1.26, the OBS Ubuntu/Leap 15.6 repos are layered with the
+Go side-repos above, or a Ubuntu 24.04/Leap 15.6 target is dropped. Also re-run
+`govulncheck` and re-evaluate the pin whenever `internal/transport/websocket.go`
+or any proxy handling changes: calling `proxy.FromEnvironment`/`PerHost` or
+setting `Dialer.Proxy = http.ProxyFromEnvironment` makes the x/net/proxy
+advisory (GO-2025-3503) reachable.
