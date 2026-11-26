@@ -125,6 +125,7 @@ type rotServer struct {
 	createErr  bool   // POST /snapshot returns HTTP 500
 	taskFail   bool   // tasks end with a non-OK exit status
 	failDelete string // DELETE of this snapshot returns HTTP 500
+	taskStuck  bool   // tasks never finish
 	params     map[string]string
 }
 
@@ -142,6 +143,10 @@ func (s *rotServer) start(t *testing.T) *httptest.Server {
 			{"type":"qemu","vmid":100,"name":"web","node":"pve-01","status":"stopped"}]}`))
 	})
 	mux.HandleFunc("/api2/json/nodes/pve-01/tasks/", func(w http.ResponseWriter, _ *http.Request) {
+		if s.taskStuck {
+			w.Write([]byte(`{"data":{"status":"running"}}`))
+			return
+		}
 		if s.taskFail {
 			w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"snapshot feature is not available"}}`))
 			return
@@ -341,7 +346,7 @@ func TestSnapshotRotateConfirmGate(t *testing.T) {
 		{"ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create"},
 	} {
 		_, err := runCLI(t, withCreds(srv, args...)...)
-		if err == nil || !strings.Contains(err.Error(), "--yes") || !strings.Contains(err.Error(), "ct 9320 (pcsnap)") {
+		if err == nil || !strings.Contains(err.Error(), "--yes") || !strings.Contains(err.Error(), "ct 9320 (pcsnap) on pve-01") {
 			t.Errorf("%v: expected a confirm refusal naming the target, got %v", args, err)
 		}
 	}
@@ -523,5 +528,65 @@ func TestSnapshotRotatePDMGuard(t *testing.T) {
 	r := decodeRotate(t, out)
 	if r.Remote != "dc-west" || len(r.Deleted) != 0 {
 		t.Errorf("summary: %+v", r)
+	}
+}
+
+// The marker must be the description's terminal token (after trimming
+// trailing whitespace/newlines); a marker followed by text doesn't count.
+func TestHasMarker(t *testing.T) {
+	cases := map[string]bool{
+		"pc auto-snapshot [pc-rotate:auto]":           true,
+		"pc auto-snapshot [pc-rotate:auto]\n":         true,
+		"pc auto-snapshot [pc-rotate:auto]  \t\r\n":   true,
+		"nightly run\nsecond line [pc-rotate:auto]\n": true,
+		"[pc-rotate:auto] but edited afterwards":      false,
+		"[pc-rotate:auto]\nmore notes":                false,
+		"pc auto-snapshot [pc-rotate:auto-x]":         false,
+		"pc auto-snapshot [pc-rotate:xauto]":          false,
+		"":                                            false,
+	}
+	for desc, want := range cases {
+		if got := hasMarker(desc, "auto"); got != want {
+			t.Errorf("hasMarker(%q) = %v; want %v", desc, got, want)
+		}
+	}
+	if d := managedDescription("nightly [pc-rotate:auto]\n", "auto"); d != "nightly [pc-rotate:auto]" {
+		t.Errorf("marker appended twice: %q", d)
+	}
+	snaps := []rotSnap{
+		{"pc-auto-20260101-000000", 1, "[pc-rotate:auto] edited"},
+		{"pc-auto-20260102-000000", 2, "line one\nline two [pc-rotate:auto]\n"},
+	}
+	_, del := planRotation(snaps, "auto", 0)
+	if !reflect.DeepEqual(names(del), []string{"pc-auto-20260102-000000"}) {
+		t.Fatalf("selected %v; only the snapshot ending in the marker is managed", names(del))
+	}
+}
+
+func TestConfirmList(t *testing.T) {
+	if got := confirmList([]string{"a", "b"}, 5); got != "a, b" {
+		t.Errorf("short list = %q", got)
+	}
+	if got := confirmList([]string{"a", "b", "c", "d", "e", "f", "g"}, 5); got != "a, b, c, d, e and 2 more" {
+		t.Errorf("capped list = %q", got)
+	}
+}
+
+// A delete that hits --wait-timeout leaves its task running (holding the
+// lock), so the rest are not attempted and are reported as such.
+func TestSnapshotRotateDeleteTimeoutStops(t *testing.T) {
+	s := &rotServer{snaps: seedSnaps(), taskStuck: true}
+	srv := s.start(t)
+	out, err := runCLI(t, withCreds(srv, "ct", "snapshot", "rotate", "9320", "--keep", "0", "--no-create", "--yes", "--wait-timeout", "1", "-o", "json")...)
+	if err == nil || !strings.Contains(err.Error(), "2 not attempted") {
+		t.Fatalf("expected a timeout error with not-attempted count, got %v", err)
+	}
+	if m := s.mutations(); !reflect.DeepEqual(m, []string{"DELETE pc-auto-20260101-000000"}) {
+		t.Fatalf("mutations = %v; want only the first delete", m)
+	}
+	r := decodeRotate(t, out)
+	if !reflect.DeepEqual(r.Failed, []string{"pc-auto-20260101-000000"}) ||
+		!reflect.DeepEqual(r.NotAttempted, []string{"pc-auto-20260102-000000", "pc-auto-20260103-000000"}) {
+		t.Fatalf("summary: %+v", r)
 	}
 }

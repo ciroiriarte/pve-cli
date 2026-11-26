@@ -396,9 +396,10 @@ func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 			"pattern) and the ownership marker [pc-rotate:<label>] is appended to its\n" +
 			"description. The label's managed snapshots beyond the newest N (the new\n" +
 			"one counts and is never pruned) are deleted, oldest first, after the\n" +
-			"create succeeds. Managed means BOTH the exact name pattern and the marker:\n" +
-			"hand-made snapshots, other labels, and snapshots made without --keep are\n" +
-			"never touched, even if their name looks managed.\n\n" +
+			"create succeeds. Managed means BOTH the exact name pattern and the marker\n" +
+			"at the end of the description: snapshots without the marker are never\n" +
+			"touched (hand-made ones, other labels, snapshots made without --keep),\n" +
+			"even if their name looks managed.\n\n" +
 			"Deleting prompts for confirmation (before anything is created); pass\n" +
 			"-y/--yes for cron. Preview with `snapshot rotate --dry-run`.",
 		Example: fmt.Sprintf("  pc %[1]s snapshot create 100 pre-upgrade --description 'before 9.2'\n"+
@@ -460,15 +461,18 @@ func newGuestSnapshotCmd(a *app, spec guestSpec) *cobra.Command {
 			"first. The new snapshot counts toward N and is never pruned. --no-create\n" +
 			"only prunes. A failed create prunes nothing.\n\n" +
 			"A snapshot is managed only if it has BOTH the label's exact name pattern\n" +
-			"and the [pc-rotate:<label>] marker in its description (pc appends it on\n" +
-			"create). Hand-made snapshots, other labels, and look-alike names without\n" +
-			"the marker are never touched; removing the marker unmanages a snapshot.\n\n" +
+			"and the [pc-rotate:<label>] marker at the end of its description (pc\n" +
+			"appends it on create). Snapshots without the marker are never touched,\n" +
+			"whatever their name; removing the marker unmanages a snapshot.\n\n" +
 			"The deletions are planned first and confirmed before anything is created\n" +
 			"(pass -y/--yes for cron); with nothing to delete there is no prompt. Each\n" +
 			"deletion is reported on stderr and listed in the json/yaml summary.\n" +
 			"--dry-run never prompts, creates or deletes; it reports the plan.\n" +
 			"A task that ends with WARNINGS counts as failed, like elsewhere in pc,\n" +
-			"so the run stops before pruning.",
+			"so the run stops before pruning. --wait-timeout does not cancel a PVE\n" +
+			"task: if a delete times out, its task keeps running (holding the guest\n" +
+			"lock), so the remaining deletions are skipped and reported as\n" +
+			"not_attempted.",
 		Example: fmt.Sprintf("  pc %[1]s snapshot rotate 100 --keep 7 --label daily --yes\n"+
 			"  pc %[1]s snapshot rotate 100 --keep 24 --label hourly --dry-run\n"+
 			"  pc %[1]s snapshot rotate 100 --keep 0 --label hourly --no-create --yes   # drop all hourly", spec.noun),

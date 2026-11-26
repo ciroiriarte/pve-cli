@@ -15,13 +15,16 @@ surface may change between minor releases.
   rotate <id> --keep N` is the cron-friendly verb (create + prune;
   `--no-create` prunes only, `--dry-run` changes nothing and never prompts).
   A snapshot is managed only if it has both the label's exact name pattern and
-  the marker, so hand-made snapshots (even ones named like `pc-auto-…`),
-  snapshots made without `--keep`, and other labels are never touched; removing
-  the marker unmanages a snapshot. Deletions are planned first and
-  confirm-gated before anything is created (`-y/--yes` for cron; no prompt when
-  nothing is to be deleted). Each deletion is reported on stderr, and `-o json`
-  emits a summary object (`created`, `kept`, `deleted`, `failed`). A failed
-  create, including a task ending with `WARNINGS`, prunes nothing.
+  the marker as the last token of its description; snapshots without the
+  marker (hand-made ones, even if named like `pc-auto-…`, snapshots made
+  without `--keep`, other labels) are never touched, and removing the marker
+  unmanages a snapshot. Deletions are planned first and confirm-gated, naming
+  the guest and node, before anything is created (`-y/--yes` for cron; no
+  prompt when nothing is to be deleted). Each deletion is reported on stderr,
+  and `-o json` emits a summary object (`created`, `kept`, `deleted`, `failed`,
+  `not_attempted`). A failed create, including a task ending with `WARNINGS`,
+  prunes nothing; a delete that hits `--wait-timeout` (which does not cancel
+  the PVE task) stops the remaining deletions.
   `snapshot create` also gains `--description`, `--vmstate` (VMs only) and
   `--wait-timeout`, its name is optional with `--keep`, and `pc guest snapshot
   …` is now available (type-agnostic, like the other `guest` verbs).

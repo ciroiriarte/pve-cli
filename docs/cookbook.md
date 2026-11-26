@@ -84,7 +84,7 @@ pc vm snapshot rollback 100 pre-upgrade --yes
 pc vm snapshot delete 100 pre-upgrade --yes
 # rotation: pc-managed = name pc-<label>-YYYYMMDD-HHMMSS (UTC) AND the
 # [pc-rotate:<label>] marker in the description (written by --keep/rotate).
-# Hand-made snapshots, even ones named pc-auto-..., are never pruned.
+# Snapshots without the marker are never touched, even ones named pc-auto-...
 pc vm snapshot create 100 --keep 7 --label daily --yes  # create, keep newest 7
 pc guest snapshot rotate 100 --keep 24 --label hourly --dry-run
 # cron: 0 * * * *  pc guest snapshot rotate 100 --keep 24 --label hourly --yes -o json

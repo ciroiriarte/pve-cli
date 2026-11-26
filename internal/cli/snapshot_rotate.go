@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -60,10 +61,21 @@ func autoSnapName(label string, t time.Time) string {
 // description. The closing bracket makes it label-exact ("auto" vs "auto-x").
 func snapMarker(label string) string { return "[pc-rotate:" + label + "]" }
 
+// hasMarker reports whether desc ends with label's ownership marker, ignoring
+// trailing whitespace/newlines (PVE stores descriptions with a trailing "\n").
+// A marker followed by other text does not count.
+func hasMarker(desc, label string) bool {
+	return strings.HasSuffix(strings.TrimRight(desc, " \t\r\n"), snapMarker(label))
+}
+
 // managedDescription appends the ownership marker to the user's description
-// (or a default text), so the marker is present even with --description.
+// (or a default text), so the marker is present even with --description. A
+// description that already ends with the marker is kept as is.
 func managedDescription(desc, label string) string {
 	desc = strings.TrimSpace(desc)
+	if hasMarker(desc, label) {
+		return desc
+	}
 	if desc == "" {
 		desc = "pc auto-snapshot"
 	}
@@ -85,9 +97,9 @@ type rotSnap struct {
 }
 
 // isManaged reports whether s is a pc-managed snapshot of label: it needs both
-// the anchored name and the ownership marker in its description.
+// the anchored name and the ownership marker at the end of its description.
 func isManaged(s rotSnap, label string) bool {
-	return autoSnapPattern(label).MatchString(s.Name) && strings.Contains(s.Description, snapMarker(label))
+	return autoSnapPattern(label).MatchString(s.Name) && hasMarker(s.Description, label)
 }
 
 // planRotation selects which of the existing snaps to keep and delete for
@@ -134,6 +146,8 @@ type snapshotRotateResult struct {
 	Kept    []string `json:"kept" yaml:"kept"`
 	Deleted []string `json:"deleted" yaml:"deleted"`
 	Failed  []string `json:"failed,omitempty" yaml:"failed,omitempty"`
+	// NotAttempted lists deletions skipped after a delete task timed out.
+	NotAttempted []string `json:"not_attempted,omitempty" yaml:"not_attempted,omitempty"`
 }
 
 func rotateTable(r snapshotRotateResult) output.Tabular {
@@ -155,6 +169,9 @@ func rotateTable(r snapshotRotateResult) output.Tabular {
 	}
 	for _, n := range r.Failed {
 		t.Rows = append(t.Rows, []string{"failed", n})
+	}
+	for _, n := range r.NotAttempted {
+		t.Rows = append(t.Rows, []string{"not-attempted", n})
 	}
 	return t
 }
@@ -240,10 +257,15 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 		if g.Name != "" {
 			target += " (" + g.Name + ")"
 		}
-		msg := fmt.Sprintf("delete %d %q snapshot(s) of %s: %s?", len(del), o.label, target, strings.Join(delNames, ", "))
+		where := g.Node
+		if g.Remote != "" {
+			where = fmt.Sprintf("%s (remote %s)", g.Node, g.Remote)
+		}
+		list := confirmList(delNames, 5)
+		msg := fmt.Sprintf("delete %d %q snapshot(s) of %s on %s: %s?", len(del), o.label, target, where, list)
 		if o.create {
-			msg = fmt.Sprintf("create %s on %s and delete %d old %q snapshot(s): %s?",
-				o.name, target, len(del), o.label, strings.Join(delNames, ", "))
+			msg = fmt.Sprintf("create %s on %s on %s and delete %d old %q snapshot(s): %s?",
+				o.name, target, where, len(del), o.label, list)
 		}
 		if err := confirm(a, msg); err != nil {
 			return err
@@ -262,11 +284,23 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 		fmt.Fprintf(stderrWriter(), "created snapshot %s of %s %d\n", o.name, kind, g.VMID)
 	}
 
-	for _, s := range del {
+	for i, s := range del {
 		label := fmt.Sprintf("delete snapshot %s of %s %d", s.Name, kind, g.VMID)
 		if err := mutateAndWait(ctx, p, "DELETE", base+"/snapshot/"+s.Name, nil, label, o.timeout); err != nil {
 			fmt.Fprintf(stderrWriter(), "%s: %v\n", label, err)
 			res.Failed = append(res.Failed, s.Name)
+			if errors.Is(err, context.DeadlineExceeded) {
+				// A wait timeout doesn't cancel the PVE task, which keeps the
+				// guest locked; further deletes would only fail on the lock.
+				for _, r := range del[i+1:] {
+					res.NotAttempted = append(res.NotAttempted, r.Name)
+				}
+				if len(res.NotAttempted) > 0 {
+					fmt.Fprintf(stderrWriter(), "stopping after a timed-out delete (its task may still be running); not attempted: %s\n",
+						strings.Join(res.NotAttempted, ", "))
+				}
+				break
+			}
 			continue
 		}
 		fmt.Fprintf(stderrWriter(), "deleted snapshot %s of %s %d\n", s.Name, kind, g.VMID)
@@ -276,9 +310,22 @@ func rotateGuestSnapshots(ctx context.Context, a *app, p provider.Provider, g do
 		return err
 	}
 	if len(res.Failed) > 0 {
-		return fmt.Errorf("%d of %d snapshot deletion(s) failed", len(res.Failed), len(del))
+		msg := fmt.Sprintf("%d of %d snapshot deletion(s) failed", len(res.Failed), len(del))
+		if len(res.NotAttempted) > 0 {
+			msg += fmt.Sprintf(", %d not attempted", len(res.NotAttempted))
+		}
+		return errors.New(msg)
 	}
 	return nil
+}
+
+// confirmList joins names for a prompt, listing at most max and summarizing
+// the rest as "and N more".
+func confirmList(names []string, max int) string {
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:max], ", "), len(names)-max)
 }
 
 // listRotSnaps fetches a guest's snapshots, dropping PVE's synthetic "current".
