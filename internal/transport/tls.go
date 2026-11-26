@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,10 +31,22 @@ func NewHTTPClient(tlsConf TLSConfig, timeout time.Duration) (*http.Client, erro
 		timeout = 30 * time.Second
 	}
 	return &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{TLSClientConfig: cfg},
+		Timeout:       timeout,
+		Transport:     &http.Transport{TLSClientConfig: cfg},
+		CheckRedirect: refuseRedirect,
 	}, nil
 }
+
+// refuseRedirect is the CheckRedirect policy for every credentialed client.
+// The PVE/PDM APIs never redirect; following one could downgrade https→http
+// (Go forwards Authorization/cookies on same-host redirects regardless of
+// scheme) or replay the ticket-login password body on a 307/308.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("transport: refusing to follow redirect to %s", req.URL.Redacted())
+}
+
+// insecureWarnOnce limits the insecure-TLS warning to one line per process.
+var insecureWarnOnce sync.Once
 
 // TLSConfig describes how the client validates the server certificate.
 type TLSConfig struct {
@@ -42,7 +55,8 @@ type TLSConfig struct {
 	// Fingerprint pins the server cert's SHA-256 fingerprint. Accepts the
 	// colon-separated hex form, with or without a "sha256:" prefix.
 	Fingerprint string
-	// Insecure disables all verification. Opt-in footgun.
+	// Insecure disables all verification. Opt-in footgun, warned on stderr.
+	// Ignored when Fingerprint is set: a pin always wins.
 	Insecure bool
 }
 
@@ -50,11 +64,8 @@ type TLSConfig struct {
 func (c TLSConfig) build() (*tls.Config, error) {
 	out := &tls.Config{MinVersion: tls.VersionTLS12}
 
-	if c.Insecure {
-		out.InsecureSkipVerify = true
-		return out, nil
-	}
-
+	// A pin always wins over Insecure, so a configured fingerprint is never
+	// silently ignored.
 	if c.Fingerprint != "" {
 		want, err := normalizeFingerprint(c.Fingerprint)
 		if err != nil {
@@ -67,6 +78,16 @@ func (c TLSConfig) build() (*tls.Config, error) {
 		out.InsecureSkipVerify = true
 		out.SessionTicketsDisabled = true
 		out.VerifyPeerCertificate = pinVerifier(want)
+		return out, nil
+	}
+
+	if c.Insecure {
+		// build only backs credentialed clients, so credentials will cross an
+		// unverified connection: say so, once.
+		insecureWarnOnce.Do(func() {
+			fmt.Fprintln(stderr, "[pc] WARNING: TLS verification is disabled (insecure); credentials are sent to an unverified server. Pin the cert with --tls-fingerprint instead.")
+		})
+		out.InsecureSkipVerify = true
 		return out, nil
 	}
 

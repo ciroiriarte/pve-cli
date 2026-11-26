@@ -88,7 +88,7 @@ func New(opt Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: tlsConf}}
+	hc := &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: tlsConf}, CheckRedirect: refuseRedirect}
 	retries := opt.MaxRetries
 	if retries == 0 {
 		retries = 3

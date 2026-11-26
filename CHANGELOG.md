@@ -6,6 +6,19 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: token auth against Proxmox Datacenter Manager now sends
+  `Authorization: PDMAPIToken=<tokenid>:<secret>` (colon separator) instead of
+  the PVE `PVEAPIToken=<tokenid>=<secret>` form; PVE is unchanged (#30).
+- **Security**: TLS hardening (#38):
+  - A configured `--tls-fingerprint` pin now always wins over `--insecure`;
+    previously insecure silently ignored the pin.
+  - `--insecure=false` now overrides a profile/env `insecure: true`.
+  - Sending credentials with verification disabled (insecure, no pin) prints a
+    one-line warning to stderr, once per process.
+  - The API and ticket-login clients refuse HTTP redirects, so an https→http
+    redirect can't leak the token in clear and a 307/308 can't replay the
+    login password to another target.
+
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
 - **Security**: fixes from a static security assessment (govulncheck + gosec +
