@@ -281,6 +281,50 @@ func TestPDMNodePathGuestCommandsRefused(t *testing.T) {
 	}
 }
 
+// A remote-filtered snapshot list/prune surfaces that remote's inventory
+// failure (exit 4) instead of silently finding nothing.
+func TestPDMSnapshotErroredRemoteFilter(t *testing.T) {
+	srv, log := pdmTargetServerCounting(t)
+	defer srv.Close()
+
+	check := func(label string, args ...string) {
+		t.Helper()
+		_, err := runCLI(t, withPDMCreds(srv, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "connection refused") || ExitCodeFor(err) != ExitAPIServer {
+			t.Errorf("%s %v: expected exit 4 inventory error, got %v", label, args, err)
+		}
+	}
+	withTempConfig(t)
+	check("explicit", "snapshot", "list", "--remote", "dc-east")
+	check("explicit", "snapshot", "prune", "--older-than", "1d", "--yes", "--remote", "dc-east")
+	writeContextConfig(t, "pdm", "dc-east")
+	check("context", "snapshot", "list")
+	check("context", "snapshot", "prune", "--older-than", "1d", "--yes")
+	if calls := log.snapshot(); len(calls) != 0 {
+		t.Fatalf("refused prune sent mutations: %v", calls)
+	}
+}
+
+// PVE keeps the typed --node shortcut: no /cluster/resources lookup at all.
+func TestPVENodeShortcutSkipsInventory(t *testing.T) {
+	withTempConfig(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api2/json/cluster/resources", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"data":null}`))
+	})
+	mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/status/current", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":{"status":"running","vmid":100}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "vm", "status", "100", "--node", "pve-01")...)
+	if err != nil || !strings.Contains(out, "running") {
+		t.Fatalf("vm status --node on PVE with broken inventory: out=%q err=%v", out, err)
+	}
+}
+
 // A name lookup is scoped by the context remote too.
 func TestPDMContextRemoteByName(t *testing.T) {
 	srv := pdmTargetServer(t)

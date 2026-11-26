@@ -146,7 +146,7 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			return a.render(guestConfigTable(g, cfg))
 		},
 	}
-	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	return cmd
 }
@@ -182,7 +182,7 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 				fmt.Sprintf("%s %s %d (%s) on %s", action, spec.label, g.VMID, g.Name, g.Node))
 		},
 	}
-	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for the task to finish (default)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
@@ -225,7 +225,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 		if node == "" {
 			return g, nil
 		}
-		if pdm && !strings.EqualFold(g.Node, node) {
+		if pdm && g.Node != node {
 			return domain.Guest{}, &protocol.APIError{Kind: protocol.KindValidation,
 				Message: fmt.Sprintf("guest %d is on node %q (remote %s), not %q", g.VMID, g.Node, g.Remote, node)}
 		}

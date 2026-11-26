@@ -17,7 +17,9 @@ surface may change between minor releases.
   - The context's `remote:` is now honored as the default for single-guest
     commands (`--remote` > context `remote:` > none) and for `snapshot
     list`/`prune`; it was documented but ignored. It is ignored on `provider:
-    pve`, and `guest list` / `node list` are not filtered by it.
+    pve`, and `guest list` / `node list` are not filtered by it. A
+    remote-filtered `snapshot list`/`prune` fails (exit 4) if that remote's
+    inventory is unavailable, rather than returning nothing.
   - On PDM, `--node` no longer skips guest resolution: the guest is resolved
     (scoped to the remote when one is known) and `--node` must match its node,
     so a mutation can't be sent to an unverified or wrong remote.

@@ -78,7 +78,7 @@ func newGuestStatusCmd(a *app, spec guestSpec) *cobra.Command {
 			return a.render(guestConfigTable(g, st))
 		},
 	}
-	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
 	return cmd
 }
@@ -86,7 +86,7 @@ func newGuestStatusCmd(a *app, spec guestSpec) *cobra.Command {
 func newGuestMonitorCmds(a *app, spec guestSpec) []*cobra.Command {
 	var node, remote string
 	addScope := func(c *cobra.Command) {
-		c.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+		c.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 		c.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest")
 	}
 
