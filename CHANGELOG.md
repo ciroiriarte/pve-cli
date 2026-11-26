@@ -28,7 +28,8 @@ surface may change between minor releases.
   CD-ROM ISO, (running) local disks without `--with-local-disks`, or local
   disks on a storage without content `images`, containers with active local
   bind/device mount points or a volume on a storage without content `rootdir`,
-  guests with no allowed destination or not enough capacity, locked guests and
+  guests with no allowed destination or not enough capacity, guests listed
+  as stopped whose live power state can't be confirmed, locked guests and
   templates. `--dry-run`
   prints the plan, which `-o json` emits as an array of objects (`vmid`,
   `name`, `kind`, `status`, `from`, `to`, `mode`, `maxmem`, `skip`, `reason`;

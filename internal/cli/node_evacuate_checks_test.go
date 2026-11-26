@@ -346,6 +346,94 @@ func TestNodeEvacuateDefaultFilterUsesLiveState(t *testing.T) {
 	}
 }
 
+// Default mode: a guest listed stopped leaves the plan only when confirmed
+// stopped; unconfirmed ones stay as skips (exit 6).
+func TestNodeEvacuateDefaultUnknownLivenessStays(t *testing.T) {
+	f := newEvacFixture([]map[string]any{
+		// 200: VM precondition 403 and status/current 403 → unknown, kept.
+		{"type": "qemu", "vmid": 200, "name": "vm-403", "node": "pve-01", "status": "stopped", "maxmem": gib},
+		// 201: VM precondition 403 but status/current says stopped → dropped.
+		{"type": "qemu", "vmid": 201, "name": "vm-off", "node": "pve-01", "status": "stopped", "maxmem": gib},
+		// 202: CT precondition 403, status/current 403 → unknown, kept.
+		ctGuest(202, "stopped"),
+		// 203: locked CT (bypasses the precondition), actually running → kept, skipped as locked.
+		{"type": "lxc", "vmid": 203, "name": "locked", "node": "pve-01", "status": "stopped", "maxmem": gib, "lock": "backup"},
+		// 204: HA VM listed stopped, status/current fails → kept, skipped.
+		{"type": "qemu", "vmid": 204, "name": "ha", "node": "pve-01", "status": "stopped", "maxmem": gib, "hastate": "started"},
+		// 205: older PVE without the LXC endpoint, actually running → planned restart.
+		ctGuest(205, "stopped"),
+		// 206: template: never checked, never in the default plan.
+		{"type": "qemu", "vmid": 206, "name": "tpl", "node": "pve-01", "status": "stopped", "maxmem": gib, "template": 1},
+	})
+	f.pre[200], f.pre[201], f.pre[202], f.pre[205] = "403", "403", "403", "501"
+	f.statusErr[200], f.statusErr[202], f.statusErr[204], f.statusErr[206] = true, true, true, true
+	f.liveRunning[203], f.liveRunning[205] = 1, 1
+	srv := f.start()
+	defer srv.Close()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--dry-run", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) != ExitValidation {
+		t.Fatalf("unconfirmed guests must exit %d, got %v", ExitValidation, err)
+	}
+	plan := evacPlan(t, out)
+	for id, w := range map[int]string{200: "power state unknown", 202: "power state unknown", 203: "locked (backup)", 204: "HA-managed"} {
+		if it := plan[id]; it == nil || it["skip"] != true || !strings.Contains(fmt.Sprint(it["reason"]), w) {
+			t.Errorf("vmid %d: want a skip with %q, got %v", id, w, it)
+		}
+	}
+	if plan[205] == nil || plan[205]["mode"] != "restart" || plan[205]["skip"] != false {
+		t.Errorf("205 is running (confirmed via status/current) and must be planned: %v", plan[205])
+	}
+	for _, id := range []int{201, 206} {
+		if _, ok := plan[id]; ok {
+			t.Errorf("vmid %d is confirmed stopped and must leave the default plan: %v", id, plan[id])
+		}
+	}
+}
+
+// Both halt paths print a "not attempted" line: at admission (--parallel 1)
+// and at POST time (a worker admitted before the halt).
+func TestNodeEvacuateNotAttemptedStderr(t *testing.T) {
+	t.Run("admission", func(t *testing.T) {
+		f := newEvacFixture(defaultEvacGuests())
+		f.pollErr[100] = true
+		srv := f.start()
+		defer srv.Close()
+		errOut := captureStderr(t, func() {
+			runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "1", "-o", "json")...)
+		})
+		for _, w := range []string{"VM 101 (mid): not attempted", "CT 102 (ct): not attempted"} {
+			if !strings.Contains(errOut, w) {
+				t.Errorf("stderr should contain %q:\n%s", w, errOut)
+			}
+		}
+	})
+	t.Run("post time", func(t *testing.T) {
+		f := newEvacFixture(defaultEvacGuests())
+		f.pollErr[100] = true
+		srv := f.start()
+		defer srv.Close()
+		haltedCh := make(chan struct{})
+		var once sync.Once
+		evacHalted = func() { once.Do(func() { close(haltedCh) }) }
+		evacBeforePost = func(vmid int) {
+			if vmid != 100 {
+				select {
+				case <-haltedCh:
+				case <-time.After(10 * time.Second):
+				}
+			}
+		}
+		defer func() { evacHalted, evacBeforePost = nil, nil }()
+		errOut := captureStderr(t, func() {
+			runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "2", "-o", "json")...)
+		})
+		if !strings.Contains(errOut, "VM 101 (mid) pve-01 -> pve-03 [online]: not attempted") {
+			t.Errorf("stderr should report 101 not attempted at POST time:\n%s", errOut)
+		}
+	})
+}
+
 // A worker admitted before a halt must not POST after it (--parallel > 1).
 func TestNodeEvacuateParallelNoPostAfterHalt(t *testing.T) {
 	f := newEvacFixture(defaultEvacGuests())

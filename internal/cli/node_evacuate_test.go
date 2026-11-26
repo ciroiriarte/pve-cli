@@ -30,7 +30,8 @@ type evacFixture struct {
 	// vmid → CT config with ?current=1 (active config; ctConf is the
 	// pending-applied view). Unset = same as ctConf.
 	ctConfCurrent map[int]string
-	liveRunning   map[int]int      // vmid → precondition running flag override (stale /cluster/resources)
+	liveRunning   map[int]int      // vmid → live running flag override (stale /cluster/resources)
+	statusErr     map[int]bool     // vmid → status/current fails (403)
 	fail          map[int]bool     // vmid → migration task ends with an error
 	nodes         []map[string]any // override nodes (nil = default 3-node cluster)
 	mu            sync.Mutex
@@ -51,7 +52,7 @@ func defaultEvacGuests() []map[string]any {
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
 	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
-		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{},
+		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, statusErr: map[int]bool{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
@@ -107,6 +108,20 @@ func (f *evacFixture) start() *httptest.Server {
 			w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 			return
 		}
+		// {qemu|lxc}/<vmid>/status/current
+		if len(parts) == 4 && parts[2] == "status" && parts[3] == "current" {
+			vmid, _ := strconv.Atoi(parts[1])
+			if f.statusErr[vmid] {
+				http.Error(w, "Permission check failed", http.StatusForbidden)
+				return
+			}
+			st := "stopped"
+			if f.running(vmid) == 1 {
+				st = "running"
+			}
+			fmt.Fprintf(w, `{"data":{"status":%q}}`, st)
+			return
+		}
 		// lxc/<vmid>/config
 		if len(parts) == 3 && parts[0] == "lxc" && parts[2] == "config" {
 			vmid, _ := strconv.Atoi(parts[1])
@@ -127,7 +142,7 @@ func (f *evacFixture) start() *httptest.Server {
 			if r.Method == http.MethodGet {
 				d, ok := f.pre[vmid]
 				switch {
-				case d == "501" || d == "500":
+				case len(d) == 3 && d[0] >= '4':
 					code, _ := strconv.Atoi(d)
 					http.Error(w, "precondition unavailable", code)
 				case ok:
