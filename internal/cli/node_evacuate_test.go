@@ -24,9 +24,13 @@ type evacFixture struct {
 	ctConf  map[int]string   // vmid → CT config JSON override
 	repl    string           // /cluster/replication entries (JSON, comma-separated)
 	postErr map[int]bool     // vmid → migrate POST fails synchronously
-	hang    map[int]bool     // vmid → migration task never finishes
-	slow    map[int]bool     // vmid → status poll takes longer than --wait-timeout
-	pollErr map[int]bool     // vmid → status poll fails (non-terminal)
+	// vmid → migrate POST outcome is unknown to the client: "drop" closes the
+	// connection after reading the request, a 3-digit status ("502") answers
+	// that status, any other value is sent as a 200 body.
+	postOdd map[int]string
+	hang    map[int]bool // vmid → migration task never finishes
+	slow    map[int]bool // vmid → status poll takes longer than --wait-timeout
+	pollErr map[int]bool // vmid → status poll fails (non-terminal)
 	// vmid → CT config with ?current=1 (active config; ctConf is the
 	// pending-applied view). Unset = same as ctConf.
 	ctConfCurrent map[int]string
@@ -52,7 +56,7 @@ func defaultEvacGuests() []map[string]any {
 }
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
-	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
+	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{}, postOdd: map[int]string{},
 		hang: map[int]bool{}, slow: map[int]bool{}, pollErr: map[int]bool{}, ctConfCurrent: map[int]string{}, liveRunning: map[int]int{}, listErr: map[string]bool{}, listStatus: map[int]string{},
 		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
@@ -170,6 +174,22 @@ func (f *evacFixture) start() *httptest.Server {
 				return
 			}
 			r.ParseForm()
+			if odd, ok := f.postOdd[vmid]; ok {
+				f.mu.Lock()
+				f.order = append(f.order, vmid)
+				f.mu.Unlock()
+				switch odd {
+				case "drop":
+					conn, _, _ := w.(http.Hijacker).Hijack()
+					conn.Close()
+				case "502", "503", "504", "595", "596":
+					code, _ := strconv.Atoi(odd)
+					http.Error(w, "gateway error", code)
+				default:
+					w.Write([]byte(odd))
+				}
+				return
+			}
 			form := map[string]string{}
 			for k := range r.PostForm {
 				form[k] = r.PostForm.Get(k)

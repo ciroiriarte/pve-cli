@@ -128,6 +128,102 @@ func TestNodeEvacuateSyncPostFailure(t *testing.T) {
 	}
 }
 
+// A migrate POST with no usable answer (dropped connection, gateway error,
+// a success body without a task id) may have started the migration: report
+// it unknown and start nothing else. A PVE refusal stays "failed" (see
+// TestNodeEvacuateSyncPostFailure).
+func TestNodeEvacuateUnknownPostHalts(t *testing.T) {
+	for name, odd := range map[string]string{
+		"connection dropped": "drop",
+		"bad gateway":        "502",
+		"unavailable":        "503",
+		"gateway timeout":    "504",
+		"pveproxy 595":       "595",
+		"pveproxy 596":       "596",
+		"not json":           "<html>ok</html>",
+		"no task id":         `{"data":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEvacFixture(defaultEvacGuests())
+			f.postOdd[100] = odd
+			srv := f.start()
+			defer srv.Close()
+			out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "1", "-o", "json")...)
+			if err == nil || ExitCodeFor(err) != ExitTaskFailed {
+				t.Fatalf("want exit %d, got %v", ExitTaskFailed, err)
+			}
+			// Under the lock: a dropped connection gives the race detector no
+			// happens-before edge between the handler and this read.
+			f.mu.Lock()
+			order := fmt.Sprint(f.order)
+			f.mu.Unlock()
+			if order != "[100]" {
+				t.Fatalf("dispatch must halt, got POSTs %v", order)
+			}
+			plan := evacPlan(t, out)
+			if plan[100]["result"] != "unknown" || plan[100]["upid"] != nil ||
+				!strings.Contains(fmt.Sprint(plan[100]["error"]), "pc task list --node pve-01") {
+				t.Errorf("100 should be unknown with a task-list hint: %v", plan[100])
+			}
+			for _, id := range []int{101, 102} {
+				if plan[id]["result"] != "not-attempted" {
+					t.Errorf("vmid %d should be not-attempted: %v", id, plan[id])
+				}
+			}
+		})
+	}
+}
+
+// The halt for an unknown POST outcome is recorded before the gate is
+// released (--parallel > 1): a worker ready to POST while that answer is
+// being read must find the gate halted.
+func TestNodeEvacuateParallelUnknownPostHaltsAtomically(t *testing.T) {
+	f := newEvacFixture(defaultEvacGuests())
+	f.postOdd[100] = "drop"
+	srv := f.start()
+	defer srv.Close()
+
+	inGate, ready := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	evacBeforePost = func(vmid int) {
+		if vmid == 100 {
+			return
+		}
+		select { // the second worker waits until 100's answer is in the gate
+		case <-inGate:
+		case <-time.After(10 * time.Second):
+		}
+		once.Do(func() { close(ready) })
+	}
+	evacAfterPost = func(vmid int) {
+		if vmid != 100 {
+			return
+		}
+		close(inGate)
+		select { // hold 100's answer until the second worker is about to POST
+		case <-ready:
+		case <-time.After(10 * time.Second):
+		}
+		time.Sleep(100 * time.Millisecond) // let it reach the gate
+	}
+	defer func() { evacBeforePost, evacAfterPost = nil, nil }()
+
+	out, err := runCLI(t, withCreds(srv, "node", "evacuate", "pve-01", "--yes", "--parallel", "2", "-o", "json")...)
+	if err == nil || ExitCodeFor(err) != ExitTaskFailed {
+		t.Fatalf("want exit %d, got %v", ExitTaskFailed, err)
+	}
+	f.mu.Lock()
+	order := fmt.Sprint(f.order)
+	f.mu.Unlock()
+	if order != "[100]" {
+		t.Fatalf("no POST may follow an unknown POST outcome, got %v", order)
+	}
+	plan := evacPlan(t, out)
+	if plan[100]["result"] != "unknown" || plan[101]["result"] != "not-attempted" || plan[102]["result"] != "not-attempted" {
+		t.Errorf("results: 100=%v 101=%v 102=%v", plan[100]["result"], plan[101]["result"], plan[102]["result"])
+	}
+}
+
 func TestNodeEvacuateCTConfigCurrentAndPending(t *testing.T) {
 	f := newEvacFixture([]map[string]any{
 		ctGuest(150, "running"), ctGuest(151, "running"), ctGuest(152, "running"), ctGuest(153, "running"),
