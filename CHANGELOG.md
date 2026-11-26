@@ -6,6 +6,20 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: snapshot retention / auto-rotation (#24). `pc vm|ct|guest snapshot
+  create <id> --keep N [--label L]` takes a pc-managed snapshot named
+  `pc-<label>-YYYYMMDD-HHMMSS` (UTC; default label `auto`), waits for it, then
+  deletes that label's managed snapshots beyond the newest N, oldest first.
+  `pc vm|ct|guest snapshot rotate <id> --keep N` is the cron-friendly verb
+  (create + prune; `--no-create` prunes only, `--dry-run` changes nothing).
+  Only names matching the label's exact pattern are ever deleted, so
+  hand-made snapshots and other labels are never touched; an explicit `--keep`
+  is the consent for those deletions (no prompt), each is reported on stderr,
+  and `-o json` emits a summary object (`created`, `kept`, `deleted`). A failed
+  create prunes nothing. `snapshot create` also gains `--description` and
+  `--vmstate`, its name is optional with `--keep`, and `pc guest snapshot …` is
+  now available (type-agnostic, like the other `guest` verbs).
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a
