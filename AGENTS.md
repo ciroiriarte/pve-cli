@@ -142,7 +142,7 @@ TFA (#18) lives in `auth.TicketProvider`, so `auth login` and runtime ticket
 acquisition share it: a `NeedTFA` / `…:!tfa!` challenge is answered with
 `tfa-challenge` + `password=totp:<code>` (code from `--otp`/`PVE_CLI_OTP`, else
 the `otpPrompter` TTY seam, else a KindAuth error, exit 2). The TFA-confirmed
-ticket is cached in the keyring (`ticket:<user>@<server>`) and renewed with the
+ticket is cached in the keyring (`ticket:<provider>:<user>@<server>`) and renewed with the
 ticket as password (no re-prompt); it is never written to the config file.
 Login failures are `*protocol.APIError`s, which the transport returns without
 retrying, so a bad code is never re-sent or re-prompted.
