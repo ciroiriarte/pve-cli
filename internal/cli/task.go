@@ -135,8 +135,13 @@ func newTaskLogCmd(a *app) *cobra.Command {
 // the task commands need; PDM's task endpoint also expects that full prefixed id
 // in the path. A bare "UPID:..." is parsed directly (PVE).
 func parseTaskArg(arg string) (protocol.TaskHandle, error) {
-	if i := strings.Index(arg, "!"); i > 0 && strings.HasPrefix(arg, "pve:") && strings.Contains(arg[i:], "UPID:") {
-		remote := strings.TrimPrefix(arg[:i], "pve:")
+	if i := strings.Index(arg, "!UPID:"); i >= 0 && !strings.HasPrefix(arg, "UPID:") {
+		// A prefixed id must be exactly "pve:<remote>!UPID:..." with a
+		// non-empty remote, or it can't be polled (#32).
+		remote, ok := strings.CutPrefix(arg[:i], "pve:")
+		if !ok || remote == "" || strings.ContainsAny(remote, ":!") {
+			return protocol.TaskHandle{}, fmt.Errorf("malformed PDM task id (want pve:<remote>!UPID:...): %q", arg)
+		}
 		// The suffix is a plain PVE UPID; reject a malformed one rather than
 		// carrying an unpollable handle forward (#32).
 		h, err := protocol.ParseUPID(arg[i+1:])

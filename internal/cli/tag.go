@@ -266,18 +266,18 @@ func tagListTable(tags []string) output.Tabular {
 // --- cluster-wide tag group -------------------------------------------------
 
 type tagCount struct {
-	Tag    string `json:"tag"`
-	Count  int    `json:"count"`
-	Guests []int  `json:"guests,omitempty"`
+	Tag    string `json:"tag" yaml:"tag"`
+	Count  int    `json:"count" yaml:"count"`
+	Guests []int  `json:"guests,omitempty" yaml:"guests,omitempty"`
 }
 
 // tagExportEntry is one guest's tags in an export/import file.
 type tagExportEntry struct {
-	VMID int      `json:"vmid"`
-	Name string   `json:"name,omitempty"`
-	Kind string   `json:"kind,omitempty"`
-	Node string   `json:"node,omitempty"`
-	Tags []string `json:"tags"`
+	VMID int      `json:"vmid" yaml:"vmid"`
+	Name string   `json:"name,omitempty" yaml:"name,omitempty"`
+	Kind string   `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Node string   `json:"node,omitempty" yaml:"node,omitempty"`
+	Tags []string `json:"tags" yaml:"tags"`
 }
 
 func newTagCmd(a *app) *cobra.Command {

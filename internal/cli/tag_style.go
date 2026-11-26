@@ -31,18 +31,18 @@ import (
 // tagColor is one color-map entry: a tag and its background (and optional text)
 // color, stored as 6-hex lowercase without a leading '#'.
 type tagColor struct {
-	Tag        string `json:"tag"`
-	Background string `json:"background"`
-	Text       string `json:"text,omitempty"`
+	Tag        string `json:"tag" yaml:"tag"`
+	Background string `json:"background" yaml:"background"`
+	Text       string `json:"text,omitempty" yaml:"text,omitempty"`
 }
 
 // tagStyle models the datacenter tag-style option. CaseSensitive is a pointer so
 // "unset" round-trips distinctly from an explicit false.
 type tagStyle struct {
-	Shape         string     `json:"shape,omitempty"`
-	Ordering      string     `json:"ordering,omitempty"`
-	CaseSensitive *bool      `json:"case_sensitive,omitempty"`
-	ColorMap      []tagColor `json:"color_map,omitempty"`
+	Shape         string     `json:"shape,omitempty" yaml:"shape,omitempty"`
+	Ordering      string     `json:"ordering,omitempty" yaml:"ordering,omitempty"`
+	CaseSensitive *bool      `json:"case_sensitive,omitempty" yaml:"case_sensitive,omitempty"`
+	ColorMap      []tagColor `json:"color_map,omitempty" yaml:"color_map,omitempty"`
 }
 
 var (

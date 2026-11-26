@@ -57,6 +57,12 @@ func rawMutate(ctx context.Context, a *app, p provider.Provider, method, path st
 	if err != nil {
 		return err
 	}
+	return handleMutationResponse(ctx, a, p, body, label, wait, timeout)
+}
+
+// handleMutationResponse applies rawMutate's strict response handling to an
+// already-fetched mutation body (shared with `storage upload`).
+func handleMutationResponse(ctx context.Context, a *app, p provider.Provider, body []byte, label string, wait bool, timeout int) error {
 	data, err := mutationData(body, label)
 	if err != nil {
 		return err

@@ -2,12 +2,16 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ciroiriarte/pve-cli/internal/protocol"
 )
 
 // correctnessServer serves a VM 100 and CT 101 on pve-01 plus the endpoints
@@ -310,6 +314,89 @@ func TestAgentPostUnwrapsResult(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &obj); err != nil || len(obj.Paths) != 2 {
 		t.Errorf("fstrim json should be the unwrapped result object (%v):\n%s", err, out)
+	}
+}
+
+// A PDM-prefixed task id with an empty remote (or an unknown prefix) can't be
+// polled; it must fail even on the --no-wait / -o json paths, where it would
+// otherwise just be printed with exit 0.
+func TestRawMutateRejectsUnpollablePDMTaskID(t *testing.T) {
+	for _, id := range []string{
+		"pve:!UPID:node:0001:0002:6A00:qmstart:100:root@pam:",
+		"pbs:dc-east!UPID:node:0001:0002:6A00:qmstart:100:root@pam:",
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api2/json/cluster/resources", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"data":[{"type":"qemu","vmid":100,"name":"web","node":"pve-01","status":"stopped"}]}`))
+		})
+		mux.HandleFunc("/api2/json/nodes/pve-01/qemu/100/clone", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"data":"` + id + `"}`))
+		})
+		srv := httptest.NewServer(mux)
+		for _, extra := range [][]string{{"--no-wait"}, {"--no-wait", "-o", "json"}, {"-o", "yaml"}} {
+			args := append([]string{"vm", "clone", "100", "200"}, extra...)
+			out, err := runCLI(t, withCreds(srv, args...)...)
+			if err == nil || !strings.Contains(err.Error(), "malformed task id") {
+				t.Errorf("%s %v: want malformed task id error, got %v (out %q)", id, extra, err, out)
+			}
+		}
+		srv.Close()
+	}
+}
+
+// #32: storage upload uses the same strict response handling as rawMutate.
+func TestStorageUploadStrictResponse(t *testing.T) {
+	iso := t.TempDir() + "/test.iso"
+	if err := os.WriteFile(iso, []byte("ISO-DATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ body, wantErr string }{
+		{`{"data":null}`, ""},
+		{`{"data":`, "unexpected response"},
+		{`{}`, "unexpected response"},
+		{`{"data":"UPID:::::::"}`, "malformed task id"},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Write([]byte(tc.body))
+		}))
+		_, err := runCLI(t, withCreds(srv, "storage", "content", "upload", "local", iso, "--node", "pve-01", "--no-wait")...)
+		srv.Close()
+		if tc.wantErr == "" && err != nil {
+			t.Errorf("%s: unexpected error %v", tc.body, err)
+		}
+		if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: want error containing %q, got %v", tc.body, tc.wantErr, err)
+		}
+	}
+}
+
+// yaml keys must match json keys for every struct rendered as Raw (§1).
+func TestRawStructsYAMLKeysMatchJSON(t *testing.T) {
+	tr := true
+	for _, v := range []any{
+		snapshotRow{VMID: 100, AgeSeconds: 60},
+		tagStyle{CaseSensitive: &tr, ColorMap: []tagColor{{Tag: "a", Background: "fff"}}},
+		protocol.TaskStatus{UPID: "UPID:x", ExitStatus: "OK"},
+	} {
+		js, _ := json.Marshal(v)
+		var jm map[string]any
+		_ = json.Unmarshal(js, &jm)
+		ys, err := yaml.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ym map[string]any
+		_ = yaml.Unmarshal(ys, &ym)
+		for k := range jm {
+			if _, ok := ym[k]; !ok {
+				t.Errorf("%T: json key %q missing from yaml:\n%s", v, k, ys)
+			}
+		}
+		if len(ym) != len(jm) {
+			t.Errorf("%T: yaml keys %v != json keys %v", v, ym, jm)
+		}
 	}
 }
 
