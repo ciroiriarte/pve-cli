@@ -372,6 +372,10 @@ func newBackupCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// vzdump is a PVE node path; PDM doesn't proxy it.
+			if err := ensurePVE(p, "backup create", "or use `pc raw` against the remote"); err != nil {
+				return err
+			}
 			// vzdump is node-scoped; resolve the guest's node (vm or ct).
 			g, err := p.ResolveGuest(cmd.Context(), atoiOr(args[0]))
 			if err != nil {

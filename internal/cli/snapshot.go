@@ -186,7 +186,25 @@ func collectSnapshots(ctx context.Context, p provider.Provider, f snapshotFilter
 		}
 	}
 
-	guests, err := p.ListGuests(ctx, provider.GuestFilter{Node: f.node})
+	// Bulk snapshot commands honor the context's pinned remote (PDM) when
+	// --remote isn't given, so a pinned prune can't reach other remotes.
+	if f.remote == "" {
+		if d, ok := p.(interface{ DefaultRemote() string }); ok {
+			f.remote = d.DefaultRemote()
+		}
+	}
+	gf := provider.GuestFilter{Node: f.node}
+	var guests []domain.Guest
+	var err error
+	// With a remote selected (PDM), use the scoped inventory so that remote's
+	// own inventory failure surfaces as an error instead of an empty result.
+	if gr, ok := p.(interface {
+		GuestsForResolve(context.Context, provider.GuestFilter, string) ([]domain.Guest, error)
+	}); ok && f.remote != "" {
+		guests, err = gr.GuestsForResolve(ctx, gf, f.remote)
+	} else {
+		guests, err = p.ListGuests(ctx, gf)
+	}
 	if err != nil {
 		return nil, err
 	}

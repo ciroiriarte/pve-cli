@@ -155,6 +155,21 @@ a `KindConflict` (exit 4) listing the remotes and pointing at `--remote`; with
 Because every verb shares this path, the guard is uniform across reads and writes
 — keep new single-guest commands on `resolveGuest` so they inherit it.
 
+The guard fails closed on incomplete inventory (#37): if any remote's
+`/resources/list` entry carries an `error`, unscoped resolution (by vmid or
+name) refuses with a `KindConflict` (exit 4) naming the failed remotes; scoped
+resolution only fails if the selected remote errored. Lists (`guest list`,
+`node list`) still succeed but warn about failed remotes on stderr. The
+context's `remote:` is the default scope: `resolveGuest` applies `--remote` >
+context `remote:` > none (the PDM provider carries it via
+`SetDefaultRemote`/`DefaultRemote`; PVE has neither, so it's ignored there).
+`guest list` / `node list` are never filtered by the context remote; bulk
+snapshot commands (`collectSnapshots`) are. On PDM the typed `--node` shortcut
+is disabled — the guest is always resolved and `--node` must match. Commands
+that build PVE `/nodes/...` paths from a guest (`backup create`, `firewall
+--vmid`) are refused on PDM via `ensurePVE`; don't call `p.ResolveGuest`
+directly from new commands.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is

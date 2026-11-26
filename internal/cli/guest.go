@@ -146,7 +146,7 @@ func newGuestShowCmd(a *app, spec guestSpec) *cobra.Command {
 			return a.render(guestConfigTable(g, cfg))
 		},
 	}
-	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	return cmd
 }
@@ -182,7 +182,7 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 				fmt.Sprintf("%s %s %d (%s) on %s", action, spec.label, g.VMID, g.Name, g.Node))
 		},
 	}
-	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (skips auto-resolution)")
+	cmd.Flags().StringVar(&node, "node", "", "node hosting the guest (PVE: skips auto-resolution; PDM: must match the resolved node)")
 	cmd.Flags().StringVar(&remote, "remote", "", "PDM remote that hosts the guest (disambiguates a shared vmid)")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for the task to finish (default)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return immediately with the task id")
@@ -193,23 +193,44 @@ func newGuestPowerCmd(a *app, spec guestSpec, action, short string, destructive 
 
 // resolveGuest finds a guest by vmid, honoring an explicit --node override and
 // an optional --remote (PDM) to disambiguate a vmid present on several remotes.
+// Without --remote, the context's pinned remote (PDM only) applies: precedence
+// is --remote > context `remote:` > none. PVE has no default remote, so a
+// context `remote:` is ignored there.
 func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idArg, node string, remoteOpt ...string) (domain.Guest, error) {
 	remote := ""
 	if len(remoteOpt) > 0 {
 		remote = remoteOpt[0]
+	}
+	if remote == "" {
+		if d, ok := p.(interface{ DefaultRemote() string }); ok {
+			remote = d.DefaultRemote()
+		}
 	}
 	vmid, err := strconv.Atoi(idArg)
 	if err != nil {
 		// A non-numeric argument is a guest name — look it up.
 		return resolveGuestByName(ctx, p, spec, idArg, node, remote)
 	}
-	// Typed commands (vm/ct) with an explicit --node skip auto-resolution. The
-	// unified `guest` command has no kind, so it must resolve to learn whether
-	// the vmid is a VM or CT — it falls through and applies --node as an override.
-	if node != "" && spec.kind != "" {
-		// Explicit node skips auto-resolution; carry remote too so PDM proxied
-		// calls (which are remote-scoped, not node-scoped) still work.
+	// On PVE, typed commands (vm/ct) with an explicit --node skip
+	// auto-resolution. The unified `guest` command has no kind, so it must
+	// resolve to learn whether the vmid is a VM or CT — it falls through and
+	// applies --node as an override. PDM never takes the shortcut: proxied calls
+	// are remote-scoped, so the guest must be resolved (failing closed on
+	// incomplete inventory) and --node only verifies the result (#37).
+	pdm := p.Capabilities().Remotes
+	if node != "" && spec.kind != "" && !pdm {
 		return domain.Guest{VMID: vmid, Kind: spec.kind, Node: node, Remote: remote}, nil
+	}
+	applyNode := func(g domain.Guest) (domain.Guest, error) {
+		if node == "" {
+			return g, nil
+		}
+		if pdm && g.Node != node {
+			return domain.Guest{}, &protocol.APIError{Kind: protocol.KindValidation,
+				Message: fmt.Sprintf("guest %d is on node %q (remote %s), not %q", g.VMID, g.Node, g.Remote, node)}
+		}
+		g.Node = node
+		return g, nil
 	}
 	if remote != "" {
 		gr, ok := p.(interface {
@@ -225,10 +246,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 		if err := enforceKind(spec, g); err != nil {
 			return domain.Guest{}, err
 		}
-		if node != "" {
-			g.Node = node
-		}
-		return g, nil
+		return applyNode(g)
 	}
 	g, err := p.ResolveGuest(ctx, vmid)
 	if err != nil {
@@ -237,10 +255,7 @@ func resolveGuest(ctx context.Context, p provider.Provider, spec guestSpec, idAr
 	if err := enforceKind(spec, g); err != nil {
 		return domain.Guest{}, err
 	}
-	if node != "" {
-		g.Node = node
-	}
-	return g, nil
+	return applyNode(g)
 }
 
 // enforceKind rejects a guest whose kind doesn't match a typed spec. The unified
@@ -257,7 +272,17 @@ func enforceKind(spec guestSpec, g domain.Guest) error {
 // points back at the vmid. The kind (vm/ct), --node, and --remote (PDM) scope
 // the search.
 func resolveGuestByName(ctx context.Context, p provider.Provider, spec guestSpec, name, node, remote string) (domain.Guest, error) {
-	guests, err := p.ListGuests(ctx, provider.GuestFilter{Kind: spec.kind, Node: node})
+	f := provider.GuestFilter{Kind: spec.kind, Node: node}
+	var guests []domain.Guest
+	var err error
+	// PDM fails closed when a remote's inventory is unavailable (#37).
+	if gr, ok := p.(interface {
+		GuestsForResolve(context.Context, provider.GuestFilter, string) ([]domain.Guest, error)
+	}); ok {
+		guests, err = gr.GuestsForResolve(ctx, f, remote)
+	} else {
+		guests, err = p.ListGuests(ctx, f)
+	}
 	if err != nil {
 		return domain.Guest{}, err
 	}

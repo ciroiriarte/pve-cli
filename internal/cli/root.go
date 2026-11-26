@@ -62,6 +62,11 @@ func (a *app) Provider() (provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The context's pinned remote (PDM) is the default for single-guest
+	// resolution; providers without remotes (PVE) ignore it.
+	if d, ok := p.(interface{ SetDefaultRemote(string) }); ok && s.Remote != "" {
+		d.SetDefaultRemote(s.Remote)
+	}
 	a.prov = p
 	return p, nil
 }

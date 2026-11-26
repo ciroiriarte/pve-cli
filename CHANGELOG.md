@@ -6,6 +6,25 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Fixed**: PDM wrong-remote guard hardening (#37):
+  - Single-guest resolution no longer trusts an incomplete inventory. If any
+    remote's `/resources/list` entry reports an error, an unscoped lookup (by
+    vmid or name) is refused (exit 4) naming the failed remotes and pointing at
+    `--remote`, since the vmid might also live on the unreachable remote. A
+    `--remote`-scoped lookup only fails if that remote errored.
+  - `guest list` / `node list` keep working but warn about failed remotes on
+    stderr instead of silently dropping them.
+  - The context's `remote:` is now honored as the default for single-guest
+    commands (`--remote` > context `remote:` > none) and for `snapshot
+    list`/`prune`; it was documented but ignored. It is ignored on `provider:
+    pve`, and `guest list` / `node list` are not filtered by it. A
+    remote-filtered `snapshot list`/`prune` fails (exit 4) if that remote's
+    inventory is unavailable, rather than returning nothing.
+  - On PDM, `--node` no longer skips guest resolution: the guest is resolved
+    (scoped to the remote when one is known) and `--node` must match its node,
+    so a mutation can't be sent to an unverified or wrong remote.
+  - `backup create` and `firewall --vmid` build PVE node paths and are now
+    refused up front on PDM instead of resolving the guest across remotes.
 - **Security**: config directory/file permissions are now enforced on existing
   paths too (#33). The `0700`/`0600` hardening from 0.14.3 only applied when the
   path was newly created, so upgraded installs kept a `0755` dir and a `0644`
