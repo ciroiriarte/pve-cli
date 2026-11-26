@@ -549,6 +549,8 @@ func checkStorage(rows, nodes, cfg []map[string]any, cfgErr error, o clusterChec
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return str(rows[i]["id"]) < str(rows[j]["id"]) })
 	graded := map[string]bool{}
+	unusable := map[string]checkItem{}
+	var unusableOrder []string
 	var r checkResult
 	for _, s := range rows {
 		name, node := str(s["storage"]), str(s["node"])
@@ -564,19 +566,35 @@ func checkStorage(rows, nodes, cfg []map[string]any, cfgErr error, o clusterChec
 		if num(s["shared"]) == 1 {
 			key = name
 		}
-		max := num(s["maxdisk"])
-		if graded[key] || max <= 0 {
+		if graded[key] {
+			continue
+		}
+		disk, diskOK := metric(s["disk"])
+		max, maxOK := metric(s["maxdisk"])
+		if !diskOK || !maxOK || max <= 0 {
+			// Missing/unusable usage isn't 0% used. For a shared storage another
+			// node's entry may still carry it, so decide after the loop.
+			if _, seen := unusable[key]; !seen {
+				unusable[key] = checkItem{Name: name, Node: node, Status: checkWarn,
+					Detail: "incomplete: usage not reported (disk/maxdisk missing or invalid)"}
+				unusableOrder = append(unusableOrder, key)
+			}
 			continue
 		}
 		graded[key] = true
-		used := num(s["disk"]) / max * 100
+		used := disk / max * 100
 		if st := grade(used, o.storageWarn, o.storageCrit); st != checkOK {
 			it := checkItem{Name: name, Status: st,
-				Detail: fmt.Sprintf("%s used (%s of %s)", pct1(used), humanBytes(int64(num(s["disk"]))), humanBytes(int64(max)))}
+				Detail: fmt.Sprintf("%s used (%s of %s)", pct1(used), humanBytes(int64(disk)), humanBytes(int64(max)))}
 			if num(s["shared"]) != 1 {
 				it.Node = node
 			}
 			r.Items = append(r.Items, it)
+		}
+	}
+	for _, key := range unusableOrder {
+		if !graded[key] {
+			r.Items = append(r.Items, unusable[key])
 		}
 	}
 	if len(graded) == 0 {
@@ -586,14 +604,14 @@ func checkStorage(rows, nodes, cfg []map[string]any, cfgErr error, o clusterChec
 		if len(rows) == 0 {
 			r.Detail = "no storage listed (needs Datastore.Audit)"
 		} else if len(r.Items) > 0 {
-			r.Detail += fmt.Sprintf("; %s unavailable", plural(len(r.Items), "storage"))
+			r.Detail += fmt.Sprintf("; %s unavailable or without usage", plural(len(r.Items), "storage"))
 		}
 		return r
 	}
 	r = summarize(r,
 		fmt.Sprintf("%s below %g%%", plural(len(graded), "storage"), o.storageWarn),
 		func(n int) string {
-			return fmt.Sprintf("%s over threshold or unavailable (%s graded, warn %g%%, crit %g%%)",
+			return fmt.Sprintf("%s over threshold, unavailable or incomplete (%s graded, warn %g%%, crit %g%%)",
 				plural(n, "storage"), plural(len(graded), "storage"), o.storageWarn, o.storageCrit)
 		})
 	if cfgErr != nil {
@@ -672,11 +690,12 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 				break
 			}
 		}
-		if err != nil && pagesOK > 0 {
+		pageFailed := err != nil && pagesOK > 0
+		if pageFailed {
 			// A later page failed: keep what the earlier pages returned.
 			incomplete++
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
-				Detail: fmt.Sprintf("incomplete: task list read failed after %d failed tasks: %v", len(nodeRows), err)})
+				Detail: fmt.Sprintf("incomplete: task list read failed after %d rows: %v", len(nodeRows), err)})
 			err = nil
 		}
 		if err != nil {
@@ -690,9 +709,12 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 		if truncated {
 			incomplete++
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
-				Detail: fmt.Sprintf("incomplete: task list truncated after %d failed tasks", len(nodeRows))})
+				Detail: fmt.Sprintf("incomplete: task list truncated after %d rows", len(nodeRows))})
 		}
 		switch missing, perr := missingPriv(raw, "/nodes/"+name, "Sys.Audit"); {
+		case perr != nil && pageFailed:
+			// The node's task read already failed and is flagged; an
+			// unverifiable privilege on top adds nothing.
 		case perr != nil:
 			incomplete++
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,

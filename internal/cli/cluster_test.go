@@ -803,3 +803,47 @@ func TestClusterCheckStorageAllUnavailable(t *testing.T) {
 		t.Fatalf("all unavailable: %+v", c)
 	}
 }
+
+// TestClusterCheckStorageUnusableUsage: missing or non-finite disk/maxdisk
+// isn't 0% used: it's an "incomplete" warn; a shared storage graded from
+// another node's valid entry isn't flagged; nothing gradable is error.
+func TestClusterCheckStorageUnusableUsage(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/resources?type=storage"] = `[{"storage":"local","node":"pve-01","status":"available","disk":10,"maxdisk":100},` +
+		`{"storage":"nodisk","node":"pve-01","status":"available","maxdisk":100},` +
+		`{"storage":"nan","node":"pve-02","status":"available","disk":"NaN","maxdisk":100},` +
+		`{"storage":"inf","node":"pve-02","status":"available","disk":10,"maxdisk":"Infinity"},` +
+		`{"storage":"nfs","node":"pve-01","status":"available","shared":1},` +
+		`{"storage":"nfs","node":"pve-02","status":"available","shared":1,"disk":50,"maxdisk":100}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "storage")
+	c := checkByName(t, rep, "storage")
+	gaps := map[string]bool{}
+	for _, it := range c.Items {
+		if it.Status == checkWarn && strings.HasPrefix(it.Detail, "incomplete: usage not reported") {
+			gaps[it.Name] = true
+		}
+	}
+	if c.Status != checkWarn || len(c.Items) != 3 || !gaps["nodisk"] || !gaps["nan"] || !gaps["inf"] || gaps["nfs"] {
+		t.Fatalf("unusable usage: %+v", c)
+	}
+
+	f["/cluster/resources?type=storage"] = `[{"storage":"nodisk","node":"pve-01","status":"available","maxdisk":100}]`
+	rep, _ = runClusterCheck(t, f, "", "--check", "quorum,storage")
+	if c := checkByName(t, rep, "storage"); c.Status != checkError || !strings.HasPrefix(c.Detail, "no storage available to grade") {
+		t.Fatalf("no gradable storage: %+v", c)
+	}
+}
+
+// TestClusterCheckNoDuplicateSysAuditGap: when a node's task read already
+// failed, an unverifiable Sys.Audit isn't reported on top.
+func TestClusterCheckNoDuplicateSysAuditGap(t *testing.T) {
+	f := healthyCluster()
+	f["/nodes/pve-01/tasks"] = `[` + warningRows(taskPageSize) + `]`
+	f["!failafterpage1:/nodes/pve-01/tasks"] = "x"
+	f["/access/permissions?path=%2Fnodes%2Fpve-01"] = ""
+	rep, _ := runClusterCheck(t, f, "boom", "--check", "tasks")
+	c := checkByName(t, rep, "tasks")
+	if len(c.Items) != 1 || !strings.HasPrefix(c.Items[0].Detail, "incomplete: task list read failed after 500 rows") {
+		t.Fatalf("duplicate gap: %+v", c)
+	}
+}
