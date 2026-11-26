@@ -275,5 +275,5 @@ Results are cached for 45s in the user cache dir (`$XDG_CACHE_HOME`, default
 `pve-cli/completion-<hash>.json`, keyed by provider, server, auth identity and
 TLS pin/CA — never the secret. Only a regular 0600 file owned by you, in a
 0700 directory you own, is read; otherwise the cache is skipped (the directory
-is tightened to 0700 only when completion next writes to it). Delete the file
-to refresh sooner.
+is tightened to 0700 only when completion next writes to it, and every cache
+file already in it is deleted then). Delete the file to refresh sooner.

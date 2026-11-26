@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -232,7 +233,7 @@ func TestCompleteCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 { // POSIX modes only
 		t.Errorf("cache mode = %v, want 0600", fi.Mode().Perm())
 	}
 	if b, _ := os.ReadFile(files[0]); strings.Contains(string(b), "secret") {

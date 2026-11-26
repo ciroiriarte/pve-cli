@@ -153,8 +153,8 @@ func readCompCache(path string) map[string]compCacheEntry {
 
 // writeCompCache stores one data set atomically (0600 temp file + rename) in a
 // directory we own with mode 0700; otherwise it doesn't cache. If the
-// directory was unsafe when found, existing entries are discarded rather than
-// merged: tightening it must not launder entries planted (or renamed over
+// directory was unsafe when found, every cache file in it is deleted rather
+// than merged: tightening it must not launder files planted (or renamed over
 // another key) while it was open.
 func writeCompCache(path, set string, items []compEntry) {
 	if path == "" {
@@ -171,6 +171,16 @@ func writeCompCache(path, set string, items []compEntry) {
 	m := map[string]compCacheEntry{}
 	if wasSafe {
 		m = readCompCache(path)
+	} else {
+		// Repairing an unsafe dir (now 0700, so no one else can add files):
+		// drop every cache file in it — any could have been planted or
+		// renamed over another backend's key while it was open.
+		for _, pat := range []string{"completion-*.json", ".completion-*"} {
+			old, _ := filepath.Glob(filepath.Join(dir, pat))
+			for _, f := range old {
+				_ = os.Remove(f)
+			}
+		}
 	}
 	m[set] = compCacheEntry{At: time.Now(), Items: items}
 	b, err := json.Marshal(m)

@@ -231,9 +231,10 @@ func TestCompleteNeverPrints(t *testing.T) {
 	}
 }
 
-// Only trusted cache files are used: a world-readable file or a symlink is
-// ignored (and replaced), and a loose cache dir is tightened to 0700.
-func TestCompletePoisonedCacheIgnored(t *testing.T) {
+// A symlinked cache file is never trusted, even when it points at a 0600 file
+// of ours, and the write replaces the link rather than writing through it.
+// Portable; the POSIX mode/ownership cases live in completion_unix_test.go.
+func TestCompleteSymlinkedCacheIgnored(t *testing.T) {
 	cacheDir := isolateCache(t)
 	var hits int32
 	srv := completionServer(t, &hits)
@@ -242,41 +243,28 @@ func TestCompletePoisonedCacheIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := completionCachePath(s)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.Chmod(dir, 0o777)
-	poison := `{"guests":{"at":"` + time.Now().Format(time.RFC3339Nano) + `","items":[{"id":"666","name":"evil","kind":"qemu"}]}}`
-
-	// 1) right content, wrong mode.
-	if err := os.WriteFile(path, []byte(poison), 0o644); err != nil {
+	target := filepath.Join(cacheDir, "elsewhere.json")
+	if err := os.WriteFile(target, []byte(poisonCache()), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink: %v", err)
 	}
 	if got := complete(t, withCreds(srv, "vm", "start", "")...); len(got) == 0 || strings.Contains(strings.Join(got, " "), "evil") {
-		t.Errorf("0644 cache file trusted: %q", got)
-	}
-	fi, _ := os.Stat(dir)
-	if fi.Mode().Perm() != 0o700 {
-		t.Errorf("cache dir mode = %v, want tightened to 0700", fi.Mode().Perm())
-	}
-
-	// 2) a symlink to a 0600 file with poisoned content.
-	target := filepath.Join(cacheDir, "elsewhere.json")
-	if err := os.WriteFile(target, []byte(poison), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(path)
-	if err := os.Symlink(target, path); err != nil {
-		t.Fatal(err)
-	}
-	if got := complete(t, withCreds(srv, "vm", "start", "")...); strings.Contains(strings.Join(got, " "), "evil") {
 		t.Errorf("symlinked cache file trusted: %q", got)
 	}
-	if n := atomic.LoadInt32(&hits); n != 2 {
-		t.Errorf("resource requests = %d, want 2 (both poisoned caches ignored)", n)
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Errorf("resource requests = %d, want 1 (symlinked cache ignored)", n)
 	}
-	if b, _ := os.ReadFile(target); string(b) != poison {
+	if b, _ := os.ReadFile(target); string(b) != poisonCache() {
 		t.Error("symlink target was written through")
 	}
+}
+
+// poisonCache is a fresh, well-formed cache payload with a fake guest.
+func poisonCache() string {
+	return `{"guests":{"at":"` + time.Now().Add(-time.Second).Truncate(time.Second).Format(time.RFC3339) + `","items":[{"id":"666","name":"evil","kind":"qemu"}]}}`
 }
