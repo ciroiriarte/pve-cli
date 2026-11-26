@@ -8,9 +8,9 @@ import (
 	"io"
 	"math"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -143,7 +143,37 @@ func (c *Client) DoRaw(ctx context.Context, req *Request) ([]byte, error) {
 	return c.doRaw(ctx, req)
 }
 
+// doRaw runs the request; on a 401 caused by a stale persisted ticket (the
+// auth provider says so via Invalidate), it re-authenticates and replays the
+// request once. A request rejected at authentication had no effect, so the
+// replay is safe; streamed bodies are excluded because they can't be re-read.
 func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
+	body, err := c.doAttempts(ctx, req)
+	var ae *protocol.APIError
+	if err != nil && req.Body == nil && !authEndpoint(req.Path) &&
+		errors.As(err, &ae) && ae.StatusCode == http.StatusUnauthorized {
+		if inv, ok := c.auth.(auth.Invalidator); ok && inv.Invalidate() {
+			return c.doAttempts(ctx, req)
+		}
+	}
+	return body, err
+}
+
+// authEndpoint reports whether path is a public authentication endpoint whose
+// handler itself answers 401 for bad credentials or a rejected TFA code (e.g.
+// `pc raw` / `pc api` POST /access/ticket). Such a 401 says nothing about the
+// client's ticket, so it must not invalidate it or replay the request.
+func authEndpoint(p string) bool {
+	p = strings.ToLower(path.Clean("/" + strings.TrimSpace(p)))
+	for _, pre := range []string{"/access/ticket", "/access/tfa", "/access/password", "/access/vncticket", "/access/openid"} {
+		if p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) doAttempts(ctx context.Context, req *Request) ([]byte, error) {
 	idempotent := isIdempotent(req.Method)
 	attempts := 1
 	if idempotent {
@@ -168,6 +198,18 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 
 		body, status, transErr := c.attempt(ctx, req)
 		if transErr != nil {
+			// A decoded ticket-login failure: a rejected login or a missing
+			// TFA code is deterministic, and retrying would re-send the
+			// password or re-prompt for a code for nothing. Only a server
+			// error (5xx) from /access/ticket is retried.
+			var ae *protocol.APIError
+			if errors.As(transErr, &ae) {
+				if ae.Kind != protocol.KindServer {
+					return nil, ae
+				}
+				lastErr = ae
+				continue
+			}
 			lastErr = &protocol.APIError{Kind: protocol.KindTransport, Message: transErr.Error()}
 			if errors.Is(transErr, ErrRedirectRefused) {
 				return nil, lastErr // deterministic: retrying hits the same redirect
@@ -175,6 +217,9 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 			continue // transport errors are always retryable for idempotent reqs
 		}
 		if status >= 200 && status < 300 {
+			if v, ok := c.auth.(auth.Verifier); ok {
+				v.Verified()
+			}
 			return body, nil
 		}
 		apiErr := protocol.DecodeError(status, body)
@@ -261,25 +306,11 @@ func (c *Client) attempt(ctx context.Context, req *Request) (body []byte, status
 
 // EnsureSecureURL rejects sending credentials over plaintext http to a
 // non-loopback host — tokens and ticket passwords would travel in the clear.
-// Loopback http stays allowed for local SSH tunnels and the test suite. Shared
-// by the API client and the ticket-login path so neither can leak in cleartext.
+// Loopback http stays allowed for local SSH tunnels and the test suite. The
+// check lives in auth (which transport imports) so the ticket-login client,
+// built outside transport.New, enforces the same rule.
 func EnsureSecureURL(u *url.URL) error {
-	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
-		return fmt.Errorf("transport: refusing to send credentials over %q to %q — use https (loopback http is allowed for tunnels/tests)", u.Scheme, u.Hostname())
-	}
-	return nil
-}
-
-// isLoopbackHost reports whether host is a loopback address or "localhost",
-// where plaintext http carries no network-exposure risk (tunnels, tests).
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+	return auth.EnsureSecureURL(u)
 }
 
 // isIdempotent reports whether method may be safely retried.

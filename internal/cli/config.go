@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -14,11 +16,28 @@ import (
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
+	"github.com/ciroiriarte/pve-cli/internal/auth"
 	"github.com/ciroiriarte/pve-cli/internal/config"
+	"github.com/ciroiriarte/pve-cli/internal/protocol"
+	"github.com/ciroiriarte/pve-cli/internal/provider"
 	"github.com/ciroiriarte/pve-cli/internal/transport"
 )
 
-const keyringService = "pve-cli"
+const keyringService = provider.KeyringService
+
+// otpPrompter returns the interactive two-factor prompt for user, or nil when
+// stdin is not a terminal (a TFA challenge then fails with a clear error).
+// A variable so tests can stand in for the terminal.
+// It checks for a real terminal (not just a character device, which
+// /dev/null also is), because a prompt here also triggers a network login.
+var otpPrompter = func(user string) func() (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil
+	}
+	return func() (string, error) {
+		return promptSecret(fmt.Sprintf("Two-factor (TOTP) code for %s: ", user))
+	}
+}
 
 func newConfigCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Manage pve-cli configuration"}
@@ -217,6 +236,9 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 			fmt.Fprintf(out, "auth type:  %s\n", orElse(s.AuthType, "token"))
 			fmt.Fprintf(out, "identity:   %s\n", orElse(id, "(unset)"))
 			fmt.Fprintf(out, "secret:     %s  (resolved: %t)\n", secretSrc, s.Secret != "")
+			if s.AuthType == "ticket" && s.Server != "" && s.User != "" {
+				fmt.Fprintf(out, "tfa:        %s\n", tfaState(s))
+			}
 
 			if s.Secret == "" {
 				return fmt.Errorf("no credential resolved; check the profile's secret_ref/keyring, env vars, or pass --token-secret")
@@ -246,6 +268,23 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 	return cmd
 }
 
+// tfaState describes the persisted two-factor ticket for a ticket profile.
+func tfaState(s *config.Settings) string {
+	c, ok := auth.NewKeyringTicketCache(keyringService, s.Server, s.User).Load()
+	otp := ""
+	if s.OTP != "" {
+		otp = "; PVE_CLI_OTP is set"
+	}
+	if !ok || c.User != s.User {
+		return "no cached two-factor ticket (a TFA-enabled user needs `pc auth login --otp`, PVE_CLI_OTP, or a terminal prompt)" + otp
+	}
+	age := time.Since(c.Issued).Round(time.Minute)
+	if age >= 110*time.Minute {
+		return fmt.Sprintf("cached two-factor ticket expired (issued %s ago); re-run `pc auth login --otp`%s", age, otp)
+	}
+	return fmt.Sprintf("cached two-factor ticket, issued %s ago (renewed automatically while in use; lapses after ~2h idle)%s", age, otp)
+}
+
 func newAuthCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Authenticate and store credentials"}
 	cmd.AddCommand(newAuthLoginCmd(a))
@@ -253,7 +292,7 @@ func newAuthCmd(a *app) *cobra.Command {
 }
 
 func newAuthLoginCmd(a *app) *cobra.Command {
-	var tokenID, secret, secretRef, user, password, passwordRef, profile, fingerprint, provider string
+	var tokenID, secret, secretRef, user, password, passwordRef, otp, otpRef, profile, fingerprint, provider string
 	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "login <server-url>",
@@ -267,16 +306,32 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			"line (shell history, the process table) in scripts, use\n" +
 			"--token-secret-ref/--password-ref env:NAME|keyring://service/key, or pass\n" +
 			"`-` to read it from stdin; a plaintext --token-secret/--password works but\n" +
-			"warns. After login, verify with `pc config test-auth`.",
+			"warns. After login, verify with `pc config test-auth`.\n\n" +
+			"Two-factor (TOTP) users: pass --otp <code> (or --otp-ref env:NAME, or\n" +
+			"PVE_CLI_OTP); on a terminal the code is prompted when the server asks for\n" +
+			"it. A recovery key is accepted as --otp recovery:<key>. With a code given\n" +
+			"or on a terminal, ticket login is verified against the server, and a\n" +
+			"two-factor ticket is cached in the keyring and renewed while in use.",
 		Example: "  pc auth login https://pve1:8006 --token-id 'svc@pve!cli'\n" +
 			"  pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret-ref env:PVE_TOKEN\n" +
 			"  pass show pve/token | pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret -\n" +
-			"  pc auth login https://pve1:8006 --user root@pam",
+			"  pc auth login https://pve1:8006 --user root@pam\n" +
+			"  pc auth login https://pve1:8006 --user ops@pve --password-ref env:PVE_PW --otp 123456",
 		Args: cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			server := args[0]
 			if (tokenID == "") == (user == "") {
 				return fmt.Errorf("provide exactly one of --token-id (token auth) or --user (ticket auth)")
+			}
+			// Refuse a cleartext (non-loopback http) server up front: ticket
+			// login would send the password and TFA code over it, and runtime
+			// refuses it for every auth type anyway.
+			su, perr := url.Parse(strings.TrimRight(server, "/"))
+			if perr != nil || su.Scheme == "" || su.Host == "" {
+				return fmt.Errorf("invalid server URL %q: want https://host:port", server)
+			}
+			if err := transport.EnsureSecureURL(su); err != nil {
+				return err
 			}
 			if profile == "" {
 				profile = "default"
@@ -335,6 +390,12 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 				}
 			}
 
+			if auth.Type == "ticket" {
+				if err := verifyTicketLogin(cmd.Context(), server, user, cred, otp, otpRef, fingerprint, insecure); err != nil {
+					return err
+				}
+			}
+
 			if err := keyring.Set(keyringService, profile, cred); err != nil {
 				fmt.Fprintf(os.Stderr, "[pc] keyring unavailable (%v); storing credential in config file\n", err)
 				auth.Secret = cred
@@ -373,12 +434,76 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 	cmd.Flags().StringVar(&passwordRef, "password-ref", "", "resolve the ticket-auth password from env:NAME or keyring://service/key")
 	cmd.MarkFlagsMutuallyExclusive("token-id", "user")
 	cmd.MarkFlagsMutuallyExclusive("token-secret", "token-secret-ref")
+	cmd.Flags().StringVar(&otp, "otp", "", "two-factor TOTP code for ticket auth (or recovery:<key>; env PVE_CLI_OTP; prompted on a terminal)")
+	cmd.Flags().StringVar(&otpRef, "otp-ref", "", "resolve the two-factor code from env:NAME or keyring://service/key")
 	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
+	cmd.MarkFlagsMutuallyExclusive("otp", "otp-ref")
+	cmd.MarkFlagsMutuallyExclusive("token-id", "otp")
+	cmd.MarkFlagsMutuallyExclusive("token-id", "otp-ref")
 	cmd.Flags().StringVar(&profile, "profile", "default", "profile name to write")
 	cmd.Flags().StringVar(&fingerprint, "fingerprint", "", "pin the server cert SHA-256 fingerprint")
 	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "disable TLS verification for this profile")
 	return cmd
+}
+
+// verifyTicketLogin performs a ticket login at `auth login` time when a
+// two-factor code was supplied (--otp, --otp-ref, PVE_CLI_OTP) or stdin is a
+// terminal, so bad credentials or a rejected code fail the login (nothing is
+// saved) and a two-factor ticket is cached for later commands. A server that
+// can't be reached only warns, like the certificate probe. Non-interactive
+// logins without a code stay offline, as before.
+func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
+	// A TOTP code expires in seconds, so argv is acceptable for it; a typed
+	// response such as recovery:<key> stays valid until used, so warn (§7:
+	// security warnings go to stderr and are not TTY-gated).
+	if otp != "" && strings.Contains(otp, ":") && !strings.HasPrefix(strings.ToLower(otp), "totp:") {
+		fmt.Fprintln(stderrWriter(), "[pc] warning: a plaintext --otp recovery key leaks to shell history and the process table; prefer --otp-ref env:NAME, PVE_CLI_OTP, or the terminal prompt")
+	}
+	if otpRef != "" {
+		v, err := config.ResolveSecretRef(otpRef)
+		if err != nil {
+			return err
+		}
+		if v == "" {
+			return fmt.Errorf("--otp-ref %s resolved to an empty code", otpRef)
+		}
+		otp = v
+	}
+	if otp == "" {
+		otp = os.Getenv("PVE_CLI_OTP")
+	}
+	prompt := otpPrompter(user)
+	if otp == "" && prompt == nil {
+		return nil
+	}
+	hc, err := transport.NewHTTPClient(transport.TLSConfig{Fingerprint: fingerprint, Insecure: insecure}, 0)
+	if err != nil {
+		return err
+	}
+	tp, err := auth.NewTicket(server, user, password, hc)
+	if err != nil {
+		return err
+	}
+	tp.OTP, tp.PromptOTP = otp, prompt
+	cache := auth.NewKeyringTicketCache(keyringService, server, user)
+	tp.Cache = cache
+	if err := tp.Refresh(ctx); err != nil {
+		var ae *protocol.APIError
+		if errors.As(err, &ae) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[pc] could not verify the login against %s (%v); saving the profile anyway\n", server, err)
+		return nil
+	}
+	if tp.TFA() {
+		if c, ok := cache.Load(); ok && c.User == user {
+			fmt.Fprintln(os.Stderr, "[pc] two-factor login OK; ticket cached in the keyring (renewed while in use; re-run with --otp after ~2h idle)")
+		} else {
+			fmt.Fprintln(os.Stderr, "[pc] two-factor login OK, but no keyring is available to cache the ticket; each command will need PVE_CLI_OTP or a terminal prompt")
+		}
+	}
+	return nil
 }
 
 // loginSecret resolves the login credential via the shared resolveSecretInput

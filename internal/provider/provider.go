@@ -64,6 +64,10 @@ type Provider interface {
 	Raw(ctx context.Context, method, path string, params url.Values) ([]byte, error)
 }
 
+// KeyringService is the OS keyring service pve-cli stores credentials and
+// cached TFA tickets under.
+const KeyringService = "pve-cli"
+
 // NewClient builds the raw transport client (auth + TLS + rate limit) from
 // resolved settings. Exposed for low-level needs like the websocket console.
 func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
@@ -98,6 +102,9 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		if err != nil {
 			return nil, err
 		}
+		t.OTP = s.OTP
+		t.PromptOTP = s.OTPPrompt
+		t.Cache = auth.NewKeyringTicketCache(KeyringService, s.Server, s.User)
 		ap = t
 	default:
 		return nil, fmt.Errorf("unsupported auth type %q", s.AuthType)
