@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -27,17 +28,26 @@ const (
 
 func healthyCluster() clusterFixture {
 	return clusterFixture{
-		"/cluster/status":                 healthyStatus,
-		"/cluster/resources?type=node":    healthyNodes,
-		"/cluster/resources?type=storage": healthyStorage,
-		"/storage":                        `[{"storage":"local"},{"storage":"nfs"},{"storage":"old","disable":1}]`,
-		"/nodes/pve-01/tasks":             healthyTasks,
-		"/nodes/pve-02/tasks":             `[]`,
-		"/nodes/pve-03/tasks":             `[]`,
-		"/cluster/ha/status/current":      healthyHA,
-		"/cluster/ceph/status":            healthyCeph,
+		"/cluster/status":                            healthyStatus,
+		"/cluster/resources?type=node":               healthyNodes,
+		"/cluster/resources?type=storage":            healthyStorage,
+		"/storage":                                   `[{"storage":"local"},{"storage":"nfs"},{"storage":"old","disable":1}]`,
+		"/nodes/pve-01/tasks":                        healthyTasks,
+		"/nodes/pve-02/tasks":                        `[]`,
+		"/nodes/pve-03/tasks":                        `[]`,
+		"/cluster/ha/status/current":                 healthyHA,
+		"/cluster/ceph/status":                       healthyCeph,
+		"/access/permissions?path=%2Fnodes%2Fpve-01": `{"/nodes/pve-01":{"Sys.Audit":1}}`,
+		"/access/permissions?path=%2Fnodes%2Fpve-02": `{"/nodes/pve-02":{"Sys.Audit":1}}`,
+		"/access/permissions?path=%2Fnodes%2Fpve-03": `{"/nodes/pve-03":{"Sys.Audit":1}}`,
 	}
 }
+
+// fixtureHits counts requests per fixture key (reset by tests that use it).
+var (
+	fixtureHitsMu sync.Mutex
+	fixtureHits   = map[string]int{}
+)
 
 func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 	t.Helper()
@@ -64,7 +74,13 @@ func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 		} else if q := r.URL.RawQuery; q != "" {
 			key += "?" + q
 		}
+		fixtureHitsMu.Lock()
+		fixtureHits[key]++
+		fixtureHitsMu.Unlock()
 		body, ok := f[key]
+		if _, failLater := f["!failafterpage1:"+key]; failLater && start > 0 {
+			body = "" // later pages fail with errMsg
+		}
 		if ok && paged && body != "" && !strings.HasPrefix(body, "!") {
 			var rows []json.RawMessage
 			if err := json.Unmarshal([]byte(body), &rows); err != nil {
@@ -83,6 +99,9 @@ func (f clusterFixture) server(t *testing.T, errMsg string) *httptest.Server {
 		switch {
 		case !ok:
 			http.NotFound(w, r)
+		case body == "!rados": // an unexpected (non-transport) Ceph failure
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"data":null,"message":"rados_connect failed - No such file or directory"}`))
 		case body == "!401":
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"data":null}`))
@@ -663,10 +682,124 @@ func TestClusterCheckCephFallback(t *testing.T) {
 	f["/cluster/status"] = `[{"type":"cluster","name":"lab","quorate":1},{"type":"node","name":"pve-01","online":1,"local":1},{"type":"node","name":"pve-02","online":1},{"type":"node","name":"pve-03","online":1}]`
 	f["/cluster/ceph/status"] = ""
 	f["/nodes/pve-01/ceph/status"] = "!401" // would be fatal if re-queried
-	f["/nodes/pve-02/ceph/status"] = "!drop"
+	f["/nodes/pve-02/ceph/status"] = "!rados"
 	f["/nodes/pve-03/ceph/status"] = healthyCeph
 	rep, code := runClusterCheck(t, f, "binary not installed: /usr/bin/ceph-mon", "--check", "quorum,ceph")
 	if c := checkByName(t, rep, "ceph"); c.Status != checkOK || code != ExitOK {
 		t.Fatalf("ceph fallback: %+v exit %d, want ok/0", c, code)
+	}
+}
+
+// TestClusterCheckTaskLaterPageFails: rows from pages that succeeded are kept;
+// the failed later page is an "incomplete" warn, not an unreadable node.
+func TestClusterCheckTaskLaterPageFails(t *testing.T) {
+	f := healthyCluster()
+	f["/nodes/pve-01/tasks"] = `[{"type":"vzdump","id":"100","status":"job errors","starttime":1795003000,"upid":"UPID:p1"},` + warningRows(taskPageSize) + `]`
+	f["!failafterpage1:/nodes/pve-01/tasks"] = "x"
+	rep, code := runClusterCheck(t, f, "boom", "--check", "tasks")
+	c := checkByName(t, rep, "tasks")
+	var kept, gap bool
+	for _, it := range c.Items {
+		kept = kept || it.ID == "UPID:p1"
+		gap = gap || (it.Node == "pve-01" && strings.HasPrefix(it.Detail, "incomplete: task list read failed after"))
+	}
+	if !kept || !gap || len(c.Items) != 2 || strings.Contains(c.Detail, "unreadable") || code != ExitCheckWarn {
+		t.Fatalf("later page failure: %+v exit %d", c, code)
+	}
+}
+
+// TestClusterCheckStorageConfigUnreadable: without /storage, disabled storages
+// can't be excluded; that's flagged as incomplete, not ignored.
+func TestClusterCheckStorageConfigUnreadable(t *testing.T) {
+	f := healthyCluster()
+	f["/storage"] = ""
+	rep, code := runClusterCheck(t, f, "boom", "--check", "storage", "--fail-on", "crit")
+	c := checkByName(t, rep, "storage")
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Status != checkWarn ||
+		!strings.HasPrefix(c.Items[0].Detail, "incomplete: /storage read failed") || code != ExitOK {
+		t.Fatalf("storage config unreadable: %+v exit %d", c, code)
+	}
+}
+
+// TestClusterCheckPermissionsUnreadable: a failed permissions query isn't proof
+// of Sys.Audit.
+func TestClusterCheckPermissionsUnreadable(t *testing.T) {
+	f := healthyCluster()
+	f["/access/permissions?path=%2Fnodes%2Fpve-02"] = ""
+	rep, _ := runClusterCheck(t, f, "boom", "--check", "tasks")
+	c := checkByName(t, rep, "tasks")
+	if c.Status != checkWarn || len(c.Items) != 1 || c.Items[0].Node != "pve-02" ||
+		!strings.HasPrefix(c.Items[0].Detail, "incomplete: can't verify Sys.Audit") {
+		t.Fatalf("permissions unreadable: %+v", c)
+	}
+}
+
+// TestClusterCheckUnusableNodeMetrics: missing or non-numeric mem/maxmem/cpu
+// isn't zero usage; that node is incomplete, the others are still graded.
+func TestClusterCheckUnusableNodeMetrics(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/resources?type=node"] = `[{"node":"pve-01","status":"online","cpu":0.97,"mem":10,"maxmem":100},` +
+		`{"node":"pve-02","status":"online","cpu":0.1,"maxmem":100},` +
+		`{"node":"pve-03","status":"online","cpu":"n/a","mem":"abc","maxmem":100}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "pressure")
+	c := checkByName(t, rep, "pressure")
+	gaps := map[string]bool{}
+	for _, it := range c.Items {
+		if strings.HasPrefix(it.Detail, "incomplete: metrics unavailable") && it.Status == checkWarn {
+			gaps[it.Node] = true
+		}
+	}
+	if c.Status != checkCrit || len(c.Items) != 3 || !gaps["pve-02"] || !gaps["pve-03"] {
+		t.Fatalf("unusable metrics: %+v", c)
+	}
+}
+
+// TestClusterCheckConnectionLostSkipsRemainingReads: after the API has
+// answered, a dropped connection errors the remaining checks without issuing
+// (and retrying) their reads.
+func TestClusterCheckConnectionLostSkipsRemainingReads(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/resources?type=storage"] = "!drop"
+	fixtureHitsMu.Lock()
+	fixtureHits = map[string]int{}
+	fixtureHitsMu.Unlock()
+	rep, code := runClusterCheck(t, f, "")
+	for _, k := range []string{"/storage", "/nodes/pve-01/tasks", "/cluster/ha/status/current", "/cluster/ceph/status"} {
+		if fixtureHits[k] != 0 {
+			t.Errorf("%s requested %d times after the connection was lost", k, fixtureHits[k])
+		}
+	}
+	for _, name := range []string{"storage", "tasks", "ha", "ceph"} {
+		if c := checkByName(t, rep, name); c.Status != checkError {
+			t.Errorf("%s: %+v, want error", name, c)
+		}
+	}
+	if q := checkByName(t, rep, "quorum"); q.Status != checkOK {
+		t.Errorf("quorum (read before the drop): %+v", q)
+	}
+	if code != ExitCheckWarn {
+		t.Fatalf("exit %d, want %d", code, ExitCheckWarn)
+	}
+}
+
+// TestClusterCheckHTTPErrorProvesReachability: any HTTP answer (here a 404)
+// means the API is reachable, so a later transport error isn't run-fatal; with
+// every check errored the first error's code (3) applies, not transport (4).
+func TestClusterCheckHTTPErrorProvesReachability(t *testing.T) {
+	f := healthyCluster()
+	delete(f, "/cluster/status")
+	f["/cluster/ha/status/current"] = "!drop"
+	_, code := runClusterCheckErr(t, f, "", "--check", "quorum,ha")
+	if code != ExitNotFound {
+		t.Fatalf("exit %d, want %d", code, ExitNotFound)
+	}
+}
+
+func TestClusterCheckStorageAllUnavailable(t *testing.T) {
+	f := healthyCluster()
+	f["/cluster/resources?type=storage"] = `[{"storage":"nfs","node":"pve-01","status":"unknown"}]`
+	rep, _ := runClusterCheck(t, f, "", "--check", "quorum,storage")
+	if c := checkByName(t, rep, "storage"); c.Status != checkError || !strings.HasPrefix(c.Detail, "no storage available to grade") || strings.Contains(c.Detail, "Datastore.Audit") {
+		t.Fatalf("all unavailable: %+v", c)
 	}
 }

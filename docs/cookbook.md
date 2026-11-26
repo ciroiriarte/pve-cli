@@ -30,17 +30,19 @@ pc cluster check --skip tasks --fail-on crit   # monitoring: exit 8 only on crit
 ```
 
 Statuses: `ok`; `warn` = degraded or partially observed (items with an
-`incomplete: …` detail mark gaps such as an unreadable node task list, the task
-page cap, missing `Sys.Audit` or missing node metrics); `crit` = a real problem
+`incomplete: …` detail mark gaps such as a node task list that's unreadable or
+cut short, `Sys.Audit` missing or unverifiable, missing/unusable node metrics,
+or an unreadable `/storage` config); `crit` = a real problem
 (outage); `error` = the check could not grade anything (nothing gradable, every
 read failed, or a required inventory read failed); `skip` = not applicable.
 
 Exit `0` = healthy, `7` = warn (unless `--fail-on crit`, which lets warnings and
 incomplete data pass by design) or any check in `error` (always), `8` = crit.
 No report is printed and the usual codes apply (`2` auth, `4` API/transport)
-when the token is rejected at any point, the API is unreachable before any read
-succeeds, or every check failed; a later connection drop only errors the
-affected checks.
+when the token is rejected at any point, the API is unreachable before it first
+answers (any HTTP response counts), or every check failed. A later connection
+failure errors the current and all remaining checks without further requests,
+so a hung API costs one read's retries, not one per check.
 
 The task window is on end time, but PVE filters task lists by start time, so
 only tasks started within `--since` + 7 days are scanned. The token needs

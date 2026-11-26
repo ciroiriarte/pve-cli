@@ -108,8 +108,9 @@ func newClusterCheckCmd(a *app) *cobra.Command {
 			"Statuses:\n" +
 			"  ok     nothing wrong observed\n" +
 			"  warn   degraded, or only partially observed: items with an\n" +
-			"         \"incomplete: …\" detail mark gaps (a node's tasks unreadable, the\n" +
-			"         task page cap hit, missing Sys.Audit, missing node metrics)\n" +
+			"         \"incomplete: …\" detail mark gaps (a node's task list unreadable\n" +
+			"         or cut short, Sys.Audit missing or unverifiable, missing/unusable\n" +
+			"         node metrics, /storage config unreadable)\n" +
 			"  crit   a real problem was observed (outage)\n" +
 			"  error  the check could not grade anything (nothing gradable, every read\n" +
 			"         failed, or a required inventory read failed)\n" +
@@ -125,9 +126,10 @@ func newClusterCheckCmd(a *app) *cobra.Command {
 			"error (always, whatever --fail-on); 8 crit. With --fail-on crit, warnings\n" +
 			"(incomplete data included) exit 0 by design. No report is printed and the\n" +
 			"usual codes apply (2 auth/config, 4 API/transport, ...) when the credentials\n" +
-			"are rejected at any point, the API is unreachable before any read succeeds,\n" +
-			"or every check failed. A connection drop after that only errors the\n" +
-			"affected checks.",
+			"are rejected at any point, the API is unreachable before it first answers\n" +
+			"(any HTTP response counts), or every check failed. A connection failure\n" +
+			"after that errors the current check and all remaining ones without\n" +
+			"further requests, so a hung API costs one read's retries, not one per check.",
 		Example: "  pc cluster check\n" +
 			"  pc cluster check -o json | jq '.checks[] | select(.status != \"ok\")'\n" +
 			"  pc cluster check --skip tasks --storage-warn 85 --storage-crit 95\n" +
@@ -216,24 +218,39 @@ func selectChecks(only, skip []string) (map[string]bool, error) {
 // failure turns into that check's error status, never an abort. The returned
 // fatal error (kept apart from the per-check results so it can't be lost) is
 // set when the run as a whole is untrustworthy: a rejected credential at any
-// point, or a transport failure before any request succeeded. Later reads
-// short-circuit with it.
+// point, or a transport failure before the API ever answered (any HTTP
+// response, even a 500, counts as an answer). Later reads short-circuit with
+// it.
+//
+// A transport failure after the API has answered (a dropped or hung
+// connection) errors only the checks still to come: all remaining reads
+// short-circuit with that error instead of each paying the client's retries
+// and timeouts again, so a hung API costs one read's retry budget, not one per
+// remaining read.
 func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOpts, sel map[string]bool) (clusterReport, error) {
-	var fatal error
-	succeeded := false
+	var fatal, lost error
+	answered := false
 	raw := func(path string, q url.Values) ([]byte, error) {
 		if fatal != nil {
 			return nil, fatal
 		}
+		if lost != nil {
+			return nil, fmt.Errorf("skipped after connection failure: %w", lost)
+		}
 		body, err := p.Raw(ctx, "GET", path, q)
 		var apiErr *protocol.APIError
+		isAPI := errors.As(err, &apiErr)
 		switch {
 		case err == nil:
-			succeeded = true
-		case errors.As(err, &apiErr) && apiErr.Kind == protocol.KindAuth:
+			answered = true
+		case isAPI && apiErr.Kind == protocol.KindAuth:
 			fatal = err
-		case errors.As(err, &apiErr) && apiErr.Kind == protocol.KindTransport && !succeeded:
+		case isAPI && apiErr.Kind != protocol.KindTransport:
+			answered = true
+		case !answered:
 			fatal = err
+		default:
+			lost = err
 		}
 		return body, err
 	}
@@ -273,9 +290,10 @@ func runClusterChecks(ctx context.Context, p provider.Provider, o clusterCheckOp
 			if err == nil {
 				err = nodesErr
 			}
-			// Best-effort: without the config we just can't tell disabled storages apart.
-			cfg, _ := get("/storage", nil)
-			r = errOr(err, func() checkResult { return checkStorage(rows, nodes, cfg, o) })
+			// Without the config, disabled storages can't be told apart; that's
+			// flagged as incomplete rather than ignored.
+			cfg, cfgErr := get("/storage", nil)
+			r = errOr(err, func() checkResult { return checkStorage(rows, nodes, cfg, cfgErr, o) })
 		case "tasks":
 			r = errOr(nodesErr, func() checkResult { return checkTasks(raw, get, nodes, o.since, nowFunc()) })
 		case "ha":
@@ -388,12 +406,8 @@ func grade(pct, warn, crit float64) string {
 func summarize(r checkResult, okDetail string, problem func(n int) string) checkResult {
 	r.Status = checkOK
 	for _, it := range r.Items {
-		st := it.Status
-		if st == checkError { // an unreadable item makes the check warn, not error
-			st = checkWarn
-		}
-		if severity(st) > severity(r.Status) {
-			r.Status = st
+		if severity(it.Status) > severity(r.Status) {
+			r.Status = it.Status
 		}
 	}
 	if len(r.Items) == 0 {
@@ -421,6 +435,28 @@ func num(v any) float64 {
 		}
 	}
 	return 0
+}
+
+// metric reads a usage figure (cpu fraction, mem/maxmem bytes): it must be
+// present, a number or numeric string, finite and non-negative. A missing or
+// unusable value is not zero usage.
+func metric(v any) (float64, bool) {
+	var f float64
+	switch x := v.(type) {
+	case float64:
+		f = x
+	case string:
+		var err error
+		if f, err = strconv.ParseFloat(strings.TrimSpace(x), 64); err != nil {
+			return 0, false
+		}
+	default:
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+		return 0, false
+	}
+	return f, true
 }
 
 func str(v any) string {
@@ -495,8 +531,10 @@ func checkQuorum(rows []map[string]any) checkResult {
 
 // checkStorage grades /cluster/resources?type=storage. Disabled storages (per
 // /storage) and storages on offline nodes are ignored; a shared storage is
-// graded once; an enabled storage that isn't available warns.
-func checkStorage(rows, nodes, cfg []map[string]any, o clusterCheckOpts) checkResult {
+// graded once; an enabled storage that isn't available warns. If /storage
+// couldn't be read (cfgErr), disabled storages can't be excluded, which is an
+// "incomplete" warn.
+func checkStorage(rows, nodes, cfg []map[string]any, cfgErr error, o clusterCheckOpts) checkResult {
 	disabled := map[string]bool{}
 	for _, c := range cfg {
 		if num(c["disable"]) == 1 {
@@ -542,20 +580,31 @@ func checkStorage(rows, nodes, cfg []map[string]any, o clusterCheckOpts) checkRe
 		}
 	}
 	if len(graded) == 0 {
-		// Nothing gradable: no storages listed (e.g. a token without
-		// Datastore.Audit) or none reporting usage. That's no verdict, not ok.
-		r.Status, r.Detail = checkError, "no storage could be graded (needs Datastore.Audit)"
-		if len(r.Items) > 0 {
+		// Nothing gradable is no verdict, not ok. No rows at all usually means
+		// a token without Datastore.Audit; rows that are all unusable don't.
+		r.Status, r.Detail = checkError, "no storage available to grade"
+		if len(rows) == 0 {
+			r.Detail = "no storage listed (needs Datastore.Audit)"
+		} else if len(r.Items) > 0 {
 			r.Detail += fmt.Sprintf("; %s unavailable", plural(len(r.Items), "storage"))
 		}
 		return r
 	}
-	return summarize(r,
+	r = summarize(r,
 		fmt.Sprintf("%s below %g%%", plural(len(graded), "storage"), o.storageWarn),
 		func(n int) string {
 			return fmt.Sprintf("%s over threshold or unavailable (%s graded, warn %g%%, crit %g%%)",
 				plural(n, "storage"), plural(len(graded), "storage"), o.storageWarn, o.storageCrit)
 		})
+	if cfgErr != nil {
+		r.Items = append(r.Items, checkItem{Name: "storage config", Status: checkWarn,
+			Detail: "incomplete: /storage read failed, so disabled storages may be graded: " + cfgErr.Error()})
+		if r.Status == checkOK {
+			r.Status = checkWarn
+		}
+		r.Detail += "; incomplete: storage config unreadable"
+	}
+	return r
 }
 
 // Task-list paging: taskPageSize rows per request, at most taskMaxPages
@@ -598,6 +647,7 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 		var nodeRows []map[string]any
 		var err error
 		truncated := true
+		pagesOK := 0
 		for page := 0; page < taskMaxPages; page++ {
 			q := url.Values{"since": {serverSince}, "limit": {strconv.Itoa(taskPageSize)}, "start": {strconv.Itoa(page * taskPageSize)}}
 			for k, v := range filter {
@@ -612,13 +662,22 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 				continue
 			}
 			if err != nil {
+				truncated = false
 				break
 			}
+			pagesOK++
 			nodeRows = append(nodeRows, got...)
 			if len(got) < taskPageSize {
 				truncated = false
 				break
 			}
+		}
+		if err != nil && pagesOK > 0 {
+			// A later page failed: keep what the earlier pages returned.
+			incomplete++
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
+				Detail: fmt.Sprintf("incomplete: task list read failed after %d failed tasks: %v", len(nodeRows), err)})
+			err = nil
 		}
 		if err != nil {
 			failedReads++
@@ -633,7 +692,12 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
 				Detail: fmt.Sprintf("incomplete: task list truncated after %d failed tasks", len(nodeRows))})
 		}
-		if missingPriv(raw, "/nodes/"+name, "Sys.Audit") {
+		switch missing, perr := missingPriv(raw, "/nodes/"+name, "Sys.Audit"); {
+		case perr != nil:
+			incomplete++
+			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
+				Detail: "incomplete: can't verify Sys.Audit on /nodes/" + name + " (other users' tasks may be hidden): " + perr.Error()})
+		case missing:
 			incomplete++
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
 				Detail: "incomplete: no Sys.Audit on /nodes/" + name + ", only the caller's own tasks are listed"})
@@ -693,23 +757,24 @@ func checkTasks(raw func(string, url.Values) ([]byte, error), get func(string, u
 	return r
 }
 
-// missingPriv reports whether the caller provably lacks priv on path, via
-// /access/permissions. An unreadable answer is not proof, so it returns false.
-func missingPriv(raw func(string, url.Values) ([]byte, error), path, priv string) bool {
+// missingPriv reports whether the caller lacks priv on path, via
+// /access/permissions. When the answer can't be read or doesn't cover path,
+// neither presence nor absence is proven and err is set.
+func missingPriv(raw func(string, url.Values) ([]byte, error), path, priv string) (bool, error) {
 	body, err := raw("/access/permissions", url.Values{"path": {path}})
 	if err != nil {
-		return false
+		return false, err
 	}
 	var perms map[string]map[string]any
-	if protocol.DecodeData(body, &perms) != nil {
-		return false
+	if err := protocol.DecodeData(body, &perms); err != nil {
+		return false, err
 	}
 	privs, ok := perms[path]
 	if !ok {
-		return false
+		return false, fmt.Errorf("permissions answer doesn't cover %s", path)
 	}
 	_, has := privs[priv]
-	return !has
+	return !has, nil
 }
 
 // checkHA grades HA services from /cluster/ha/status/current, by the raw CRM
@@ -892,22 +957,23 @@ func checkPressure(nodes []map[string]any, o clusterCheckOpts) checkResult {
 		}
 		online++
 		name := str(n["node"])
-		_, hasCPU := n["cpu"]
-		max := num(n["maxmem"])
-		if !hasCPU || max <= 0 {
+		cpuV, cpuOK := metric(n["cpu"])
+		memV, memOK := metric(n["mem"])
+		max, maxOK := metric(n["maxmem"])
+		if !cpuOK || !memOK || !maxOK || max <= 0 {
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: checkWarn,
 				Detail: "incomplete: metrics unavailable (cpu/memory not reported; needs Sys.Audit)"})
 			continue
 		}
 		graded++
-		cpu := num(n["cpu"]) * 100
+		cpu := cpuV * 100
 		if st := grade(cpu, o.cpuWarn, o.cpuCrit); st != checkOK {
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: st, Detail: "cpu " + pct1(cpu)})
 		}
-		mem := num(n["mem"]) / max * 100
+		mem := memV / max * 100
 		if st := grade(mem, o.memWarn, o.memCrit); st != checkOK {
 			r.Items = append(r.Items, checkItem{Name: name, Node: name, Status: st,
-				Detail: fmt.Sprintf("mem %s (%s of %s)", pct1(mem), humanBytes(int64(num(n["mem"]))), humanBytes(int64(max)))})
+				Detail: fmt.Sprintf("mem %s (%s of %s)", pct1(mem), humanBytes(int64(memV)), humanBytes(int64(max)))})
 		}
 	}
 	if graded == 0 {
