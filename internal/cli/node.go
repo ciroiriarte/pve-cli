@@ -15,7 +15,7 @@ func newNodeCmd(a *app) *cobra.Command {
 		Use:   "node",
 		Short: "Inspect cluster nodes",
 	}
-	cmd.AddCommand(newNodeListCmd(a), newNodeShowCmd(a))
+	cmd.AddCommand(newNodeListCmd(a), newNodeShowCmd(a), newNodeEvacuateCmd(a))
 	cmd.AddCommand(newNodeOpsCmds(a)...)
 	return cmd
 }

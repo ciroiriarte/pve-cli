@@ -6,6 +6,24 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: `pc node evacuate <node>` migrates the guests off a node for
+  maintenance (#21). It moves running guests by default, or all guests with
+  `--all`. Destinations are planned greedily, largest guest first, onto the
+  online node with the most memory headroom. The plan never exceeds
+  `--max-mem-pct` (default 90) of a node's RAM, or `--vcpu-ratio` allocated
+  vCPUs per core when that flag is set. `--target` forces a single destination,
+  still capacity-checked unless `--force`. Running VMs are live-migrated (with
+  `--with-local-disks` when they have attached local disks) and running
+  containers use restart migration (`--restart-timeout`). Migrations run one at
+  a time, or up to 8 at once with `--parallel`, and each task is polled. Guests
+  that can't move are skipped and reported: HA-managed guests, VMs with local
+  devices or a local CD-ROM ISO (from the qemu migrate precondition), locked
+  guests and templates. `--dry-run` prints the plan, which `-o json` emits as an
+  array of objects (`vmid`, `name`, `kind`, `from`, `to`, `mode`, `skip`,
+  `reason`). The command asks for confirmation (`--yes` skips it). It exits 5
+  if any migration failed, or 6 if any guest other than a template could not be
+  moved. PVE only.
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a
