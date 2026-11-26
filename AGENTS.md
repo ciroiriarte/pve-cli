@@ -170,6 +170,20 @@ that build PVE `/nodes/...` paths from a guest (`backup create`, `firewall
 --vmid`) are refused on PDM via `ensurePVE`; don't call `p.ResolveGuest`
 directly from new commands.
 
+### 14. PBS is a third provider; commands are gated per provider up front
+`provider: pbs` targets a Proxmox Backup Server (port 8007 default). PBS shares
+almost none of the PVE API, so the root `PersistentPreRunE` runs `providerGate`:
+each top-level command declares its backends with `forProviders(cmd, "…")`;
+unannotated commands are `pve,pdm`. On pbs only `datastore`, `task`, `raw`,
+`api` and the local commands run — everything else fails before any request
+with `current provider: pbs`. The gate uses `config.ResolveProvider` (no secret
+or keyring access). When adding a top-level command that works on PBS, annotate
+it. The PBS surface is `pc datastore …` (PBS's API is datastore-centric); the
+older `pc pbs` stays the PDM-through-remotes view and is refused on pbs with a
+pointer to `pc datastore` — don't merge the two, their arities differ. PBS
+node-scoped endpoints use the node `localhost`. PBS UPIDs have an extra hex
+task-id field; `protocol.ParseUPID` handles both layouts.
+
 ## UX roadmap
 
 A 2026-06-19 CCA (Claude + Codex + Antigravity) review of the v0.10.x surface is

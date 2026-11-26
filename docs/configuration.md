@@ -40,7 +40,7 @@ contexts:
   corp: { profile: corp-pdm, remote: dc-west }   # 'remote' applies to PDM only
 profiles:
   homelab:
-    provider: pve                                 # pve | pdm
+    provider: pve                                 # pve | pdm | pbs
     server: https://pve1.example:8006
     auth:
       type: token                                 # token | ticket
@@ -174,7 +174,8 @@ To fetch a node's fingerprint out of band instead:
 ssh root@node "openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256"
 ```
 
-## Selecting the backend (PVE vs PDM)
+## Selecting the backend (PVE, PDM or PBS)
 
 Set `provider:` in the profile, or override per-invocation with `--provider
-pve|pdm`. See [providers.md](providers.md) for what differs between them.
+pve|pdm|pbs`. A `pbs` server URL without a port defaults to `:8007`. See
+[providers.md](providers.md) for what differs between them.

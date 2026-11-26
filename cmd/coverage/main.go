@@ -1,4 +1,4 @@
-// Command coverage writes docs/coverage.md: for the embedded PVE and PDM
+// Command coverage writes docs/coverage.md: for the embedded PVE, PDM and PBS
 // schemas, which endpoints are wrapped by a curated pc command vs reachable
 // only via `pc raw` / `pc api`. Run via `make coverage`.
 package main
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ciroiriarte/pve-cli/internal/coverage"
+	pbs "github.com/ciroiriarte/pve-cli/internal/generated/pbs"
 	pdm "github.com/ciroiriarte/pve-cli/internal/generated/pdm"
 	pve "github.com/ciroiriarte/pve-cli/internal/generated/pve"
 	"github.com/ciroiriarte/pve-cli/internal/schema"
@@ -27,6 +28,10 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	pbsAPI, err := pbs.Schema()
+	if err != nil {
+		fail(err)
+	}
 
 	var b strings.Builder
 	b.WriteString("# API coverage\n\n")
@@ -37,6 +42,7 @@ func main() {
 
 	section(&b, "Proxmox VE", pveAPI)
 	section(&b, "Proxmox Datacenter Manager (PDM)", pdmAPI)
+	section(&b, "Proxmox Backup Server (PBS)", pbsAPI)
 
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
 		fail(err)

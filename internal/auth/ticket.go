@@ -20,6 +20,9 @@ type TicketProvider struct {
 	user     string // user@realm
 	password string
 	client   *http.Client
+	// CookieName is the auth cookie built from the body ticket when the server
+	// sets no cookie itself: "PVEAuthCookie" (default) or "PBSAuthCookie".
+	CookieName string
 
 	mu      sync.Mutex
 	cookies []*http.Cookie // auth cookie(s) from Set-Cookie (PVE or PDM)
@@ -114,11 +117,16 @@ func (t *TicketProvider) ensure(ctx context.Context) error {
 
 	// The ticket is delivered as a Set-Cookie (PVE: PVEAuthCookie; PDM:
 	// __Host-PDMAuthCookie, HttpOnly with no body ticket). Capture whatever the
-	// server set; fall back to constructing PVEAuthCookie from the body ticket
-	// for servers that only return it in the JSON.
+	// server set; fall back to constructing the provider's cookie (PVEAuthCookie
+	// or PBSAuthCookie) from the body ticket for servers that only return it in
+	// the JSON.
 	cookies := resp.Cookies()
 	if len(cookies) == 0 && env.Data.Ticket != "" {
-		cookies = []*http.Cookie{{Name: "PVEAuthCookie", Value: env.Data.Ticket}}
+		name := t.CookieName
+		if name == "" {
+			name = "PVEAuthCookie"
+		}
+		cookies = []*http.Cookie{{Name: name, Value: env.Data.Ticket}}
 	}
 	if len(cookies) == 0 {
 		return fmt.Errorf("ticket login: no auth cookie or ticket in response")

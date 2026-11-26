@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,9 +14,67 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/version"
 
 	// Register backend providers.
+	_ "github.com/ciroiriarte/pve-cli/internal/provider/pbs"
 	_ "github.com/ciroiriarte/pve-cli/internal/provider/pdm"
 	_ "github.com/ciroiriarte/pve-cli/internal/provider/pve"
 )
+
+// providersAnnotation lists the backends a top-level command works on
+// (comma-separated). Commands without it are PVE/PDM commands: the PVE API
+// surface, optionally proxied by PDM — neither of which exists on PBS.
+const providersAnnotation = "pc.providers"
+
+// defaultProviders is the backend set of an unannotated command.
+const defaultProviders = "pve,pdm"
+
+// allProviders marks backend-agnostic commands (tasks, raw/api, config, auth…).
+const allProviders = "pve,pdm,pbs"
+
+func forProviders(c *cobra.Command, providers string) *cobra.Command {
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations[providersAnnotation] = providers
+	return c
+}
+
+// topLevel returns c's ancestor directly below the root (or c itself).
+func topLevel(c *cobra.Command) *cobra.Command {
+	for c.HasParent() && c.Parent().HasParent() {
+		c = c.Parent()
+	}
+	return c
+}
+
+// providerGate refuses a command on a backend it doesn't support, naming the
+// current provider (design decision #9). PBS shares almost none of the PVE
+// API, so without this a `pc vm list` against a PBS server would surface as an
+// opaque 404 rather than a clear "not on PBS". Cobra's own help/completion
+// commands are always allowed.
+func providerGate(c *cobra.Command, current string) error {
+	top := topLevel(c)
+	if !top.HasParent() {
+		return nil // the root itself
+	}
+	switch top.Name() {
+	case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return nil
+	}
+	supported := orElse(top.Annotations[providersAnnotation], defaultProviders)
+	for _, p := range strings.Split(supported, ",") {
+		if p == current {
+			return nil
+		}
+	}
+	switch {
+	case top.Name() == "pbs" && current == "pbs":
+		return fmt.Errorf("`pc pbs` inspects PBS remotes through PDM (current provider: pbs); against a PBS server use `pc datastore …`")
+	case current == "pbs":
+		return fmt.Errorf("`pc %s` is not available on Proxmox Backup Server (current provider: pbs); PBS commands: `pc datastore`, `pc task`, `pc raw`/`pc api`, or set provider: pve|pdm", top.Name())
+	default:
+		return fmt.Errorf("`pc %s` requires provider: %s (current provider: %s)", top.Name(), strings.ReplaceAll(supported, ",", "|"), current)
+	}
+}
 
 // app is the shared runtime carried across commands via cobra's context.
 type app struct {
@@ -161,6 +220,16 @@ func (a *app) providerName() string {
 	return s.Provider
 }
 
+// gateProvider is providerName without secret resolution (see
+// config.ResolveProvider), for the per-invocation provider gate.
+func (a *app) gateProvider() string {
+	f, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return orElse(a.provider, "pve")
+	}
+	return config.ResolveProvider(f, a.overrides())
+}
+
 // outputOptions builds render options from the resolved global flags.
 func (a *app) outputOptions() (output.Options, error) {
 	fmtStr := a.format
@@ -185,7 +254,7 @@ func NewRootCmd() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "pc",
-		Short: "Remote CLI for Proxmox VE clusters (and Proxmox Datacenter Manager)",
+		Short: "Remote CLI for Proxmox VE clusters (and Proxmox Datacenter Manager / Backup Server)",
 		Long: "pc is a remote-first, OpenStack-Client-inspired CLI for managing Proxmox VE\n" +
 			"clusters entirely over their REST API.\n\n" + version.Disclaimer,
 		Version:       version.String(),
@@ -196,11 +265,14 @@ func NewRootCmd() *cobra.Command {
 		// chained by default), so a subcommand defining its own would shadow
 		// this one — silently dropping the --format check and the plaintext
 		// --token-secret warning. Call this hook from it, or don't define one.
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
 			if a.format != "" {
 				if _, err := output.ParseFormat(a.format); err != nil {
 					return err
 				}
+			}
+			if err := providerGate(c, a.gateProvider()); err != nil {
+				return err
 			}
 			// Runs once per invocation for every command, so provider-free
 			// paths (e.g. `config test-auth --offline`) warn too. Same wording
@@ -218,7 +290,7 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&a.profile, "profile", "", "config profile to use")
 	pf.StringVar(&a.context, "context", "", "config context to use")
 	pf.StringVar(&a.server, "server", "", "Proxmox API base URL (e.g. https://host:8006)")
-	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm (overrides profile)")
+	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm|pbs (overrides profile)")
 	pf.StringVar(&a.tokenID, "token-id", "", "API token id (user@realm!name)")
 	pf.StringVar(&a.secret, "token-secret", "", "API token secret (plaintext on argv — prefer --token-secret-ref or PVE_CLI_TOKEN_SECRET)")
 	pf.StringVar(&a.secretRef, "token-secret-ref", "", "resolve the API token secret from env:NAME or keyring://service/key")
@@ -254,14 +326,15 @@ func NewRootCmd() *cobra.Command {
 		newSubscriptionCmd(a),
 		newServerCmd(a),
 		newAutoInstallCmd(a),
-		newPluginCmd(a),
-		newTaskCmd(a),
-		newRawCmd(a),
-		newAPICmd(a),
-		newConfigCmd(a),
-		newContextCmd(a),
-		newAuthCmd(a),
-		newVersionCmd(a),
+		forProviders(newDatastoreCmd(a), "pbs"),
+		forProviders(newPluginCmd(a), allProviders),
+		forProviders(newTaskCmd(a), allProviders),
+		forProviders(newRawCmd(a), allProviders),
+		forProviders(newAPICmd(a), allProviders),
+		forProviders(newConfigCmd(a), allProviders),
+		forProviders(newContextCmd(a), allProviders),
+		forProviders(newAuthCmd(a), allProviders),
+		forProviders(newVersionCmd(a), allProviders),
 	)
 
 	// Mark read commands so the table-only global flags only clutter their help.

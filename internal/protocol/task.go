@@ -13,7 +13,7 @@ import (
 // scripting contract: keys match TaskStatus (`upid`, `node`), and `.upid` can be
 // passed to `pc task wait` (for PDM it is the full `pve:<remote>!UPID:…` id).
 type TaskHandle struct {
-	Backend string `json:"backend" yaml:"backend"` // "pve" | "pdm"
+	Backend string `json:"backend" yaml:"backend"` // "pve" | "pdm" | "pbs"
 	Node    string `json:"node" yaml:"node"`
 	UPID    string `json:"upid" yaml:"upid"`
 	Remote  string `json:"remote,omitempty" yaml:"remote,omitempty"`   // PDM only
@@ -50,9 +50,16 @@ func IsUPID(s string) bool {
 	return strings.HasPrefix(s, "UPID:")
 }
 
-// ParseUPID extracts routing fields from a UPID. Format:
+// ParseUPID extracts routing fields from a UPID. Two formats exist:
 //
-//	UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
+//	PVE:      UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
+//	PBS/PDM:  UPID:<node>:<pid>:<pstart>:<task_id>:<starttime>:<type>:<id>:<authid>:
+//
+// The PBS form (proxmox-rest-server, also used by PDM's own tasks) carries an
+// extra hex task counter, so its type sits one field later. It is recognised by
+// its field count plus the fixed-width hex starttime in the sixth field (where
+// PVE has the alphabetic task type); colons inside PBS worker ids are escaped,
+// so the count is reliable.
 func ParseUPID(upid string) (TaskHandle, error) {
 	if !IsUPID(upid) {
 		return TaskHandle{}, fmt.Errorf("not a UPID: %q", upid)
@@ -72,8 +79,26 @@ func ParseUPID(upid string) (TaskHandle, error) {
 		Node:    parts[1],
 		UPID:    upid,
 	}
-	typ := parts[5]
-	id := parts[6]
+	typ, id := parts[5], parts[6]
+	if len(parts) == 10 && isHex8(parts[4]) && isHex8(parts[5]) {
+		typ, id = parts[6], parts[7]
+		if typ == "" {
+			return TaskHandle{}, fmt.Errorf("malformed UPID (empty type): %q", upid)
+		}
+	}
 	h.Display = strings.TrimSpace(typ + " " + id)
 	return h, nil
+}
+
+// isHex8 reports whether s is an 8-digit hex field (PBS task_id/starttime).
+func isHex8(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+			return false
+		}
+	}
+	return true
 }

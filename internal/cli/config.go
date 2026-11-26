@@ -271,10 +271,18 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 		Example: "  pc auth login https://pve1:8006 --token-id 'svc@pve!cli'\n" +
 			"  pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret-ref env:PVE_TOKEN\n" +
 			"  pass show pve/token | pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret -\n" +
-			"  pc auth login https://pve1:8006 --user root@pam",
+			"  pc auth login https://pve1:8006 --user root@pam\n" +
+			"  pc auth login https://pbs1:8007 --provider pbs --token-id 'svc@pbs!cli'",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			server := args[0]
+			switch provider {
+			case "pve", "pdm", "pbs":
+			default:
+				return fmt.Errorf("invalid --provider %q: want pve, pdm or pbs", provider)
+			}
+			// PBS listens on 8007; fill it in when the URL names no port so
+			// the probe, the pin and the saved profile all target the API.
+			server := config.WithDefaultPort(provider, args[0])
 			if (tokenID == "") == (user == "") {
 				return fmt.Errorf("provide exactly one of --token-id (token auth) or --user (ticket auth)")
 			}
@@ -376,7 +384,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
 	cmd.Flags().StringVar(&profile, "profile", "default", "profile name to write")
 	cmd.Flags().StringVar(&fingerprint, "fingerprint", "", "pin the server cert SHA-256 fingerprint")
-	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")
+	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm|pbs (pbs defaults the port to 8007)")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "disable TLS verification for this profile")
 	return cmd
 }

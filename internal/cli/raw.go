@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	pbsschema "github.com/ciroiriarte/pve-cli/internal/generated/pbs"
 	pdmschema "github.com/ciroiriarte/pve-cli/internal/generated/pdm"
 	pveschema "github.com/ciroiriarte/pve-cli/internal/generated/pve"
 	"github.com/ciroiriarte/pve-cli/internal/protocol"
@@ -17,8 +18,11 @@ import (
 
 // activeSchema returns the embedded schema for the configured backend.
 func (a *app) activeSchema() (*schema.API, error) {
-	if a.providerName() == "pdm" {
+	switch a.providerName() {
+	case "pdm":
 		return pdmschema.Schema()
+	case "pbs":
+		return pbsschema.Schema()
 	}
 	return pveschema.Schema()
 }

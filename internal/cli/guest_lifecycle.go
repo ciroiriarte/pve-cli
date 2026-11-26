@@ -85,6 +85,9 @@ func handleMutationResponse(ctx context.Context, a *app, p provider.Provider, bo
 		return a.renderBody(body)
 	}
 	h.Display = label
+	if p.Name() == "pbs" {
+		h.Backend = "pbs"
+	}
 	return finishTask(ctx, a, p, h, wait, timeout, label)
 }
 

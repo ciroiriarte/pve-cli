@@ -1,14 +1,16 @@
-# Backends: Proxmox VE vs Proxmox Datacenter Manager
+# Backends: Proxmox VE, Datacenter Manager and Backup Server
 
-`pc` speaks to two kinds of endpoint behind the **same command grammar**:
+`pc` speaks to three kinds of endpoint behind the **same command grammar**:
 
 - **`pve`** — a single Proxmox VE cluster (`https://node:8006`).
 - **`pdm`** — Proxmox Datacenter Manager, which aggregates many clusters
   ("remotes") behind one endpoint.
+- **`pbs`** — a Proxmox Backup Server (`https://pbs:8007`; a port-less pbs URL
+  defaults to 8007). See [PBS usage](#pbs-usage).
 
-Select the backend with `provider:` in the profile or `--provider pve|pdm`.
-Commands that a backend doesn't support fail fast with a clear message rather
-than guessing.
+Select the backend with `provider:` in the profile or `--provider pve|pdm|pbs`.
+Commands that a backend doesn't support fail fast with a clear message naming
+the current provider, before any request is sent, rather than guessing.
 
 > **Status:** both backends are live-verified — PVE against PVE 9.1/9.2 (token
 > *and* ticket auth) and PDM against a live PDM 1.x fleet. Note PDM's proxy only
@@ -44,6 +46,52 @@ than guessing.
 | `config`/`context`/`auth`/`plugin`/`version`/`completion` | ✅ | ✅ | local, backend-independent |
 
 ✅ supported · ➖ reachable via `pc raw`/`pc api` (not yet a curated command) · ❌ not applicable/unsupported by the backend
+
+On **`pbs`**, every command in the table above is refused except `task`, `raw`,
+`api` and the local `config`/`context`/`auth`/`plugin`/`version`/`completion`
+commands; `pc datastore` (below) is the PBS-only tree and is refused on `pve`
+and `pdm`.
+
+## PBS usage
+
+```bash
+pc auth login https://pbs1:8007 --provider pbs --token-id 'admin@pbs!cli'   # TOFU pin on first use
+pc auth login https://pbs1 --provider pbs --user root@pam                   # ticket auth; :8007 is filled in
+pc config test-auth
+```
+
+Token auth sends `Authorization: PBSAPIToken=<tokenid>:<secret>`; ticket auth
+logs in at `/access/ticket` and sends the `PBSAuthCookie` cookie (plus the
+`CSRFPreventionToken` header on writes). Fingerprint pinning works as for PVE.
+
+| Command | API | Notes |
+|---|---|---|
+| `datastore list` / `show <store>` | `/admin/datastore`, `/config/datastore/{store}` | `show` is the datastore config object |
+| `datastore status [store]` | `/status/datastore-usage`, `/admin/datastore/{store}/status` | all stores' usage, or one store (`--verbose` adds counts) |
+| `datastore namespace list <store>` | `…/namespace` | `--parent`, `--max-depth` |
+| `datastore group list <store>` | `…/groups` | `--ns` |
+| `datastore snapshot list <store>` | `…/snapshots` | `--ns`, `--group vm/100`, or `--type`/`--id` |
+| `datastore gc status [store]` / `gc start <store>` | `/admin/gc`, `…/gc` | `start` is confirm-gated and returns a task |
+| `datastore prune <store>` | `…/prune-datastore`, `…/prune` (with `--group`) | `--keep-*` required; confirm-gated; `--dry-run` previews without a prompt |
+| `datastore verify start <store>` | `…/verify` | `--ns`, `--group`, `--backup-time`, `--ignore-verified`, `--outdated-after`; confirm-gated |
+| `datastore job list` | `/admin/{prune,verify,sync}` | `--type prune,verify,sync`, `--store`; each object gains `job-type` |
+| `task list/show/wait/log` | `/nodes/localhost/tasks/…` | accepts PBS UPIDs (which carry an extra task-id field) |
+
+```bash
+pc datastore status                                   # usage of every datastore
+pc datastore snapshot list store1 --ns prod --group vm/100 -o json
+pc datastore prune store1 --keep-daily 7 --keep-weekly 4 --dry-run
+pc datastore prune store1 --keep-daily 7 --keep-weekly 4 --yes
+pc datastore gc start store1 --yes --no-wait -o json | jq -r .upid | xargs pc task wait
+pc raw admin datastore store1 groups                  # PBS's own embedded schema
+```
+
+`pc pbs` is a different thing: it inspects PBS *remotes through PDM*
+(`provider: pdm`) and is unchanged. On `provider: pbs` it is refused with a
+pointer to `pc datastore`. The two trees don't share a name because their
+arguments differ (`pc pbs datastore list <remote>` vs `pc datastore list`), and
+overloading one command with provider-dependent arity would make scripts and
+completion ambiguous.
 
 ## PDM usage
 

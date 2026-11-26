@@ -84,9 +84,13 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		if s.Provider == "pdm" {
+		switch s.Provider {
+		case "pdm":
 			// PDM uses a colon between token id and secret (like PBS).
 			t.Prefix, t.Sep = "PDMAPIToken", ":"
+		case "pbs":
+			// PBS docs: Authorization: PBSAPIToken=TOKENID:TOKENSECRET.
+			t.Prefix, t.Sep = "PBSAPIToken", ":"
 		}
 		ap = t
 	case "ticket":
@@ -97,6 +101,9 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		t, err := auth.NewTicket(s.Server, s.User, s.Secret, hc)
 		if err != nil {
 			return nil, err
+		}
+		if s.Provider == "pbs" {
+			t.CookieName = "PBSAuthCookie"
 		}
 		ap = t
 	default:
@@ -126,8 +133,10 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 		return build(pveConstructor, "pve", cl)
 	case "pdm":
 		return build(pdmConstructor, "pdm", cl)
+	case "pbs":
+		return build(pbsConstructor, "pbs", cl)
 	default:
-		return nil, fmt.Errorf("unknown provider %q", s.Provider)
+		return nil, fmt.Errorf("unknown provider %q (want pve, pdm or pbs)", s.Provider)
 	}
 }
 
@@ -136,7 +145,11 @@ func New(s *config.Settings, debug bool) (Provider, error) {
 var (
 	pveConstructor func(*transport.Client) Provider
 	pdmConstructor func(*transport.Client) Provider
+	pbsConstructor func(*transport.Client) Provider
 )
+
+// SetPBSFactory registers the PBS provider constructor.
+func SetPBSFactory(f func(*transport.Client) Provider) { pbsConstructor = f }
 
 // SetPVEFactory registers the PVE provider constructor.
 func SetPVEFactory(f func(*transport.Client) Provider) { pveConstructor = f }

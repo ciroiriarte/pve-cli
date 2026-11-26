@@ -6,6 +6,25 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Added**: Proxmox Backup Server as a third backend, `provider: pbs` (#19).
+  Token auth (`PBSAPIToken=<id>:<secret>`), ticket auth (`PBSAuthCookie` +
+  CSRF), TOFU fingerprint pinning, `pc auth login --provider pbs` and
+  `pc config test-auth` all work against PBS. A port-less pbs server URL
+  defaults to 8007. New `pc datastore` tree (PBS-only): `list`, `show`,
+  `status [store]`, `namespace list`, `group list`, `snapshot list` (`--ns`,
+  `--group`), `gc status`/`gc start`, `prune` (`--keep-*`, confirm-gated,
+  `--dry-run`), `verify start` and `job list` (prune/verify/sync). `pc task`
+  works with PBS tasks, and `pc raw`/`pc api` walk an embedded PBS schema.
+  Commands that don't apply to PBS (guests, nodes, storage, remotes, …) are
+  refused up front with an error naming the current provider, and
+  `pc datastore` is refused on pve/pdm. The PDM-proxied `pc pbs` is unchanged.
+  `protocol.ParseUPID` now understands the PBS UPID layout (extra task-id
+  field), and the schema parser flattens `allOf` parameter sets, so
+  `pc raw … --help` lists every PBS parameter.
+- **Fixed**: key/value and generic list tables printed large integers in
+  exponent notation (`1.4420443136e+10`); they now print plain integers, as
+  column-projected lists already did (table output only; json unchanged) (#19).
+
 ## [0.15.0] - 2026-11-25 — PDM token auth, json contract & hardening
 
 - **Changed (json/yaml output)**: `pc node show` and `pc remote show` now emit a

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -45,6 +47,22 @@ type Overrides struct {
 	Output      string
 	Insecure    *bool
 	Fingerprint string
+}
+
+// ResolveProvider returns the effective provider (flag > selected profile >
+// "pve") with the same context/profile selection as Resolve, but without
+// dereferencing any secret — so it's cheap and side-effect free (no keyring
+// access, no plaintext-secret warning) for gating commands up front.
+func ResolveProvider(f *File, ov Overrides) string {
+	if ov.Provider != "" {
+		return ov.Provider
+	}
+	ctxName := firstNonEmpty(ov.Context, os.Getenv("PVE_CLI_CONTEXT"), f.CurrentContext)
+	profName := firstNonEmpty(ov.Profile, os.Getenv("PVE_CLI_PROFILE"))
+	if profName == "" && ctxName != "" {
+		profName = f.Contexts[ctxName].Profile
+	}
+	return orDefault(f.Profiles[profName].Provider, "pve")
 }
 
 // Resolve computes effective Settings using precedence:
@@ -149,7 +167,27 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	if s.AuthType == "" {
 		s.AuthType = "token"
 	}
+	s.Server = WithDefaultPort(s.Provider, s.Server)
 	return s, nil
+}
+
+// PBSDefaultPort is the port Proxmox Backup Server's API listens on.
+const PBSDefaultPort = "8007"
+
+// WithDefaultPort fills in PBS's API port (8007) when a pbs server URL names no
+// port, so `https://backup.example` reaches the API rather than :443. PVE and
+// PDM URLs are returned unchanged (their historical behavior), as is anything
+// that doesn't parse as an absolute URL with a host.
+func WithDefaultPort(provider, server string) string {
+	if provider != "pbs" || server == "" {
+		return server
+	}
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" || u.Port() != "" {
+		return server
+	}
+	u.Host = net.JoinHostPort(u.Hostname(), PBSDefaultPort)
+	return u.String()
 }
 
 // Validate checks that the resolved settings are usable for a connection.
