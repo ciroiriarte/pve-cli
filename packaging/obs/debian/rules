@@ -2,6 +2,11 @@
 # Debian build for pve-cli (binary: pc). Offline build using vendored Go
 # modules (vendor/ ships in the OBS tarball via the go_modules service).
 
+# Go >= 1.26 is required. Debian 13 (backports) and Ubuntu 24.04
+# (universe-update) ship it as golang-1.26-go under /usr/lib/go-1.26; put that
+# first on PATH. Where golang-go itself is >= 1.26 the dir is absent and the
+# stock /usr/bin/go is used.
+export PATH := /usr/lib/go-1.26/bin:$(PATH)
 export GOFLAGS := -mod=vendor -trimpath
 export CGO_ENABLED := 0
 export GOCACHE := $(CURDIR)/_build/gocache

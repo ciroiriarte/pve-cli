@@ -2,7 +2,7 @@
 # Because the binary is built once on a modern toolchain (CGO_ENABLED=0, fully
 # static), the resulting packages install on ANY distro regardless of its stock
 # Go version — including Debian 12 and Ubuntu 22.04, which the OBS native build
-# can't target (their Go < 1.22). Validate locally with `goreleaser check`.
+# can't target (their stock Go is older than the 1.26 floor). Validate locally with `goreleaser check`.
 version: 2
 
 project_name: pve-cli

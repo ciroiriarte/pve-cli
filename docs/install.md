@@ -19,8 +19,8 @@ is **`pc`**.
 | openSUSE Tumbleweed | x86_64, aarch64 | `.rpm` | `openSUSE_Tumbleweed` |
 
 > **Debian 12 / Ubuntu 22.04 (and any other distro):** there is no OBS *native*
-> package because their stock Go compiler is older than the required 1.22 (and,
-> unlike openSUSE, there's no Go side-repo for deb). This is a **build-time**
+> package: their stock Go compiler is older than the required 1.26 and they are
+> not enabled in the OBS project. This is a **build-time**
 > limit only — the binary is statically linked and runs there fine. Use the
 > [prebuilt static binary / `.deb` / `.rpm`](#github-releases-static-binary--deb--rpm)
 > from GitHub Releases, or build [from source](#from-source).
@@ -216,7 +216,7 @@ sudo rpm -i https://github.com/ciroiriarte/pve-cli/releases/latest/download/pve-
 
 ## From source
 
-Any platform with Go ≥ 1.22:
+Any platform with Go ≥ 1.26:
 
 ```bash
 git clone https://github.com/ciroiriarte/pve-cli && cd pve-cli
