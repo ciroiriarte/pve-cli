@@ -102,16 +102,12 @@ func NewClient(s *config.Settings, debug bool) (*transport.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		t, err := auth.NewTicket(s.Server, s.User, s.Secret, hc)
+		t, err := auth.NewProviderTicket(s.Provider, KeyringService, s.Server, s.User, s.Secret, hc)
 		if err != nil {
 			return nil, err
 		}
-		if s.Provider == "pbs" {
-			t.CookieName = "PBSAuthCookie"
-		}
 		t.OTP = s.OTP
 		t.PromptOTP = s.OTPPrompt
-		t.Cache = auth.NewKeyringTicketCache(KeyringService, s.Server, s.User)
 		ap = t
 	default:
 		return nil, fmt.Errorf("unsupported auth type %q", s.AuthType)

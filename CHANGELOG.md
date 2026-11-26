@@ -27,7 +27,10 @@ surface may change between minor releases.
   backend-agnostic commands (`version`, `config`, `context`, `auth`, `plugin`,
   `task`, `raw`, `api`) are never refused by the provider gate. `datastore job
   list` requests `sync-direction=all`, so push sync jobs are listed too (PBS
-  defaults to pull).
+  defaults to pull); on PBS < 3.3, which has no push sync and rejects the
+  parameter, it retries without it. A PBS ticket login (`pc auth login
+  --provider pbs --user … --otp`) caches and replays the ticket as
+  `PBSAuthCookie`, the same as the runtime client.
 - **Changed (json output)**: a task handle printed for a plain UPID now reports
   the provider that returned it in `backend` (`pbs` on PBS; `pdm` for a PDM
   task without a remote, where it used to say `pve`). PDM-proxied
@@ -41,7 +44,8 @@ surface may change between minor releases.
   with a TFA challenge; `--otp recovery:<key>` uses a recovery key. With a code
   given or on a terminal, `auth login` now verifies the ticket login, so a wrong
   password or code fails (exit 2) without saving the profile. The TFA-confirmed
-  ticket is cached in the OS keyring and renewed once it is an hour old (by
+  ticket is cached in the OS keyring (one entry per provider, user and server:
+  `ticket:<provider>:<user>@<server>`) and renewed once it is an hour old (by
   later commands, and in memory by a long-running one), so commands don't need
   a code until it lapses (~2h idle); then they prompt on a terminal, use
   `PVE_CLI_OTP`, or fail with exit 2 and a hint to re-run `pc auth login --otp`.

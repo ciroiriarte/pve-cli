@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -609,6 +611,12 @@ func newDatastoreJobListCmd(a *app) *cobra.Command {
 					q.Set("sync-direction", "all")
 				}
 				body, err := p.Raw(cmd.Context(), "GET", "/admin/"+k, q)
+				if k == "sync" && rejectsParam(err, "sync-direction") {
+					// PBS < 3.3 has no push sync (nor the parameter) and
+					// rejects unknown parameters with a 400: retry without it.
+					q.Del("sync-direction")
+					body, err = p.Raw(cmd.Context(), "GET", "/admin/"+k, q)
+				}
 				if err != nil {
 					return fmt.Errorf("list %s jobs: %w", k, err)
 				}
@@ -638,4 +646,17 @@ func newDatastoreJobListCmd(a *app) *cobra.Command {
 	cmd.Flags().StringSliceVar(&types, "type", nil, "job kinds to list: prune,verify,sync (default: all)")
 	cmd.Flags().StringVar(&store, "store", "", "only jobs for this datastore")
 	return markTabular(cmd)
+}
+
+// rejectsParam reports whether err is a 400 parameter-verification error that
+// names param (an older server not knowing it).
+func rejectsParam(err error, param string) bool {
+	var ae *protocol.APIError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	if _, ok := ae.Errors[param]; ok {
+		return true
+	}
+	return strings.Contains(ae.Message, param) || strings.Contains(ae.RawBody, param)
 }

@@ -270,7 +270,7 @@ func newConfigTestAuthCmd(a *app) *cobra.Command {
 
 // tfaState describes the persisted two-factor ticket for a ticket profile.
 func tfaState(s *config.Settings) string {
-	c, ok := auth.NewKeyringTicketCache(keyringService, s.Server, s.User).Load()
+	c, ok := auth.NewKeyringTicketCache(keyringService, s.Provider, s.Server, s.User).Load()
 	otp := ""
 	if s.OTP != "" {
 		otp = "; PVE_CLI_OTP is set"
@@ -400,7 +400,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			}
 
 			if auth.Type == "ticket" {
-				if err := verifyTicketLogin(cmd.Context(), server, user, cred, otp, otpRef, fingerprint, insecure); err != nil {
+				if err := verifyTicketLogin(cmd.Context(), provider, server, user, cred, otp, otpRef, fingerprint, insecure); err != nil {
 					return err
 				}
 			}
@@ -462,7 +462,7 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 // saved) and a two-factor ticket is cached for later commands. A server that
 // can't be reached only warns, like the certificate probe. Non-interactive
 // logins without a code stay offline, as before.
-func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
+func verifyTicketLogin(ctx context.Context, provider, server, user, password, otp, otpRef, fingerprint string, insecure bool) error {
 	// A TOTP code expires in seconds, so argv is acceptable for it; a typed
 	// response such as recovery:<key> stays valid until used, so warn (§7:
 	// security warnings go to stderr and are not TTY-gated).
@@ -490,13 +490,12 @@ func verifyTicketLogin(ctx context.Context, server, user, password, otp, otpRef,
 	if err != nil {
 		return err
 	}
-	tp, err := auth.NewTicket(server, user, password, hc)
+	tp, err := auth.NewProviderTicket(provider, keyringService, server, user, password, hc)
 	if err != nil {
 		return err
 	}
 	tp.OTP, tp.PromptOTP = otp, prompt
-	cache := auth.NewKeyringTicketCache(keyringService, server, user)
-	tp.Cache = cache
+	cache := tp.Cache
 	if err := tp.Refresh(ctx); err != nil {
 		var ae *protocol.APIError
 		if errors.As(err, &ae) {

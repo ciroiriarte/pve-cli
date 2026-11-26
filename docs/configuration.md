@@ -108,7 +108,7 @@ and saves nothing. A server that can't be reached only warns. Without a code
 and without a terminal, login stays offline, as for non-TFA users.
 
 The password alone can't produce a ticket for a TFA user, so the TFA-confirmed
-ticket is cached in the OS keyring (entry `ticket:<user>@<server>` under the
+ticket is cached in the OS keyring (entry `ticket:<provider>:<user>@<server>` under the
 `pve-cli` service) and reused by later commands. A ticket older than 1 h is
 renewed by passing it as the password, which keeps the TFA state and does not
 ask for a code; a long-running command renews its in-memory ticket the same

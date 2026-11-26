@@ -77,7 +77,7 @@ logs in at `/access/ticket` and sends the `PBSAuthCookie` cookie (plus the
 | `datastore gc status [store]` / `gc start <store>` | `/admin/gc`, `…/gc` | `start` is confirm-gated and returns a task |
 | `datastore prune <store>` | `…/prune-datastore`, `…/prune` (with `--group`) | `--keep-*` required; confirm-gated; `--dry-run` previews without a prompt |
 | `datastore verify start <store>` | `…/verify` | `--ns`, `--group`, `--backup-time`, `--ignore-verified`, `--outdated-after`; confirm-gated |
-| `datastore job list` | `/admin/{prune,verify,sync}` | `--type prune,verify,sync`, `--store`; each object gains `job-type` |
+| `datastore job list` | `/admin/{prune,verify,sync}` | `--type prune,verify,sync`, `--store`; each object gains `job-type`; sync asks for `sync-direction=all` (push + pull) and falls back to pull-only on PBS < 3.3 |
 | `task list/show/wait/log` | `/nodes/localhost/tasks/…` | accepts PBS UPIDs (which carry an extra task-id field) |
 
 ```bash
