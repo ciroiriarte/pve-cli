@@ -2,8 +2,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,9 +15,95 @@ import (
 	"github.com/ciroiriarte/pve-cli/internal/version"
 
 	// Register backend providers.
+	_ "github.com/ciroiriarte/pve-cli/internal/provider/pbs"
 	_ "github.com/ciroiriarte/pve-cli/internal/provider/pdm"
 	_ "github.com/ciroiriarte/pve-cli/internal/provider/pve"
 )
+
+// providersAnnotation lists the backends a top-level command works on
+// (comma-separated). Commands without it are PVE/PDM commands: the PVE API
+// surface, optionally proxied by PDM — neither of which exists on PBS.
+const providersAnnotation = "pc.providers"
+
+// defaultProviders is the backend set of an unannotated command.
+const defaultProviders = "pve,pdm"
+
+// allProviders marks backend-agnostic commands (tasks, raw/api, config, auth…).
+const allProviders = "pve,pdm,pbs"
+
+// knownProviders are the provider names the gate understands.
+var knownProviders = map[string]bool{"pve": true, "pdm": true, "pbs": true}
+
+func forProviders(c *cobra.Command, providers string) *cobra.Command {
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations[providersAnnotation] = providers
+	return c
+}
+
+// CommandSupports reports whether the top-level command named top runs on
+// provider (per its forProviders annotation; unannotated = pve,pdm). found is
+// false when root has no such command. Used by cmd/coverage so each provider's
+// coverage only counts commands the gate allows on it.
+func CommandSupports(root *cobra.Command, top, provider string) (supported, found bool) {
+	for _, c := range root.Commands() {
+		if c.Name() != top {
+			continue
+		}
+		for _, p := range strings.Split(orElse(c.Annotations[providersAnnotation], defaultProviders), ",") {
+			if p == provider {
+				return true, true
+			}
+		}
+		return false, true
+	}
+	return false, false
+}
+
+// topLevel returns c's ancestor directly below the root (or c itself).
+func topLevel(c *cobra.Command) *cobra.Command {
+	for c.HasParent() && c.Parent().HasParent() {
+		c = c.Parent()
+	}
+	return c
+}
+
+// providerGate refuses a command on a backend it doesn't support, naming the
+// current provider (design decision #9). PBS shares almost none of the PVE
+// API, so without this a `pc vm list` against a PBS server would surface as an
+// opaque 404 rather than a clear "not on PBS". Cobra's own help/completion
+// commands and the backend-agnostic ones (allProviders: config, context, auth,
+// version, task, raw, …) always pass, so a broken config can still be
+// repaired. An unknown provider name also passes: provider.New then reports
+// "unknown provider" for commands that actually need a backend.
+func providerGate(c *cobra.Command, current string) error {
+	top := topLevel(c)
+	if !top.HasParent() {
+		return nil // the root itself
+	}
+	switch top.Name() {
+	case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return nil
+	}
+	if !knownProviders[current] {
+		return nil
+	}
+	supported := orElse(top.Annotations[providersAnnotation], defaultProviders)
+	for _, p := range strings.Split(supported, ",") {
+		if p == current {
+			return nil
+		}
+	}
+	switch {
+	case top.Name() == "pbs" && current == "pbs":
+		return fmt.Errorf("`pc pbs` inspects PBS remotes through PDM (current provider: pbs); against a PBS server use `pc datastore …`")
+	case current == "pbs":
+		return fmt.Errorf("`pc %s` is not available on Proxmox Backup Server (current provider: pbs); PBS commands: `pc datastore`, `pc task`, `pc raw`/`pc api`, or set provider: pve|pdm", top.Name())
+	default:
+		return fmt.Errorf("`pc %s` requires provider: %s (current provider: %s)", top.Name(), strings.ReplaceAll(supported, ",", "|"), current)
+	}
+}
 
 // app is the shared runtime carried across commands via cobra's context.
 type app struct {
@@ -53,6 +141,9 @@ func (a *app) Provider() (provider.Provider, error) {
 	s, err := config.Resolve(f, a.overrides())
 	if err != nil {
 		return nil, err
+	}
+	if s.AuthType == "ticket" {
+		s.OTPPrompt = otpPrompter(s.User)
 	}
 	a.settings = s
 	if a.format == "" {
@@ -161,6 +252,23 @@ func (a *app) providerName() string {
 	return s.Provider
 }
 
+// gateProvider is providerName without secret resolution (see
+// config.ResolveProvider), for the per-invocation provider gate.
+// It returns "" (the gate then steps aside) when the config can't be loaded or
+// the selected profile doesn't exist, so the real error surfaces from the
+// command instead of a misleading provider mismatch.
+func (a *app) gateProvider() string {
+	f, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return ""
+	}
+	p, err := config.ResolveProvider(f, a.overrides())
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
 // outputOptions builds render options from the resolved global flags.
 func (a *app) outputOptions() (output.Options, error) {
 	fmtStr := a.format
@@ -185,7 +293,7 @@ func NewRootCmd() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "pc",
-		Short: "Remote CLI for Proxmox VE clusters (and Proxmox Datacenter Manager)",
+		Short: "Remote CLI for Proxmox VE clusters (and Proxmox Datacenter Manager / Backup Server)",
 		Long: "pc is a remote-first, OpenStack-Client-inspired CLI for managing Proxmox VE\n" +
 			"clusters entirely over their REST API.\n\n" + version.Disclaimer,
 		Version:       version.String(),
@@ -196,9 +304,19 @@ func NewRootCmd() *cobra.Command {
 		// chained by default), so a subcommand defining its own would shadow
 		// this one — silently dropping the --format check and the plaintext
 		// --token-secret warning. Call this hook from it, or don't define one.
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
 			if a.format != "" {
 				if _, err := output.ParseFormat(a.format); err != nil {
+					return err
+				}
+			}
+			// Shell completion (__complete) passes the gate anyway; skip it
+			// before gateProvider reads the config, which could block a <TAB>
+			// (e.g. a FIFO config). Completion does its own bounded read.
+			switch topLevel(c).Name() {
+			case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			default:
+				if err := providerGate(c, a.gateProvider()); err != nil {
 					return err
 				}
 			}
@@ -218,7 +336,7 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&a.profile, "profile", "", "config profile to use")
 	pf.StringVar(&a.context, "context", "", "config context to use")
 	pf.StringVar(&a.server, "server", "", "Proxmox API base URL (e.g. https://host:8006)")
-	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm (overrides profile)")
+	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm|pbs (overrides profile)")
 	pf.StringVar(&a.tokenID, "token-id", "", "API token id (user@realm!name)")
 	pf.StringVar(&a.secret, "token-secret", "", "API token secret (plaintext on argv — prefer --token-secret-ref or PVE_CLI_TOKEN_SECRET)")
 	pf.StringVar(&a.secretRef, "token-secret-ref", "", "resolve the API token secret from env:NAME or keyring://service/key")
@@ -244,6 +362,7 @@ func NewRootCmd() *cobra.Command {
 		newTagCmd(a),
 		newPoolCmd(a),
 		newHACmd(a),
+		newClusterCmd(a),
 		newFirewallCmd(a),
 		newRemoteCmd(a),
 		newCephCmd(a),
@@ -254,18 +373,21 @@ func NewRootCmd() *cobra.Command {
 		newSubscriptionCmd(a),
 		newServerCmd(a),
 		newAutoInstallCmd(a),
-		newPluginCmd(a),
-		newTaskCmd(a),
-		newRawCmd(a),
-		newAPICmd(a),
-		newConfigCmd(a),
-		newContextCmd(a),
-		newAuthCmd(a),
-		newVersionCmd(a),
+		forProviders(newDatastoreCmd(a), "pbs"),
+		forProviders(newPluginCmd(a), allProviders),
+		forProviders(newTaskCmd(a), allProviders),
+		forProviders(newRawCmd(a), allProviders),
+		forProviders(newAPICmd(a), allProviders),
+		forProviders(newConfigCmd(a), allProviders),
+		forProviders(newContextCmd(a), allProviders),
+		forProviders(newAuthCmd(a), allProviders),
+		forProviders(newVersionCmd(a), allProviders),
 	)
 
 	// Mark read commands so the table-only global flags only clutter their help.
 	annotateTabularReads(root)
+	// Live-API completion for guest/node/remote/storage args and flags (#23).
+	wireLiveCompletion(a, root)
 
 	// Custom help: (a) hide --column/--sort/--no-headers on non-tabular
 	// subcommands (they stay functional, just off that command's help); and
@@ -301,7 +423,11 @@ func Execute() int {
 		return code
 	}
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// A health verdict (cluster check) is already reported on stdout.
+		var chk *checkExit
+		if !errors.As(err, &chk) {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		return ExitCodeFor(err)
 	}
 	return 0

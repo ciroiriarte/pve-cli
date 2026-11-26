@@ -217,6 +217,10 @@ func init() {
 	reg("pool show", "GET", "/pools/{poolid}")
 	reg("pool update", "PUT", "/pools/{poolid}")
 	reg("pool delete", "DELETE", "/pools/{poolid}")
+	// cluster health (also reads /cluster/resources, /nodes/{node}/tasks and
+	// /cluster/ha/status/current)
+	reg("cluster check", "GET", "/cluster/status")
+	reg("cluster check", "GET", "/cluster/ceph/status")
 	// HA
 	reg("ha status", "GET", "/cluster/ha/status/current")
 	reg("ha resource list", "GET", "/cluster/ha/resources")
@@ -300,6 +304,25 @@ func init() {
 		reg("ceph service "+st, "POST", "/nodes/{node}/ceph/"+st)
 	}
 	reg("ceph config", "GET", "/nodes/{node}/ceph/cfg/raw")
+
+	// PBS (provider: pbs). /version and /nodes/{node}/tasks/... share their
+	// keys with the PVE entries above (same commands).
+	reg("datastore list", "GET", "/admin/datastore")
+	reg("datastore show", "GET", "/config/datastore/{name}")
+	reg("datastore status", "GET", "/status/datastore-usage")
+	reg("datastore status <store>", "GET", "/admin/datastore/{store}/status")
+	reg("datastore namespace list", "GET", "/admin/datastore/{store}/namespace")
+	reg("datastore group list", "GET", "/admin/datastore/{store}/groups")
+	reg("datastore snapshot list", "GET", "/admin/datastore/{store}/snapshots")
+	reg("datastore gc status", "GET", "/admin/gc")
+	reg("datastore gc status <store>", "GET", "/admin/datastore/{store}/gc")
+	reg("datastore gc start", "POST", "/admin/datastore/{store}/gc")
+	reg("datastore prune --group", "POST", "/admin/datastore/{store}/prune")
+	reg("datastore prune", "POST", "/admin/datastore/{store}/prune-datastore")
+	reg("datastore verify start", "POST", "/admin/datastore/{store}/verify")
+	reg("datastore job list --type prune", "GET", "/admin/prune")
+	reg("datastore job list --type verify", "GET", "/admin/verify")
+	reg("datastore job list --type sync", "GET", "/admin/sync")
 }
 
 // Classify reports the curated command for an endpoint, or ("", false) if the

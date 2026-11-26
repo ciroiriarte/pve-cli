@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // sortParams orders parameters with required ones first, then alphabetically.
@@ -34,6 +35,23 @@ type rawEndpoint struct {
 
 type rawParameters struct {
 	Properties map[string]*rawParam `json:"properties"`
+	// AllOf composes the parameter object from several property sets (PBS
+	// uses it heavily, e.g. prune = backup group + keep options); the members
+	// are merged into one flat parameter list.
+	AllOf []*rawParameters `json:"allOf"`
+}
+
+// flatten merges Properties with those of every (nested) allOf member.
+func (rp *rawParameters) flatten(into map[string]*rawParam) {
+	if rp == nil {
+		return
+	}
+	for name, p := range rp.Properties {
+		into[name] = p
+	}
+	for _, sub := range rp.AllOf {
+		sub.flatten(into)
+	}
 }
 
 type rawParam struct {
@@ -53,6 +71,12 @@ func Parse(treeJSON []byte) (*API, error) {
 	}
 	api := &API{}
 	for _, r := range roots {
+		// PBS documents its HTTP/2 backup/restore protocols as extra roots
+		// (/backup/_upgrade_, /reader/_upgrade_). They are only reachable after
+		// a protocol upgrade, never via the REST API, so they're left out.
+		if strings.Contains(r.Path, "/_upgrade_") {
+			continue
+		}
 		node := convert(r, api)
 		api.Tree = append(api.Tree, node)
 	}
@@ -93,11 +117,13 @@ func convert(r *rawNode, api *API) *Node {
 }
 
 func convertParams(rp *rawParameters) []*Param {
-	if rp == nil || len(rp.Properties) == 0 {
+	props := map[string]*rawParam{}
+	rp.flatten(props)
+	if len(props) == 0 {
 		return nil
 	}
-	out := make([]*Param, 0, len(rp.Properties))
-	for name, p := range rp.Properties {
+	out := make([]*Param, 0, len(props))
+	for name, p := range props {
 		out = append(out, &Param{
 			Name:        name,
 			Type:        p.Type,
