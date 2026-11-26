@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -168,6 +169,9 @@ func (c *Client) doRaw(ctx context.Context, req *Request) ([]byte, error) {
 		body, status, transErr := c.attempt(ctx, req)
 		if transErr != nil {
 			lastErr = &protocol.APIError{Kind: protocol.KindTransport, Message: transErr.Error()}
+			if errors.Is(transErr, ErrRedirectRefused) {
+				return nil, lastErr // deterministic: retrying hits the same redirect
+			}
 			continue // transport errors are always retryable for idempotent reqs
 		}
 		if status >= 200 && status < 300 {

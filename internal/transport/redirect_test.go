@@ -67,6 +67,29 @@ func TestTokenClientRefusesRedirect(t *testing.T) {
 	}
 }
 
+// A refused redirect is deterministic, so an idempotent GET must not retry it.
+func TestRefusedRedirectIsNotRetried(t *testing.T) {
+	dst, _ := sink(t)
+	var hits int
+	src := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Redirect(w, r, dst.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer src.Close()
+
+	c, err := New(Options{BaseURL: src.URL, TLS: TLSConfig{Fingerprint: pinOf(src)}, MaxRetries: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.DoRaw(context.Background(), &Request{Method: http.MethodGet, Path: "/version"})
+	if err == nil || !strings.Contains(err.Error(), ErrRedirectRefused.Error()) {
+		t.Fatalf("expected redirect refusal, got %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("server hit %d times, want 1 (refused redirect must not be retried)", hits)
+	}
+}
+
 // Issue #38: a 307/308 on ticket login must not replay the password body.
 func TestTicketLoginRefusesRedirect(t *testing.T) {
 	for _, code := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {

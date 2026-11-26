@@ -11,7 +11,9 @@ surface may change between minor releases.
   the PVE `PVEAPIToken=<tokenid>=<secret>` form; PVE is unchanged (#30).
 - **Security**: TLS hardening (#38):
   - A configured `--tls-fingerprint` pin now always wins over `--insecure`;
-    previously insecure silently ignored the pin.
+    previously insecure silently ignored the pin. A profile with `insecure`
+    plus a stale fingerprint used to work and now fails with a pin mismatch;
+    fix or remove the stale fingerprint.
   - `--insecure=false` now overrides a profile/env `insecure: true`.
   - Sending credentials with verification disabled (insecure, no pin) prints a
     one-line warning to stderr, once per process.

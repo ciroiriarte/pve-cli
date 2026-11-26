@@ -34,7 +34,14 @@ func NewTicket(baseURL, user, password string, client *http.Client) (*TicketProv
 		return nil, fmt.Errorf("ticket auth requires a user and password")
 	}
 	if client == nil {
-		client = http.DefaultClient
+		// Not http.DefaultClient: it follows redirects, and a 307/308 would
+		// replay the password body to the redirect target.
+		client = &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("ticket login: refusing to follow redirect to %s", req.URL.Redacted())
+			},
+		}
 	}
 	return &TicketProvider{
 		baseURL:  strings.TrimRight(baseURL, "/"),

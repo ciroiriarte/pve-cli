@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -42,8 +43,12 @@ func NewHTTPClient(tlsConf TLSConfig, timeout time.Duration) (*http.Client, erro
 // (Go forwards Authorization/cookies on same-host redirects regardless of
 // scheme) or replay the ticket-login password body on a 307/308.
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("transport: refusing to follow redirect to %s", req.URL.Redacted())
+	return fmt.Errorf("%w to %s", ErrRedirectRefused, req.URL.Redacted())
 }
+
+// ErrRedirectRefused is returned (wrapped) when a server answers with a
+// redirect. It is not retried: a retry would only hit the same redirect.
+var ErrRedirectRefused = errors.New("transport: refusing to follow redirect")
 
 // insecureWarnOnce limits the insecure-TLS warning to one line per process.
 var insecureWarnOnce sync.Once

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +60,33 @@ func TestTicketProviderLoginAndCSRF(t *testing.T) {
 func TestNewTicketRequiresCreds(t *testing.T) {
 	if _, err := NewTicket("https://h:8006", "", "", nil); err == nil {
 		t.Error("expected error without creds")
+	}
+}
+
+// NewTicket with a nil client must not fall back to a redirect-following
+// client: a 307 would replay the password body to the redirect target.
+func TestNewTicketNilClientRefusesRedirect(t *testing.T) {
+	var leaked bool
+	dst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err == nil && r.PostForm.Get("password") != "" {
+			leaked = true
+		}
+		w.Write([]byte(`{"data":{"ticket":"x","CSRFPreventionToken":"y"}}`))
+	}))
+	defer dst.Close()
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dst.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer src.Close()
+
+	tp, err := NewTicket(src.URL, "root@pam", "pw", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tp.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing to follow redirect") {
+		t.Fatalf("expected redirect refusal, got %v", err)
+	}
+	if leaked {
+		t.Error("password was replayed to the redirect target")
 	}
 }
