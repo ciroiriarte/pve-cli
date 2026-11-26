@@ -267,7 +267,7 @@ func newAuthCmd(a *app) *cobra.Command {
 }
 
 func newAuthLoginCmd(a *app) *cobra.Command {
-	var tokenID, secret, user, password, profile, fingerprint, provider string
+	var tokenID, secret, secretRef, user, password, passwordRef, profile, fingerprint, provider string
 	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "login <server-url>",
@@ -277,9 +277,14 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			"Choose one auth method:\n" +
 			"  --token-id <user@realm!name>   API token (recommended; non-interactive)\n" +
 			"  --user <user@realm>            ticket auth (prompts for the password)\n\n" +
-			"The secret/password is prompted if not passed. After login, verify with\n" +
-			"`pc config test-auth`.",
+			"The secret/password is prompted if not passed. To keep it off the command\n" +
+			"line (shell history, the process table) in scripts, use\n" +
+			"--token-secret-ref/--password-ref env:NAME|keyring://service/key, or pass\n" +
+			"`-` to read it from stdin; a plaintext --token-secret/--password works but\n" +
+			"warns. After login, verify with `pc config test-auth`.",
 		Example: "  pc auth login https://pve1:8006 --token-id 'svc@pve!cli'\n" +
+			"  pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret-ref env:PVE_TOKEN\n" +
+			"  pass show pve/token | pc auth login https://pve1:8006 --token-id 'svc@pve!cli' --token-secret -\n" +
 			"  pc auth login https://pve1:8006 --user root@pam",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -295,25 +300,15 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 			// (token auth) or the user's password (ticket auth).
 			var cred string
 			auth := config.AuthConfig{Type: "token", TokenID: tokenID}
+			var err error
 			if tokenID != "" {
-				if secret == "" {
-					s, err := promptSecret("Token secret: ")
-					if err != nil {
-						return err
-					}
-					secret = s
-				}
-				cred = secret
+				cred, err = loginSecret(secret, secretRef, "--token-secret", "Token secret: ")
 			} else {
 				auth = config.AuthConfig{Type: "ticket", User: user}
-				if password == "" {
-					pw, err := promptSecret(fmt.Sprintf("Password for %s: ", user))
-					if err != nil {
-						return err
-					}
-					password = pw
-				}
-				cred = password
+				cred, err = loginSecret(password, passwordRef, "--password", fmt.Sprintf("Password for %s: ", user))
+			}
+			if err != nil {
+				return err
 			}
 
 			path := config.DefaultPath()
@@ -385,15 +380,31 @@ func newAuthLoginCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&tokenID, "token-id", "", "API token id (user@realm!name) — token auth")
-	cmd.Flags().StringVar(&secret, "token-secret", "", "API token secret (prompted if omitted)")
+	cmd.Flags().StringVar(&secret, "token-secret", "", "API token secret (prompted if omitted; `-` reads stdin; prefer --token-secret-ref)")
+	cmd.Flags().StringVar(&secretRef, "token-secret-ref", "", "resolve the API token secret from env:NAME or keyring://service/key")
 	cmd.Flags().StringVar(&user, "user", "", "user (user@realm) — ticket auth")
-	cmd.Flags().StringVar(&password, "password", "", "ticket-auth password (prompted if omitted)")
+	cmd.Flags().StringVar(&password, "password", "", "ticket-auth password (prompted if omitted; `-` reads stdin; prefer --password-ref)")
+	cmd.Flags().StringVar(&passwordRef, "password-ref", "", "resolve the ticket-auth password from env:NAME or keyring://service/key")
 	cmd.MarkFlagsMutuallyExclusive("token-id", "user")
+	cmd.MarkFlagsMutuallyExclusive("token-secret", "token-secret-ref")
+	cmd.MarkFlagsMutuallyExclusive("password", "password-ref")
 	cmd.Flags().StringVar(&profile, "profile", "default", "profile name to write")
 	cmd.Flags().StringVar(&fingerprint, "fingerprint", "", "pin the server cert SHA-256 fingerprint")
 	cmd.Flags().StringVar(&provider, "provider", "pve", "backend provider: pve|pdm")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "disable TLS verification for this profile")
 	return cmd
+}
+
+// loginSecret resolves the login credential via the shared resolveSecretInput
+// (ref / `-` stdin / warned plaintext / TTY prompt). When nothing is given and
+// stdin isn't a terminal it still reads one line from stdin, preserving the
+// pre-existing `echo secret | pc auth login …` behavior.
+func loginSecret(value, ref, flag, label string) (string, error) {
+	s, err := resolveSecretInput(value, ref, flag, label)
+	if err != nil || s != "" || value != "" || ref != "" {
+		return s, err
+	}
+	return promptSecret(label)
 }
 
 // promptYesNo asks a y/N question on stderr and returns true only on an

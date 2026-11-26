@@ -26,6 +26,7 @@ type app struct {
 	provider    string
 	tokenID     string
 	secret      string
+	secretRef   string
 	format      string
 	columns     []string
 	noHeaders   bool
@@ -47,6 +48,11 @@ func (a *app) Provider() (provider.Provider, error) {
 	f, err := config.Load(config.DefaultPath())
 	if err != nil {
 		return nil, err
+	}
+	if a.secret != "" {
+		// Same wording as resolveSecretInput's warning; the global flag has no
+		// `-` (stdin) form, so point at the ref flag / env var instead.
+		fmt.Fprintln(stderrWriter(), "[pc] warning: plaintext --token-secret leaks to shell history and the process table; prefer --token-secret-ref (env:…/keyring://…) or PVE_CLI_TOKEN_SECRET")
 	}
 	s, err := config.Resolve(f, a.overrides())
 	if err != nil {
@@ -73,6 +79,7 @@ func (a *app) overrides() config.Overrides {
 		Provider:    a.provider,
 		TokenID:     a.tokenID,
 		Secret:      a.secret,
+		SecretRef:   a.secretRef,
 		Output:      a.format,
 		Fingerprint: a.fingerprint,
 	}
@@ -201,7 +208,9 @@ func NewRootCmd() *cobra.Command {
 	pf.StringVar(&a.server, "server", "", "Proxmox API base URL (e.g. https://host:8006)")
 	pf.StringVar(&a.provider, "provider", "", "backend provider: pve|pdm (overrides profile)")
 	pf.StringVar(&a.tokenID, "token-id", "", "API token id (user@realm!name)")
-	pf.StringVar(&a.secret, "token-secret", "", "API token secret")
+	pf.StringVar(&a.secret, "token-secret", "", "API token secret (plaintext on argv — prefer --token-secret-ref or PVE_CLI_TOKEN_SECRET)")
+	pf.StringVar(&a.secretRef, "token-secret-ref", "", "resolve the API token secret from env:NAME or keyring://service/key")
+	root.MarkFlagsMutuallyExclusive("token-secret", "token-secret-ref")
 	pf.StringVarP(&a.format, "format", "o", "", "output format: table|json|yaml|csv|value")
 	pf.StringArrayVarP(&a.columns, "column", "c", nil, "select/order output columns (repeatable)")
 	pf.BoolVar(&a.noHeaders, "no-headers", false, "omit table/csv headers")

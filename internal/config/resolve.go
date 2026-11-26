@@ -38,6 +38,7 @@ type Overrides struct {
 	Provider    string
 	TokenID     string
 	Secret      string
+	SecretRef   string // env:NAME | keyring://service/key; below Secret, above env
 	Output      string
 	Insecure    *bool
 	Fingerprint string
@@ -83,23 +84,39 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 		}
 		s.RateQPS = prof.RateLimit.QPS
 		s.RateBurst = prof.RateLimit.Burst
-		if sec, err := resolveSecret(prof.Auth); err != nil {
-			return nil, err
-		} else {
-			s.Secret = sec
-		}
 	}
+
+	// The secret is decided up front (flag > flag ref > env > profile) and the
+	// profile's reference is dereferenced only when nothing higher is set, so a
+	// locked/unavailable keyring can't block a valid env/flag override.
+	sec := ov.Secret
+	if sec == "" && ov.SecretRef != "" {
+		v, err := ResolveSecretRef(ov.SecretRef)
+		if err != nil {
+			return nil, err
+		}
+		if v == "" {
+			return nil, errf("--token-secret-ref %s resolved to an empty secret", ov.SecretRef)
+		}
+		sec = v
+	}
+	if sec == "" {
+		// PVE_CLI_PASSWORD wins over PVE_CLI_TOKEN_SECRET (pre-existing order).
+		sec = firstNonEmpty(os.Getenv("PVE_CLI_PASSWORD"), os.Getenv("PVE_CLI_TOKEN_SECRET"))
+	}
+	if sec == "" && profName != "" {
+		v, err := resolveSecret(f.Profiles[profName].Auth)
+		if err != nil {
+			return nil, err
+		}
+		sec = v
+	}
+	s.Secret = sec
 
 	// 4. Env vars override profile values.
 	s.Server = firstNonEmpty(os.Getenv("PVE_CLI_SERVER"), s.Server)
 	s.TokenID = firstNonEmpty(os.Getenv("PVE_CLI_TOKEN_ID"), s.TokenID)
 	s.User = firstNonEmpty(os.Getenv("PVE_CLI_USER"), s.User)
-	if v := os.Getenv("PVE_CLI_TOKEN_SECRET"); v != "" {
-		s.Secret = v
-	}
-	if v := os.Getenv("PVE_CLI_PASSWORD"); v != "" {
-		s.Secret = v
-	}
 	s.TLSFinger = firstNonEmpty(os.Getenv("PVE_CLI_TLS_FINGERPRINT"), s.TLSFinger)
 	s.Output = firstNonEmpty(os.Getenv("PVE_CLI_OUTPUT"), s.Output)
 	if v := os.Getenv("PVE_CLI_INSECURE"); v != "" {
@@ -112,9 +129,6 @@ func Resolve(f *File, ov Overrides) (*Settings, error) {
 	s.Provider = firstNonEmpty(ov.Provider, s.Provider)
 	s.Server = firstNonEmpty(ov.Server, s.Server)
 	s.TokenID = firstNonEmpty(ov.TokenID, s.TokenID)
-	if ov.Secret != "" {
-		s.Secret = ov.Secret
-	}
 	s.TLSFinger = firstNonEmpty(ov.Fingerprint, s.TLSFinger)
 	s.Output = firstNonEmpty(ov.Output, s.Output)
 	if ov.Insecure != nil {

@@ -106,6 +106,14 @@ The `secret_ref` field dereferences a secret instead of storing it in plaintext:
 A plaintext `secret:` is supported but warns on use. Headless machines without a
 keyring fall back to env vars or an explicit `secret:`.
 
+The secret source is chosen before anything is dereferenced: `--token-secret` >
+`--token-secret-ref` > `PVE_CLI_PASSWORD`/`PVE_CLI_TOKEN_SECRET` > the profile's
+`secret_ref`/`secret`. A locked or unavailable keyring therefore never blocks an
+env/flag override. Prefer `--token-secret-ref env:NAME|keyring://…` over the
+plaintext `--token-secret` (which leaks to shell history and `ps`, and warns).
+`pc auth login` likewise takes `--token-secret-ref`/`--password-ref`, or `-` to
+read the secret from stdin.
+
 ## Troubleshooting auth
 
 When a command fails with a generic auth or connection error, run:

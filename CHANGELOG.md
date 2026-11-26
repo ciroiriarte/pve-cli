@@ -6,6 +6,24 @@ surface may change between minor releases.
 
 ## [Unreleased]
 
+- **Security**: config directory/file permissions are now enforced on existing
+  paths too (#33). The `0700`/`0600` hardening from 0.14.3 only applied when the
+  path was newly created, so upgraded installs kept a `0755` dir and a `0644`
+  `config.yaml` (which may hold an inline credential). Every config write now
+  tightens the app's own `pve-cli` directory to `0700` and the file to `0600`
+  (a `PVE_CLI_CONFIG` outside a `pve-cli` directory leaves its parent alone).
+- **Security**: credentials no longer have to be passed in plaintext on argv
+  (#39). `pc auth login` takes `--token-secret-ref`/`--password-ref`
+  (`env:NAME|keyring://service/key`) and accepts `-` for stdin on
+  `--token-secret`/`--password`, keeping the prompt when omitted. A new global
+  `--token-secret-ref` complements the global `--token-secret`. A plaintext argv
+  secret still works but prints the same stderr warning as the other secret
+  flags.
+- **Fixed**: an unavailable/locked keyring no longer blocks a valid
+  `PVE_CLI_TOKEN_SECRET`/`PVE_CLI_PASSWORD` or `--token-secret` override (#34).
+  The winning secret source is decided first (flag > flag ref > env > profile)
+  and the profile's `secret_ref` is dereferenced only when nothing higher is set.
+
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
 - **Security**: fixes from a static security assessment (govulncheck + gosec +

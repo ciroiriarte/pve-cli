@@ -95,16 +95,45 @@ func Load(path string) (*File, error) {
 	return &f, nil
 }
 
-// Save writes the config file to path, creating parent directories. The
-// directory is created 0700 because it holds the credential file (config.yaml,
-// which may contain an inline plaintext secret); the file itself is 0600.
+// Save writes the config file to path, creating parent directories.
 func Save(path string, f *File) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := yaml.Marshal(f)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return writeConfigFile(path, b)
+}
+
+// writeConfigFile writes the credential-bearing config file (it may hold an
+// inline plaintext secret when no keyring is available). The directory is
+// created 0700 and the file 0600 — and, because MkdirAll/WriteFile never change
+// the mode of a path that already exists, pre-existing permissive modes left by
+// older versions (0755 dir, 0644 file) are tightened too. Only the app's own
+// "pve-cli" directory is chmod'ed: a PVE_CLI_CONFIG pointing elsewhere (e.g.
+// straight into $HOME) must not have its parent's mode changed.
+func writeConfigFile(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if filepath.Base(dir) == "pve-cli" {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	// Tighten the mode on the open fd before any content is written, so an
+	// existing 0644 file never holds the new contents world-readable.
+	if err := fh.Chmod(0o600); err != nil {
+		fh.Close()
+		return err
+	}
+	if _, err := fh.Write(b); err != nil {
+		fh.Close()
+		return err
+	}
+	return fh.Close()
 }
