@@ -17,14 +17,17 @@ const gib = int64(1) << 30
 // Memory limit at the default 90%: pve-02 = 28.8GiB (21 used → 7.8 room),
 // pve-03 = 28.8GiB (4 used → 24.8 room).
 type evacFixture struct {
-	guests []map[string]any // guest entries of /cluster/resources
-	ha     []string         // /cluster/ha/resources sids
-	pre    map[int]string   // vmid → precondition data JSON override
-	fail   map[int]bool     // vmid → migration task ends with an error
-	nodes  []map[string]any // override nodes (nil = default 3-node cluster)
-	mu     sync.Mutex
-	posts  map[int]map[string]string // vmid → POST form
-	order  []int                     // POST order
+	guests  []map[string]any // guest entries of /cluster/resources
+	ha      []string         // /cluster/ha/resources sids
+	pre     map[int]string   // vmid → precondition data JSON override ("501"/"500" = that HTTP error)
+	ctConf  map[int]string   // vmid → CT config JSON override
+	repl    string           // /cluster/replication entries (JSON, comma-separated)
+	postErr map[int]bool     // vmid → migrate POST fails synchronously
+	fail    map[int]bool     // vmid → migration task ends with an error
+	nodes   []map[string]any // override nodes (nil = default 3-node cluster)
+	mu      sync.Mutex
+	posts   map[int]map[string]string // vmid → POST form
+	order   []int                     // POST order
 }
 
 func defaultEvacGuests() []map[string]any {
@@ -39,7 +42,8 @@ func defaultEvacGuests() []map[string]any {
 }
 
 func newEvacFixture(guests []map[string]any) *evacFixture {
-	return &evacFixture{guests: guests, pre: map[int]string{}, fail: map[int]bool{}, posts: map[int]map[string]string{}}
+	return &evacFixture{guests: guests, pre: map[int]string{}, ctConf: map[int]string{}, postErr: map[int]bool{},
+		fail: map[int]bool{}, posts: map[int]map[string]string{}}
 }
 
 func (f *evacFixture) start() *httptest.Server {
@@ -56,6 +60,12 @@ func (f *evacFixture) start() *httptest.Server {
 		}
 		all := append(append([]map[string]any{}, nodes...), f.guests...)
 		json.NewEncoder(w).Encode(map[string]any{"data": all})
+	})
+	mux.HandleFunc("/api2/json/cluster/replication", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"data":[%s]}`, f.repl)
+	})
+	mux.HandleFunc("/api2/json/storage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[{"storage":"local-lvm","type":"lvmthin"},{"storage":"tank","type":"zfspool","nodes":"pve-01,pve-02"},{"storage":"off","type":"dir","disable":1}]}`))
 	})
 	mux.HandleFunc("/api2/json/cluster/ha/resources", func(w http.ResponseWriter, _ *http.Request) {
 		var out []map[string]string
@@ -77,19 +87,36 @@ func (f *evacFixture) start() *httptest.Server {
 			w.Write([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 			return
 		}
+		// lxc/<vmid>/config
+		if len(parts) == 3 && parts[0] == "lxc" && parts[2] == "config" {
+			vmid, _ := strconv.Atoi(parts[1])
+			if c, ok := f.ctConf[vmid]; ok {
+				fmt.Fprintf(w, `{"data":%s}`, c)
+				return
+			}
+			fmt.Fprintf(w, `{"data":{"rootfs":"local-lvm:vm-%d-disk-0,size=8G"}}`, vmid)
+			return
+		}
 		// {qemu|lxc}/<vmid>/migrate
 		if len(parts) == 3 && parts[2] == "migrate" {
 			vmid, _ := strconv.Atoi(parts[1])
 			if r.Method == http.MethodGet {
-				if parts[0] != "qemu" {
-					http.Error(w, "no precondition for CTs in this fixture", http.StatusNotImplemented)
-					return
-				}
-				if d, ok := f.pre[vmid]; ok {
+				d, ok := f.pre[vmid]
+				switch {
+				case d == "501" || d == "500":
+					code, _ := strconv.Atoi(d)
+					http.Error(w, "precondition unavailable", code)
+				case ok:
 					fmt.Fprintf(w, `{"data":%s}`, d)
-					return
+				case parts[0] == "lxc":
+					w.Write([]byte(`{"data":{"running":1,"allowed-nodes":["pve-02","pve-03"],"not-allowed-nodes":{}}}`))
+				default:
+					w.Write([]byte(`{"data":{"running":1,"allowed_nodes":["pve-02","pve-03"],"not_allowed_nodes":{},"local_disks":[],"local_resources":[]}}`))
 				}
-				w.Write([]byte(`{"data":{"running":1,"allowed_nodes":["pve-02","pve-03"],"not_allowed_nodes":{},"local_disks":[],"local_resources":[]}}`))
+				return
+			}
+			if f.postErr[vmid] {
+				http.Error(w, "Cannot live-migrate replicated VM", http.StatusInternalServerError)
 				return
 			}
 			r.ParseForm()
@@ -268,7 +295,7 @@ func TestNodeEvacuateSkips(t *testing.T) {
 	plan := evacPlan(t, out)
 	wantReason := map[int]string{
 		103: "HA-managed", 109: "HA-managed", 104: "template", 105: "local resources: hostpci0",
-		107: "locked (backup)", 108: "local CD-ROM ISO", 110: "--with-local-disks", 112: "no destination",
+		107: "locked (backup)", 108: "local CD-ROM ISO", 110: "--with-local-disks", 112: "no allowed destination: pve-02: unavailable storages tank",
 	}
 	for id, w := range wantReason {
 		it := plan[id]

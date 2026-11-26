@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -48,9 +48,10 @@ type evacItem struct {
 	UPID   string           `json:"upid,omitempty" yaml:"upid,omitempty"`
 
 	maxCPU     float64
-	localDisks bool     // live migration with attached local disks: send with-local-disks=1
-	allowed    []string // precondition allowed_nodes (nil = unrestricted)
-	expected   bool     // an expected skip (templates) that doesn't fail the run
+	localDisks bool              // live migration with attached local disks: send with-local-disks=1
+	allowed    []string          // allowed destinations (nil = unrestricted)
+	blocked    map[string]string // excluded node → why
+	expected   bool              // an expected skip (templates) that doesn't fail the run
 }
 
 // evacRes is the subset of a /cluster/resources entry the planner needs.
@@ -99,13 +100,16 @@ func newNodeEvacuateCmd(a *app) *cobra.Command {
 			"maintenance windows. Running guests are moved by default; --all also moves\n" +
 			"stopped ones. Destinations are planned greedily, largest guest first, onto the\n" +
 			"node with the most memory headroom, never exceeding --max-mem-pct of a node's\n" +
-			"RAM (and --vcpu-ratio allocated vCPUs per core, when set). --target forces a\n" +
+			"RAM (and --vcpu-ratio allocated vCPUs per logical CPU, when set). --target forces a\n" +
 			"single destination (still capacity-checked unless --force).\n\n" +
 			"Running VMs are live-migrated; running containers use restart migration.\n" +
 			"Guests that can't move are skipped and reported: HA-managed guests (let HA\n" +
 			"move them, e.g. `ha-manager crm-command node-maintenance enable <node>`),\n" +
-			"VMs with local devices, local CD-ROM ISOs or local disks (unless\n" +
-			"--with-local-disks), locked guests and templates.\n\n" +
+			"VMs with unmapped local devices, local CD-ROM ISOs or (when running) local\n" +
+			"disks without --with-local-disks, CTs with local bind/device mount points,\n" +
+			"locked guests and templates. Destinations are restricted to the nodes PVE's\n" +
+			"migrate preconditions allow, where a CT's storages are enabled, and (for a\n" +
+			"running replicated VM) its replication targets.\n\n" +
 			"--dry-run prints the plan without migrating. The exit code is non-zero when\n" +
 			"any migration failed or any guest (other than a template) could not be moved.",
 		Example: "  pc node evacuate pve-01 --dry-run\n" +
@@ -165,16 +169,19 @@ func newNodeEvacuateCmd(a *app) *cobra.Command {
 			if len(move) > 0 {
 				if !a.assumeYes && isTTY() {
 					// Show what is about to happen before asking.
-					_ = output.Render(os.Stderr, evacTable(items, false), output.Options{Format: output.Table})
+					_ = output.Render(stderrWriter(), evacTable(items, false), output.Options{Format: output.Table})
 				}
 				prompt := fmt.Sprintf("migrate %d guest(s) off %s (%d VMs, %d CTs) to %s", len(move), src, vms, cts, strings.Join(sortedKeys(dests), ", "))
 				if n := len(items) - len(move); n > 0 {
 					prompt += fmt.Sprintf("; %d guest(s) will be skipped", n)
 				}
+				if o.force {
+					prompt += "; capacity checks disabled (--force)"
+				}
 				if err := confirm(a, prompt+"?"); err != nil {
 					return err
 				}
-				runEvacuation(ctx, p, move, o.online, parallel, timeout, restartTimeout)
+				runEvacuation(ctx, p, move, parallel, timeout, restartTimeout)
 			}
 			for _, it := range items {
 				if it.Skip {
@@ -193,7 +200,7 @@ func newNodeEvacuateCmd(a *app) *cobra.Command {
 	cmd.Flags().BoolVar(&o.online, "online", true, "live-migrate running VMs (--online=false skips them)")
 	cmd.Flags().BoolVar(&o.withLocalDisks, "with-local-disks", false, "migrate VMs with disks on local storage (copies them)")
 	cmd.Flags().Float64Var(&o.maxMemPct, "max-mem-pct", 90, "max projected memory use of a destination, in % of its RAM")
-	cmd.Flags().Float64Var(&o.vcpuRatio, "vcpu-ratio", 0, "max allocated vCPUs per physical core on a destination (0 = no limit)")
+	cmd.Flags().Float64Var(&o.vcpuRatio, "vcpu-ratio", 0, "max allocated vCPUs per logical CPU (thread) on a destination (0 = no limit)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan without migrating")
 	cmd.Flags().IntVar(&parallel, "parallel", 1, fmt.Sprintf("concurrent migrations (1-%d)", maxEvacParallel))
 	cmd.Flags().IntVar(&timeout, "wait-timeout", 0, "seconds to wait for each migration task (0 = no limit)")
@@ -298,6 +305,11 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 		}
 	}
 
+	var cache evacCache
+	targetSet := map[string]bool{}
+	for n := range targets {
+		targetSet[n] = true
+	}
 	for _, it := range items {
 		if it.Skip {
 			continue
@@ -321,6 +333,27 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 		}
 		if it.Kind == domain.KindVM {
 			vmPrecondition(ctx, p, it, o.withLocalDisks)
+		} else {
+			if err := ctPrecondition(ctx, p, it, &cache, sortedKeys(targetSet)); err != nil {
+				return nil, err
+			}
+		}
+		// PVE refuses to live-migrate a replicated VM to a node that isn't one
+		// of its replication targets (Qemu.pm migrate_vm, unless force).
+		if !it.Skip && it.Kind == domain.KindVM && running {
+			jobs, err := cache.replication(ctx, p)
+			if err != nil {
+				return nil, err
+			}
+			if tgts, ok := jobs[it.VMID]; ok {
+				reasons := map[string]string{}
+				for n := range targets {
+					if !hasString(tgts, n) {
+						reasons[n] = "not a replication target"
+					}
+				}
+				it.restrict(tgts, reasons)
+			}
 		}
 	}
 
@@ -349,24 +382,30 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 	sort.Strings(names)
 	for _, it := range order {
 		running := it.Status == "running"
-		eligible, short := 0, ""
+		var excluded, short []string
 		var best *evacTarget
 		var bestRoom int64
 		for _, n := range names {
 			if it.allowed != nil && !hasString(it.allowed, n) {
+				why := it.blocked[n]
+				if why == "" {
+					why = "not allowed by the migration precondition"
+				}
+				excluded = append(excluded, n+": "+why)
 				continue
 			}
-			eligible++
 			t := targets[n]
 			limit := int64(float64(t.maxMem) * o.maxMemPct / 100)
 			room := limit - t.mem
 			if running && !o.force {
 				if t.mem+it.MaxMem > limit {
-					short = fmt.Sprintf("insufficient memory: needs %s, best headroom %s (--max-mem-pct %g)", humanBytes(it.MaxMem), humanBytes(maxRoom(targets, names, it.allowed, o.maxMemPct)), o.maxMemPct)
+					short = append(short, fmt.Sprintf("%s: insufficient memory (needs %s, headroom %s at --max-mem-pct %g)",
+						n, humanBytes(it.MaxMem), humanBytes(max(room, 0)), o.maxMemPct))
 					continue
 				}
 				if o.vcpuRatio > 0 && t.vcpus+it.maxCPU > t.cores*o.vcpuRatio {
-					short = fmt.Sprintf("insufficient vCPU headroom: needs %g vCPUs (--vcpu-ratio %g)", it.maxCPU, o.vcpuRatio)
+					short = append(short, fmt.Sprintf("%s: insufficient vCPU headroom (needs %g, %g of %g allocated at --vcpu-ratio %g)",
+						n, it.maxCPU, t.vcpus, t.cores*o.vcpuRatio, o.vcpuRatio))
 					continue
 				}
 			}
@@ -375,10 +414,10 @@ func planEvacuation(ctx context.Context, p provider.Provider, src string, o evac
 			}
 		}
 		switch {
-		case eligible == 0:
-			it.Skip, it.Reason = true, "no destination: storage or mapped resources unavailable on the other nodes"
+		case best == nil && len(short) == 0:
+			it.Skip, it.Reason = true, "no allowed destination: "+strings.Join(excluded, "; ")
 		case best == nil:
-			it.Skip, it.Reason = true, short
+			it.Skip, it.Reason = true, strings.Join(append(short, excluded...), "; ")
 		default:
 			it.To = best.name
 			best.mem += it.MaxMem
@@ -404,9 +443,11 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 		return
 	}
 	var pre struct {
-		AllowedNodes   *[]string `json:"allowed_nodes"`
-		LocalResources []string  `json:"local_resources"`
-		LocalDisks     []struct {
+		AllowedNodes    *[]string                 `json:"allowed_nodes"`
+		NotAllowedNodes map[string]map[string]any `json:"not_allowed_nodes"`
+		LocalResources  []string                  `json:"local_resources"`
+		MappedInfo      map[string]map[string]any `json:"mapped-resource-info"`
+		LocalDisks      []struct {
 			Volid    string `json:"volid"`
 			CDROM    any    `json:"cdrom"`
 			IsUnused any    `json:"is_unused"`
@@ -416,9 +457,29 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 		it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
 		return
 	}
-	if len(pre.LocalResources) > 0 {
-		it.Skip, it.Reason = true, "local resources: "+strings.Join(pre.LocalResources, ",")
+	// As QemuMigrate::prepare: local resources that are cluster mappings
+	// don't block (missing mappings show up in not_allowed_nodes), but a
+	// running VM can only live-migrate mapped devices flagged live-migration.
+	var blocking, noLive []string
+	for _, r := range pre.LocalResources {
+		if _, mapped := pre.MappedInfo[r]; !mapped {
+			blocking = append(blocking, r)
+		}
+	}
+	if len(blocking) > 0 {
+		it.Skip, it.Reason = true, "local resources: "+strings.Join(blocking, ",")
 		return
+	}
+	if it.Mode == "online" {
+		for _, k := range sortedMapKeys(pre.MappedInfo) {
+			if !truthy(pre.MappedInfo[k]["live-migration"]) {
+				noLive = append(noLive, k)
+			}
+		}
+		if len(noLive) > 0 {
+			it.Skip, it.Reason = true, "mapped resources not live-migratable: "+strings.Join(noLive, ",")
+			return
+		}
 	}
 	// Mirrors PVE's QemuMigrate rules: a cloud-init drive is regenerated on
 	// the target, any other local CD-ROM blocks migration, and attached local
@@ -446,16 +507,208 @@ func vmPrecondition(ctx context.Context, p provider.Provider, it *evacItem, with
 		it.localDisks = true
 	}
 	if pre.AllowedNodes != nil {
-		it.allowed = *pre.AllowedNodes
-		if it.allowed == nil {
-			it.allowed = []string{}
+		it.restrict(*pre.AllowedNodes, notAllowedReasons(pre.NotAllowedNodes))
+	}
+}
+
+// ctPrecondition checks a container the way LXC/Migrate.pm will: the LXC
+// precondition endpoint (allowed-nodes, e.g. HA affinity; PVE 9+, skipped on
+// older versions that don't have it), local bind/device mount points (refused
+// unless marked shared), and every volume's storage being enabled on the
+// target. It returns an error only for cluster-wide lookups that fail.
+func ctPrecondition(ctx context.Context, p provider.Provider, it *evacItem, cache *evacCache, nodes []string) error {
+	body, err := p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/lxc/%d/migrate", it.From, it.VMID), nil)
+	switch {
+	case err == nil:
+		var pre struct {
+			AllowedNodes    *[]string                 `json:"allowed-nodes"`
+			NotAllowedNodes map[string]map[string]any `json:"not-allowed-nodes"`
+		}
+		if err := protocol.DecodeData(body, &pre); err != nil {
+			it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
+			return nil
+		}
+		if pre.AllowedNodes != nil {
+			it.restrict(*pre.AllowedNodes, notAllowedReasons(pre.NotAllowedNodes))
+		}
+	case endpointMissing(err):
+		// Older PVE without GET lxc/{vmid}/migrate: rely on the checks below.
+	default:
+		it.Skip, it.Reason = true, "precondition check failed: "+err.Error()
+		return nil
+	}
+
+	body, err = p.Raw(ctx, "GET", fmt.Sprintf("/nodes/%s/lxc/%d/config", it.From, it.VMID), nil)
+	if err != nil {
+		it.Skip, it.Reason = true, "reading config failed: "+err.Error()
+		return nil
+	}
+	var conf map[string]any
+	if err := protocol.DecodeData(body, &conf); err != nil {
+		it.Skip, it.Reason = true, "reading config failed: "+err.Error()
+		return nil
+	}
+	var local, storages []string
+	for _, k := range sortedMapKeys(conf) {
+		if k != "rootfs" && !ctMountKey.MatchString(k) {
+			continue
+		}
+		val, _ := conf[k].(string)
+		fields := strings.Split(val, ",")
+		vol := strings.TrimPrefix(fields[0], "volume=")
+		if strings.HasPrefix(vol, "/") {
+			if !hasString(fields[1:], "shared=1") {
+				local = append(local, k)
+			}
+			continue
+		}
+		if i := strings.Index(vol, ":"); i > 0 && !hasString(storages, vol[:i]) {
+			storages = append(storages, vol[:i])
+		}
+	}
+	if len(local) > 0 {
+		it.Skip, it.Reason = true, "local bind/device mount points: "+strings.Join(local, ",")
+		return nil
+	}
+	cfg, err := cache.storage(ctx, p)
+	if err != nil {
+		return err
+	}
+	var ok []string
+	reasons := map[string]string{}
+	for _, n := range nodes {
+		missing := ""
+		for _, s := range storages {
+			sc, known := cfg[s]
+			if !known || sc.Disable == 1 || (sc.Nodes != "" && !hasString(strings.Split(sc.Nodes, ","), n)) {
+				missing = s
+				break
+			}
+		}
+		if missing != "" {
+			reasons[n] = "storage " + missing + " not available"
+		} else {
+			ok = append(ok, n)
+		}
+	}
+	it.restrict(ok, reasons)
+	return nil
+}
+
+// ctMountKey matches the container config keys that LXC/Migrate.pm walks
+// (foreach_volume_full with unused included).
+var ctMountKey = regexp.MustCompile(`^(mp|unused)\d+$`)
+
+// endpointMissing reports an API error meaning the endpoint doesn't exist on
+// this PVE version (404 / 501), as opposed to a real failure.
+func endpointMissing(err error) bool {
+	var apiErr *protocol.APIError
+	return errors.As(err, &apiErr) && (apiErr.StatusCode == 404 || apiErr.StatusCode == 501)
+}
+
+// restrict narrows the item's allowed destinations to list (intersecting any
+// earlier restriction) and records why other nodes were excluded.
+func (it *evacItem) restrict(list []string, reasons map[string]string) {
+	next := []string{}
+	for _, n := range list {
+		if it.allowed == nil || hasString(it.allowed, n) {
+			next = append(next, n)
+		}
+	}
+	it.allowed = next
+	if it.blocked == nil {
+		it.blocked = map[string]string{}
+	}
+	for n, r := range reasons {
+		if it.blocked[n] == "" {
+			it.blocked[n] = r
 		}
 	}
 }
 
+// notAllowedReasons flattens a precondition's not-allowed-nodes map
+// ({node: {unavailable_storages: [...], blocking-ha-resources: [{sid,...}]}})
+// into one human reason per node.
+func notAllowedReasons(m map[string]map[string]any) map[string]string {
+	out := map[string]string{}
+	for node, info := range m {
+		var parts []string
+		for _, k := range sortedMapKeys(info) {
+			var vals []string
+			if list, ok := info[k].([]any); ok {
+				for _, v := range list {
+					if obj, ok := v.(map[string]any); ok {
+						v = obj["sid"]
+					}
+					vals = append(vals, fmt.Sprint(v))
+				}
+			}
+			parts = append(parts, strings.ReplaceAll(strings.ReplaceAll(k, "_", " "), "-", " ")+" "+strings.Join(vals, ","))
+		}
+		out[node] = strings.Join(parts, "; ")
+	}
+	return out
+}
+
+// evacCache holds the cluster-wide lookups the per-guest checks share,
+// fetched at most once per plan.
+type evacCache struct {
+	repl map[int][]string
+	stor map[string]evacStorage
+}
+
+type evacStorage struct {
+	Storage string `json:"storage"`
+	Nodes   string `json:"nodes"`
+	Disable int    `json:"disable"`
+}
+
+// replication maps vmid → replication target nodes (/cluster/replication).
+func (c *evacCache) replication(ctx context.Context, p provider.Provider) (map[int][]string, error) {
+	if c.repl != nil {
+		return c.repl, nil
+	}
+	body, err := p.Raw(ctx, "GET", "/cluster/replication", nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading replication jobs: %w", err)
+	}
+	var jobs []struct {
+		Guest  int    `json:"guest"`
+		Target string `json:"target"`
+	}
+	if err := protocol.DecodeData(body, &jobs); err != nil {
+		return nil, fmt.Errorf("reading replication jobs: %w", err)
+	}
+	c.repl = map[int][]string{}
+	for _, j := range jobs {
+		c.repl[j.Guest] = append(c.repl[j.Guest], j.Target)
+	}
+	return c.repl, nil
+}
+
+// storage maps storage id → its cluster config (/storage).
+func (c *evacCache) storage(ctx context.Context, p provider.Provider) (map[string]evacStorage, error) {
+	if c.stor != nil {
+		return c.stor, nil
+	}
+	body, err := p.Raw(ctx, "GET", "/storage", nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading storage config: %w", err)
+	}
+	var list []evacStorage
+	if err := protocol.DecodeData(body, &list); err != nil {
+		return nil, fmt.Errorf("reading storage config: %w", err)
+	}
+	c.stor = map[string]evacStorage{}
+	for _, s := range list {
+		c.stor[s.Storage] = s
+	}
+	return c.stor, nil
+}
+
 // runEvacuation migrates the planned items, at most `parallel` at a time, each
 // task-polled to completion. Results are recorded on the items.
-func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, online bool, parallel, timeout, restartTimeout int) {
+func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, parallel, timeout, restartTimeout int) {
 	var mu sync.Mutex
 	logf := func(format string, args ...any) {
 		mu.Lock()
@@ -473,7 +726,7 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 			defer func() { <-sem }()
 			label := fmt.Sprintf("migrate %s %d (%s) %s -> %s [%s]", kindLabel(it.Kind), it.VMID, it.Name, it.From, it.To, it.Mode)
 			logf("→ %s\n", label)
-			upid, err := migrateOne(ctx, p, it, online, timeout, restartTimeout, label)
+			upid, err := migrateOne(ctx, p, it, timeout, restartTimeout, label)
 			it.UPID = upid
 			if err != nil {
 				it.Result, it.Error = "failed", err.Error()
@@ -487,13 +740,11 @@ func runEvacuation(ctx context.Context, p provider.Provider, items []*evacItem, 
 	wg.Wait()
 }
 
-func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, online bool, timeout, restartTimeout int, label string) (string, error) {
+func migrateOne(ctx context.Context, p provider.Provider, it *evacItem, timeout, restartTimeout int, label string) (string, error) {
 	params := url.Values{"target": {it.To}}
 	switch it.Mode {
 	case "online":
-		if online {
-			params.Set("online", "1")
-		}
+		params.Set("online", "1")
 	case "restart":
 		params.Set("restart", "1")
 		params.Set("timeout", strconv.Itoa(restartTimeout))
@@ -578,20 +829,6 @@ func kindLabel(k domain.GuestKind) string {
 	return "VM"
 }
 
-func maxRoom(targets map[string]*evacTarget, names, allowed []string, pct float64) int64 {
-	var best int64
-	for _, n := range names {
-		if allowed != nil && !hasString(allowed, n) {
-			continue
-		}
-		t := targets[n]
-		if room := int64(float64(t.maxMem)*pct/100) - t.mem; room > best {
-			best = room
-		}
-	}
-	return best
-}
-
 func hasString(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
@@ -601,7 +838,9 @@ func hasString(list []string, s string) bool {
 	return false
 }
 
-func sortedKeys(m map[string]bool) []string {
+func sortedKeys(m map[string]bool) []string { return sortedMapKeys(m) }
+
+func sortedMapKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
