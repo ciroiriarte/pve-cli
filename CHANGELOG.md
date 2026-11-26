@@ -33,6 +33,13 @@ surface may change between minor releases.
   and the profile's `secret_ref` is dereferenced only when nothing higher is set.
   `pc config test-auth` now reports that winning source (flag, flag ref, env
   var, or profile) instead of always naming the profile's.
+- **Security**: build CI and release binaries with Go **1.26.11** (was 1.26.6),
+  which fixes standard-library advisory GO-2026-6859 (`net/http`) flagged by
+  the `govulncheck` CI gate.
+- **Security**: bump `github.com/gorilla/websocket` (console transport) to the
+  upstream fix commit for GO-2026-6278 (no tagged release carries it yet). The
+  fix pulls in `golang.org/x/net`, pinned at v0.35.0, the newest release that
+  still builds with Go 1.22 (the OBS distro floor).
 
 ## [0.14.3] - 2026-09-06 — security assessment fixes
 
