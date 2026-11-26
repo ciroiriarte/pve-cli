@@ -19,6 +19,7 @@ func TestTokenAuthorizationHeaderPerProvider(t *testing.T) {
 		{"", "PVEAPIToken=root@pam!ci=s3cr3t"},
 		{"pve", "PVEAPIToken=root@pam!ci=s3cr3t"},
 		{"pdm", "PDMAPIToken=root@pam!ci:s3cr3t"},
+		{"pbs", "PBSAPIToken=root@pam!ci:s3cr3t"}, // PBS docs: PBSAPIToken=TOKENID:TOKENSECRET
 	}
 	for _, tc := range cases {
 		t.Run("provider="+tc.provider, func(t *testing.T) {

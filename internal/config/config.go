@@ -26,7 +26,7 @@ type Context struct {
 
 // Profile is a connection target.
 type Profile struct {
-	Provider  string         `yaml:"provider"` // "pve" | "pdm"
+	Provider  string         `yaml:"provider"` // "pve" | "pdm" | "pbs"
 	Server    string         `yaml:"server"`
 	Auth      AuthConfig     `yaml:"auth"`
 	TLS       TLSConfig      `yaml:"tls,omitempty"`

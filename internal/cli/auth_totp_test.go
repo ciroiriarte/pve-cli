@@ -119,7 +119,7 @@ func TestAuthLoginOTPFlagCachesTicket(t *testing.T) {
 	if strings.Contains(stderr, totpCode) || strings.Contains(stderr, totpPW) {
 		t.Errorf("stderr leaks the code or password: %q", stderr)
 	}
-	c, ok := auth.NewKeyringTicketCache(keyringService, ts.URL, totpUser).Load()
+	c, ok := auth.NewKeyringTicketCache(keyringService, "pve", ts.URL, totpUser).Load()
 	if !ok || c.Ticket != totpTicket {
 		t.Fatalf("TFA ticket not cached in the keyring: %+v", c)
 	}
@@ -255,7 +255,7 @@ func TestRuntimeTicketTFA(t *testing.T) {
 	if got := ts.loginLog(); got != "password,password,challenge" {
 		t.Errorf("logins = %q", got)
 	}
-	if _, ok := auth.NewKeyringTicketCache(keyringService, ts.URL, totpUser).Load(); !ok {
+	if _, ok := auth.NewKeyringTicketCache(keyringService, "pve", ts.URL, totpUser).Load(); !ok {
 		t.Error("runtime TFA login should cache the ticket")
 	}
 }

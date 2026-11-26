@@ -448,20 +448,9 @@ func completeIDs(a *app, set string) completer {
 	}
 }
 
-// topLevel returns the name of c's ancestor directly under the root ("" for
-// the root itself).
-func topLevel(c *cobra.Command) string {
-	for ; c.HasParent(); c = c.Parent() {
-		if !c.Parent().HasParent() {
-			return c.Name()
-		}
-	}
-	return ""
-}
-
 // guestKindFor maps a command to the guest kind its tree is typed to.
 func guestKindFor(c *cobra.Command) domain.GuestKind {
-	switch topLevel(c) {
+	switch topLevel(c).Name() {
 	case "vm":
 		return domain.KindVM
 	case "ct":
@@ -472,7 +461,7 @@ func guestKindFor(c *cobra.Command) domain.GuestKind {
 
 // argCompleter picks the completer for a positional argument by its Use name.
 func argCompleter(a *app, c *cobra.Command, arg string) completer {
-	inRemote := topLevel(c) == "remote"
+	inRemote := topLevel(c).Name() == "remote"
 	switch arg {
 	case "vmid":
 		// `vm create <vmid>` / `ct create <vmid>` take a new id.
@@ -527,7 +516,7 @@ func wireLiveCompletion(a *app, c *cobra.Command) {
 		"vmid":        completeGuests(a, guestKindFor(c), true),
 		"storage":     completeIDs(a, compStorages),
 	}
-	if topLevel(c) == "remote" {
+	if topLevel(c).Name() == "remote" {
 		delete(flags, "node") // `remote add/update --node` is an endpoint address
 	}
 	for name, fn := range flags {

@@ -40,15 +40,6 @@ func completeDirective(t *testing.T, args ...string) ([]string, string) {
 	return got, dir
 }
 
-func writeConfig(t *testing.T, body string) {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PVE_CLI_CONFIG", p)
-}
-
 // Slots the live completer doesn't own keep cobra's default (file) completion.
 func TestCompleteUnownedSlotKeepsFileCompletion(t *testing.T) {
 	isolateCache(t)

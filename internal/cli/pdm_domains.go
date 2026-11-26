@@ -76,7 +76,7 @@ func kvTable(m map[string]any) output.Tabular {
 	sort.Strings(keys)
 	t := output.Tabular{Columns: []string{"key", "value"}, Raw: m}
 	for _, k := range keys {
-		t.Rows = append(t.Rows, []string{k, fmt.Sprintf("%v", m[k])})
+		t.Rows = append(t.Rows, []string{k, formatCell(m[k])})
 	}
 	return t
 }

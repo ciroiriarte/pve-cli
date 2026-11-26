@@ -78,7 +78,7 @@ func TestRuntimeStaleCachedTicketRelogin(t *testing.T) {
 	if _, err := runCLI(t, totpLogin(ts)...); err != nil { // offline profile save
 		t.Fatal(err)
 	}
-	cache := auth.NewKeyringTicketCache(keyringService, ts.URL, totpUser)
+	cache := auth.NewKeyringTicketCache(keyringService, "pve", ts.URL, totpUser)
 	cache.Save(auth.CachedTicket{User: totpUser, Ticket: "PVE:stale", Issued: time.Now()})
 
 	t.Setenv("PVE_CLI_OTP", totpCode)

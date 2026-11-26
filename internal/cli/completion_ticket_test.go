@@ -71,7 +71,7 @@ func TestCompleteTicketUsesCachedTicket(t *testing.T) {
 	srv := ticketCompletionServer(t, &posts, &tfa)
 	ticketProfile(t, srv.URL)
 	t.Setenv("PVE_CLI_OTP", "123456")
-	c := auth.NewKeyringTicketCache(provider.KeyringService, srv.URL, "ops@pve")
+	c := auth.NewKeyringTicketCache(provider.KeyringService, "pve", srv.URL, "ops@pve")
 	b, _ := json.Marshal(auth.CachedTicket{User: "ops@pve", Ticket: "PVE:ops@pve:cached", CSRF: "c",
 		Cookies: []auth.CachedCookie{{Name: "PVEAuthCookie", Value: "PVE:ops@pve:cached"}}, Issued: time.Now()})
 	if err := keyring.Set(c.Service, c.Key, string(b)); err != nil {
